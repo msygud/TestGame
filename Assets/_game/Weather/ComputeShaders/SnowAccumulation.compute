@@ -1,0 +1,71 @@
+// SnowAccumulation.compute
+// Maintains a sliding heightmap centered around the player.
+// R channel = snow height (0-1 normalized).
+
+#pragma kernel CSAccumulate
+#pragma kernel CSDeform
+#pragma kernel CSClear
+
+RWTexture2D<float> _SnowHeightMap;
+float _AccumulationRate;   // how fast snow grows per second
+float _DeltaTime;
+float _MaxHeight;          // clamp ceiling (e.g. 1.0)
+float _RecoveryRate;       // how fast deformed snow refills
+
+// Deformer data: xyz = world pos, w = radius
+StructuredBuffer<float4> _Deformers;
+int _DeformerCount;
+float _DeformDepth;
+
+float2 _WorldOriginXZ;     // bottom-left world-space corner of the texture
+float _WorldSize;          // texture covers WorldSize x WorldSize meters
+uint _Resolution;          // texture pixel resolution
+
+[numthreads(8,8,1)]
+void CSAccumulate (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Resolution || id.y >= _Resolution) return;
+    float current = _SnowHeightMap[id.xy];
+    // Steady accumulation + recovery towards max
+    float target = _MaxHeight;
+    float rate = _AccumulationRate + _RecoveryRate;
+    current = min(target, current + rate * _DeltaTime);
+    _SnowHeightMap[id.xy] = current;
+}
+
+[numthreads(8,8,1)]
+void CSDeform (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Resolution || id.y >= _Resolution) return;
+
+    // Pixel center -> world XZ
+    float2 uv = (float2(id.xy) + 0.5) / float(_Resolution);
+    float2 worldXZ = _WorldOriginXZ + uv * _WorldSize;
+
+    float current = _SnowHeightMap[id.xy];
+    float minHeight = current;
+
+    for (int i = 0; i < _DeformerCount; i++)
+    {
+        float4 d = _Deformers[i];
+        float2 diff = worldXZ - d.xz;
+        float dist = length(diff);
+        if (dist < d.w)
+        {
+            // Smooth falloff inside the radius
+            float t = saturate(dist / d.w);
+            float falloff = 1.0 - smoothstep(0.7, 1.0, t);
+            float carved = current - _DeformDepth * falloff;
+            minHeight = min(minHeight, carved);
+        }
+    }
+
+    _SnowHeightMap[id.xy] = max(0.0, minHeight);
+}
+
+[numthreads(8,8,1)]
+void CSClear (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Resolution || id.y >= _Resolution) return;
+    _SnowHeightMap[id.xy] = _MaxHeight;
+}

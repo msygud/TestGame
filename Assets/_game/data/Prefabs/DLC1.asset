@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 01fc4b5bb1424554b8e90718fb40537f, type: 3}
+  m_Name: DLC1
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.GamePrefabRegistry
+  dlcId: 0
+  dlcName: DLC1
+  displayName: DLC1Prefab
+  jsonExportPath: Assets/_game/data
+  items:
+  - Name: car2
+    MainKey: 1
+    VariantKey: 1
+    DlcKey: 0
+    Prefab: {fileID: 3990430178809915504, guid: 969e94aed9297864fb6193ce8e711ed7, type: 3}
+    SpawnMode: 1
+    Usage: 3
+    Category: 3
+    MultiItemSize: 0.5
+    MultiCountPerCell: 5
+    IsDeleted: 0

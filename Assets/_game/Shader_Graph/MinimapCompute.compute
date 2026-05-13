@@ -1,0 +1,111 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel RenderMinimap
+
+struct UnitData
+{
+    float2 Position;
+    int TeamIndex;
+    int TeamIcon;
+};
+
+RWTexture2D<float4> Result;
+Texture2D<float4> TerrainBase;
+SamplerState sampler_TerrainBase;
+
+StructuredBuffer<UnitData> dataUnit;
+float2 MapSize;
+float2 MapOrigin;
+int UnitCount;
+int TextureSize;
+
+float2 CamUV;
+float CamRotation;
+
+const float4 TeamColors[] =
+{
+    float4(0.2, 0.5, 1.0, 1.0), // player - blue
+    float4(1.0, 0.2, 0.2, 1.0), // enemy  - red
+    float4(0.8, 0.8, 0.2, 1.0), // neutral- yellow
+    float4(1.0, 1.0, 1.0, 1.0), // white
+    float4(0.545, 0.27, 0.07, 1.0), 
+    float4(0.93, 0.9, 0.666, 1.0), 
+    float4(0.5, 0.16, 0.88, 1.0), 
+    float4(0.498, 1.0, 0.83, 1.0), 
+    
+};
+const float4 CamIconColor = float4(1.0, 1.0, 0.0, 1.0);
+
+bool IsInCameraTriangle(float2 pixelUV)
+{
+    float2 delta = pixelUV - (CamUV - MapOrigin) / MapSize;
+
+    float s = sin(CamRotation);
+    float c = cos(CamRotation);
+    float2 local = float2(
+        delta.x * c - delta.y * s,
+        delta.x * s + delta.y * c
+    );
+
+    local *= TextureSize;
+
+    float tipY = -20.0;
+    float baseY = +30.0;
+    float baseHalfWidth = 40.0;
+
+    if (local.y < 0 || local.y > baseY)
+        return false;
+
+    float t = (local.y - tipY) / (baseY - tipY);
+    float allowedHalfX = t * baseHalfWidth;
+    if (abs(local.x) < allowedHalfX)
+    {
+
+        if (abs(local.x) > allowedHalfX - 4)
+        {
+            return true;
+        }
+        else if (local.y < 4 || local.y > baseY - 4)
+        {
+            return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+
+[numthreads(8, 8, 1)]
+void RenderMinimap(uint3 id : SV_DispatchThreadID)
+{
+    float2 pixelUV = id.xy / (float) TextureSize;
+    
+    
+    //origin
+    //float4 color = float4(0.05, 0.1, 0.05, 1.0); // color of the minimap background
+    float4 color = TerrainBase.SampleLevel(sampler_TerrainBase, pixelUV, 0);
+    if(UnitCount>0)
+    {
+
+        for (int i = 0; i < UnitCount; i++)
+        {
+            float2 unituv = (dataUnit[i].Position - MapOrigin) / MapSize;
+            
+            float dist = length((unituv - pixelUV) * MapSize);
+
+        // color of the unit icon (circular, radius 3px)
+            if (dist < 3.0)
+            {
+                float blend = 1.0 - smoothstep(2.0, 3.0, dist);
+                color = TeamColors[dataUnit[i].TeamIndex];
+
+            }
+        }
+    }
+    if(IsInCameraTriangle(pixelUV))
+    {
+        color = CamIconColor;
+    }
+    
+    Result[id.xy] = color;
+}
+

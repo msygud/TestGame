@@ -1,0 +1,19 @@
+﻿{
+    "dlcId": 0,
+    "dlcName": "Origin",
+    "displayName": "OriginUnit",
+    "items": [
+        {
+            "mainKey": 0,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "church"
+        },
+        {
+            "mainKey": 1,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "car01"
+        }
+    ]
+}

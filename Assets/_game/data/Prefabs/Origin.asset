@@ -1,0 +1,75 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 01fc4b5bb1424554b8e90718fb40537f, type: 3}
+  m_Name: Origin
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.GamePrefabRegistry
+  dlcId: 0
+  dlcName: Origin
+  displayName: OriginUnit
+  jsonExportPath: Assets/_game/data/OriginUnit
+  items:
+  - Name: church
+    MainKey: 0
+    VariantKey: 0
+    DlcKey: 0
+    Prefab: {fileID: 6189209910906397481, guid: 4bd0792bd46b5264a877739776d02206, type: 3}
+    SpawnMode: 0
+    Usage: 3
+    Category: 2
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    RoadShape: 0
+    MultiItemSize: 0.5
+    MultiCountPerCell: 5
+    IsDeleted: 0
+  - Name: car01
+    MainKey: 1
+    VariantKey: 0
+    DlcKey: 0
+    Prefab: {fileID: 8324669854303313365, guid: 7e5219ada910e5f4b89b86fb4ab270b8, type: 3}
+    SpawnMode: 1
+    Usage: 3
+    Category: 3
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    RoadShape: 0
+    MultiItemSize: 0.5
+    MultiCountPerCell: 2
+    IsDeleted: 0
+  - Name: ground01
+    MainKey: 2
+    VariantKey: 0
+    DlcKey: 0
+    Prefab: {fileID: 4736371126876090423, guid: b037286f7d947dd429f58f055b067a6e, type: 3}
+    SpawnMode: 1
+    Usage: 3
+    Category: 3
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    RoadShape: 0
+    MultiItemSize: 0.5
+    MultiCountPerCell: 5
+    IsDeleted: 1
+  - Name: ground01
+    MainKey: 2
+    VariantKey: 0
+    DlcKey: 0
+    Prefab: {fileID: 4736371126876090423, guid: b037286f7d947dd429f58f055b067a6e, type: 3}
+    SpawnMode: 0
+    Usage: 3
+    Category: 0
+    Size: {x: 15, y: 15}
+    Offset: {x: 0.5, y: 2, z: 0.5}
+    RoadShape: 0
+    MultiItemSize: 0.5
+    MultiCountPerCell: 5
+    IsDeleted: 0
