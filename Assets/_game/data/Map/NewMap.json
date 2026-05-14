@@ -1,0 +1,57 @@
+﻿{
+    "Version": "1.0",
+    "MapName": "NewMap",
+    "Settings": {
+        "CellSize": 1.0,
+        "Width": 50,
+        "Height": 50
+    },
+    "RequiredDlcs": [
+        0
+    ],
+    "Singles": [
+        {
+            "MainKey": 2,
+            "VariantKey": 0,
+            "Position": {
+                "x": 37.5,
+                "y": 0.0,
+                "z": 31.5
+            },
+            "RotationY": 0.0,
+            "Scale": 1.0
+        }
+    ],
+    "Multis": [
+        {
+            "MainKey": 1,
+            "VariantKey": 0,
+            "Cell": {
+                "x": 5,
+                "y": 1
+            },
+            "Position": {
+                "x": 5.5,
+                "y": 0.0,
+                "z": 1.5
+            },
+            "Height": 0,
+            "Seed": 383670657,
+            "Scale": 1.0
+        }
+    ],
+    "Roads": [],
+    "StartPoints": [
+        {
+            "Number": 1,
+            "Position": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+            },
+            "BaseSingles": [],
+            "BaseMultis": [],
+            "BaseRoads": []
+        }
+    ]
+}

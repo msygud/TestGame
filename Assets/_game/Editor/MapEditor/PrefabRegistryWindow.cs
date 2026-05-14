@@ -483,7 +483,9 @@ namespace CitySim.MapEditor
                 EditorGUI.EndDisabledGroup();
             }
 
-            EditorGUILayout.PropertyField(offsetProp, new GUIContent("Offset"));
+            var offset = offsetProp.vector3Value;
+            float yOffset = EditorGUILayout.FloatField("Y Offset", offset.y);
+            offsetProp.vector3Value = new Vector3(0f, yOffset, 0f);
 
             // ── 5행: Road Shape (도로만) ──────────────────────────
             if (isRoad)

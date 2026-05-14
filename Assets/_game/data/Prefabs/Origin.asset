@@ -25,7 +25,7 @@ MonoBehaviour:
     SpawnMode: 0
     Usage: 3
     Category: 2
-    Size: {x: 1, y: 1}
+    Size: {x: 2, y: 2}
     Offset: {x: 0, y: 0, z: 0}
     RoadShape: 0
     MultiItemSize: 0.5
@@ -68,7 +68,7 @@ MonoBehaviour:
     Usage: 3
     Category: 0
     Size: {x: 15, y: 15}
-    Offset: {x: 0.5, y: 2, z: 0.5}
+    Offset: {x: 0, y: 0, z: 0}
     RoadShape: 0
     MultiItemSize: 0.5
     MultiCountPerCell: 5

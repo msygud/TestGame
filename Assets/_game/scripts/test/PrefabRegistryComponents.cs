@@ -71,6 +71,7 @@ namespace CitySim
         public int    MainKey;
         public int    VariantKey;
         public int2   Cell;          // 좌하단 셀
+        public float3 Position;
         public float  CellSize;      // 셀 월드 크기
         public float  Height;        // 배치 높이
         public int    Seed;          // 결정적 랜덤 시드
@@ -132,6 +133,8 @@ namespace CitySim
         public int   VariantKey;
         public int   MultiCount;     // MultiCountPerCell
         public float MultiItemSize;  // Multi 개별 아이템 크기
+        public int2  Size;
+        public float YOffset;
     }
 
     // ══════════════════════════════════════════════════════════════

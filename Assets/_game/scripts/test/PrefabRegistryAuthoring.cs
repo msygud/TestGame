@@ -58,6 +58,8 @@ namespace CitySim
                         VariantKey    = item.VariantKey,
                         MultiCount    = item.MultiCountPerCell,
                         MultiItemSize = item.MultiItemSize,
+                        Size          = new Unity.Mathematics.int2(item.Size.x, item.Size.y),
+                        YOffset       = item.Offset.y,
                     });
                 }
 

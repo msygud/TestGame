@@ -1,5 +1,6 @@
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace CitySim.MapEditor
 {
@@ -22,31 +23,36 @@ namespace CitySim.MapEditor
         static readonly Color OriginColor   = new(1f, 0.3f, 0.3f, 1f);
 
         /// <summary>맵 바운더리를 SceneView에 그린다.</summary>
-        public static void Draw(MapSettings settings)
+        public static void Draw(MapSettings settings, float height = 0f, bool drawGrid = true)
         {
             float w = settings.Width  * settings.CellSize;
             float h = settings.Height * settings.CellSize;
+            var prevZTest = Handles.zTest;
 
-            DrawOuterBoundary(w, h);
-            DrawGrid(settings, w, h);
-            DrawOrigin();
-            DrawSizeLabel(settings, w, h);
+            Handles.zTest = CompareFunction.LessEqual;
+            DrawOuterBoundary(w, h, height);
+            if (drawGrid)
+                DrawGrid(settings, w, h, height);
+            DrawOrigin(height);
+            Handles.zTest = prevZTest;
+
+            DrawSizeLabel(settings, w, h, height);
         }
 
-        static void DrawOuterBoundary(float w, float h)
+        static void DrawOuterBoundary(float w, float h, float height)
         {
             Handles.color = BoundaryColor;
-            Vector3 p0 = new(0, 0, 0);
-            Vector3 p1 = new(w, 0, 0);
-            Vector3 p2 = new(w, 0, h);
-            Vector3 p3 = new(0, 0, h);
+            Vector3 p0 = new(0, height, 0);
+            Vector3 p1 = new(w, height, 0);
+            Vector3 p2 = new(w, height, h);
+            Vector3 p3 = new(0, height, h);
             Handles.DrawLine(p0, p1, 3f);
             Handles.DrawLine(p1, p2, 3f);
             Handles.DrawLine(p2, p3, 3f);
             Handles.DrawLine(p3, p0, 3f);
         }
 
-        static void DrawGrid(MapSettings settings, float w, float h)
+        static void DrawGrid(MapSettings settings, float w, float h, float height)
         {
             Handles.color = GridColor;
             float cs = settings.CellSize;
@@ -55,24 +61,24 @@ namespace CitySim.MapEditor
             for (int i = 1; i < settings.Width; i++)
             {
                 float x = i * cs;
-                Handles.DrawLine(new Vector3(x, 0, 0), new Vector3(x, 0, h));
+                Handles.DrawLine(new Vector3(x, height, 0), new Vector3(x, height, h));
             }
 
             // 가로 선 (Z축 따라)
             for (int j = 1; j < settings.Height; j++)
             {
                 float z = j * cs;
-                Handles.DrawLine(new Vector3(0, 0, z), new Vector3(w, 0, z));
+                Handles.DrawLine(new Vector3(0, height, z), new Vector3(w, height, z));
             }
         }
 
-        static void DrawOrigin()
+        static void DrawOrigin(float height)
         {
             Handles.color = OriginColor;
-            Handles.SphereHandleCap(0, Vector3.zero, Quaternion.identity, 0.3f, EventType.Repaint);
+            Handles.SphereHandleCap(0, new Vector3(0, height, 0), Quaternion.identity, 0.3f, EventType.Repaint);
         }
 
-        static void DrawSizeLabel(MapSettings settings, float w, float h)
+        static void DrawSizeLabel(MapSettings settings, float w, float h, float height)
         {
             var style = new GUIStyle(EditorStyles.boldLabel)
             {
@@ -81,7 +87,7 @@ namespace CitySim.MapEditor
             };
             string text = $"{settings.Width} × {settings.Height} cells\n" +
                           $"({w:0.#} × {h:0.#} units)";
-            Handles.Label(new Vector3(w * 0.5f, 0, h + 1f), text, style);
+            Handles.Label(new Vector3(w * 0.5f, height, h + 1f), text, style);
         }
     }
 }

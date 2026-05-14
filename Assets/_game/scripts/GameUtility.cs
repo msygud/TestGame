@@ -32,6 +32,17 @@ namespace Game.Utility
             float z = origin.y + gridIndex.y * cellSize + cellSize / 2f;
             return new float3(x, origin.y, z);
         }
+        public static float GetHeightWorldPosition(int height, float cellSize, float yOffset)
+        {
+            return height * cellSize * 0.5f + yOffset;
+        }
+        public static float3 GetFootprintCenterWorldPosition(int2 cell, int2 size, float cellSize, float y)
+        {
+            return new float3(
+                (cell.x + size.x * 0.5f) * cellSize,
+                y,
+                (cell.y + size.y * 0.5f) * cellSize);
+        }
         public static int GetGridIndexHash(int2 gridIndex, int gridcountwidth)
         {
             return gridIndex.x + gridIndex.y * gridcountwidth;

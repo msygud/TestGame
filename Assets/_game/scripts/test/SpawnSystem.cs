@@ -91,10 +91,9 @@ namespace CitySim
                     continue;
                 }
 
-                float cs   = req.ValueRO.CellSize;
-                float orgX = req.ValueRO.Cell.x * cs;
-                float orgZ = req.ValueRO.Cell.y * cs;
-                float h    = req.ValueRO.Height;
+                float3 center = req.ValueRO.Position;
+                float cs      = req.ValueRO.CellSize;
+                float h       = req.ValueRO.Height;
 
                 // 결정적 랜덤 (Seed 기반)
                 var rng = new Unity.Mathematics.Random((uint)(req.ValueRO.Seed + 1));
@@ -105,7 +104,10 @@ namespace CitySim
                     float localZ = rng.NextFloat(0f, cs);
                     float rotY   = rng.NextFloat(0f, 360f);
 
-                    float3 pos = new float3(orgX + localX, h, orgZ + localZ);
+                    float3 pos = new float3(
+                        center.x - cs * 0.5f + localX,
+                        h,
+                        center.z - cs * 0.5f + localZ);
 
                     var instance = ecb.Instantiate(prefab);
                     ecb.SetComponent(instance, LocalTransform.FromPositionRotationScale(

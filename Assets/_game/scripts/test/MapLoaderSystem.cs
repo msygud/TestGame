@@ -4,6 +4,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
+using Game.Utility;
 
 namespace CitySim
 {
@@ -191,7 +192,7 @@ namespace CitySim
                 VariantKey = p.VariantKey,
                 Position   = p.Position,
                 Rotation   = quaternion.RotateY(math.radians(p.RotationY)),
-                Scale      = p.Scale,
+                Scale      = p.Scale > 0f ? p.Scale : 1f,
             });
             ecb.AddComponent<MapLoaded>(e); // 나중에 정리하기 위한 태그
         }
@@ -206,10 +207,14 @@ namespace CitySim
             // MetaLookup에서 Count, ItemSize 조회
             int   count    = 5;    // 기본값
             float itemSize = 0.5f;
+            var   size     = new int2(1, 1);
+            float yOffset  = 0f;
             if (metaLookup.TryGetMeta(p.MainKey, p.VariantKey, out var meta))
             {
                 count    = meta.MultiCount;
                 itemSize = meta.MultiItemSize;
+                size     = math.max(meta.Size, new int2(1, 1));
+                yOffset  = meta.YOffset;
             }
 
             var e = ecb.CreateEntity();
@@ -218,14 +223,21 @@ namespace CitySim
                 MainKey    = p.MainKey,
                 VariantKey = p.VariantKey,
                 Cell       = p.Cell,
+                Position   = ResolveMultiPosition(p, cellSize, size, yOffset),
                 CellSize   = cellSize,
-                Height     = p.Height * cellSize * 0.5f,
+                Height     = GameUtility.GetHeightWorldPosition(p.Height, cellSize, yOffset),
                 Seed       = p.Seed,
                 Count      = count,
                 ItemSize   = itemSize,
-                Scale      = 1f,
+                Scale      = p.Scale > 0f ? p.Scale : 1f,
             });
             ecb.AddComponent<MapLoaded>(e);
+        }
+
+        static float3 ResolveMultiPosition(MultiPlacement p, float cellSize, int2 size, float yOffset)
+        {
+            float y = GameUtility.GetHeightWorldPosition(p.Height, cellSize, yOffset);
+            return GameUtility.GetFootprintCenterWorldPosition(p.Cell, size, cellSize, y);
         }
 
 

@@ -60,8 +60,10 @@ namespace CitySim
         public int  MainKey;
         public int  VariantKey;
         public int2 Cell;            // 좌하단 셀
+        public Vector3 Position;
         public int  Height;          // 셀 0.5 단위
         public int  Seed;            // 결정적 랜덤 시드
+        public float Scale;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -78,6 +80,7 @@ namespace CitySim
         public int   MainKey;       // 5개 도로 모양 중 어느 것
         public int   VariantKey;    // 외형 베리언트 (도로는 일괄)
         public int2  Cell;
+        public Vector3 Position;
         public int   Height;        // 셀 0.5 단위
         public byte  Directions;    // RoadDir 비트마스크
         public float RotationY;     // (Shape, Directions)에서 결정, 에디터 편의용 저장
