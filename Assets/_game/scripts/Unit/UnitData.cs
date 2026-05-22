@@ -11,7 +11,15 @@ namespace Game.Unit
     {
 
     }
-    
+    [Flags]
+    public enum PurposeType : ushort
+    {
+        None = 0,
+        Residential = 1 << 0,
+        Commercial = 1 << 1,
+        Industrial = 1 << 2,
+        All = Residential | Commercial | Industrial
+    }
     public struct PrefabInfoElemental : IBufferElementData
     {
         public Entity Prefab;

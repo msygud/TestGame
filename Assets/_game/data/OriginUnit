@@ -4,16 +4,118 @@
     "displayName": "OriginUnit",
     "items": [
         {
-            "mainKey": 0,
+            "mainKey": 100,
             "variantKey": 0,
             "dlcKey": 0,
             "name": "church"
         },
         {
-            "mainKey": 1,
+            "mainKey": 101,
             "variantKey": 0,
             "dlcKey": 0,
             "name": "car01"
+        },
+        {
+            "mainKey": 20,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "ground01"
+        },
+        {
+            "mainKey": 0,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_E"
+        },
+        {
+            "mainKey": 1,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_W"
+        },
+        {
+            "mainKey": 2,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_N"
+        },
+        {
+            "mainKey": 3,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_S"
+        },
+        {
+            "mainKey": 4,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_NS"
+        },
+        {
+            "mainKey": 5,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_EW"
+        },
+        {
+            "mainKey": 6,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_NEW"
+        },
+        {
+            "mainKey": 7,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_NSE"
+        },
+        {
+            "mainKey": 8,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_NSW"
+        },
+        {
+            "mainKey": 9,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_SEW"
+        },
+        {
+            "mainKey": 10,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_NE"
+        },
+        {
+            "mainKey": 11,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_NW"
+        },
+        {
+            "mainKey": 12,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_SE"
+        },
+        {
+            "mainKey": 13,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_SW"
+        },
+        {
+            "mainKey": 14,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "Road_NSEW"
+        },
+        {
+            "mainKey": 21,
+            "variantKey": 0,
+            "dlcKey": 0,
+            "name": "water"
         }
     ]
 }

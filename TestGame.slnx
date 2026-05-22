@@ -64,12 +64,12 @@
   <Project Path="Unity.Postprocessing.Runtime.csproj" />
   <Project Path="Unity.Entities.Editor.Properties.csproj" />
   <Project Path="Unity.AI.Navigation.Editor.csproj" />
+  <Project Path="Assembly-CSharp.csproj" />
   <Project Path="VFXGraph.OutputEventHandlers.Editor.csproj" />
   <Project Path="Unity.Multiplayer.Center.Common.csproj" />
   <Project Path="Unity.Physics.Editor.csproj" />
   <Project Path="Unity.Numerics.Linear.Solvers.Lowlevel.csproj" />
   <Project Path="Unity.InputSystem.ForUI.csproj" />
-  <Project Path="Assembly-CSharp.csproj" />
   <Project Path="Unity.AI.Navigation.csproj" />
   <Project Path="Unity.Collections.CodeGen.csproj" />
   <Project Path="Unity.Addressables.csproj" />
@@ -88,6 +88,7 @@
   <Project Path="Unity.VisualScripting.Shared.Editor.csproj" />
   <Project Path="Unity.Profiling.Core.csproj" />
   <Project Path="Unity.RenderPipelines.Core.Samples.Editor.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Unity.RenderPipeline.Universal.ShaderLibrary.csproj" />
   <Project Path="Unity.Numerics.Random.csproj" />
   <Project Path="Unity.Core.Editor.csproj" />
@@ -95,7 +96,6 @@
   <Project Path="Unity.Numerics.Linear.Sparse.csproj" />
   <Project Path="Unity.Entities.Graphics.Editor.csproj" />
   <Project Path="Unity.Transforms.Hybrid.csproj" />
-  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Unity.Serialization.Editor.csproj" />
   <Project Path="Unity.InputSystem.DocCodeSamples.csproj" />
   <Project Path="Unity.RenderPipelines.Universal.Shaders.csproj" />

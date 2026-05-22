@@ -20,6 +20,7 @@ Shader "Custom/URP_WaterShader"
         _NormalStrength ("Normal Strength", Range(0, 3)) = 0.8
         _NormalScrollSpeed ("Normal Scroll Speed", Vector) = (0.05, 0.03, -0.04, 0.02)
         _NormalTiling ("Normal Tiling", Float) = 2.0
+        _NormalWorldSize ("Normal World Size", Float) = 10.0
 
         [Header(Foam)]
         _FoamColor ("Foam Color", Color) = (1, 1, 1, 1)
@@ -71,8 +72,14 @@ Shader "Custom/URP_WaterShader"
             Tags { "LightMode" = "UniversalForward" }
 
             HLSLPROGRAM
+            #pragma target 4.5
+            #pragma exclude_renderers gles gles3 glcore
+
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile_instancing
+            #pragma instancing_options renderinglayer
+            #pragma multi_compile _ DOTS_INSTANCING_ON
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
@@ -103,6 +110,7 @@ Shader "Custom/URP_WaterShader"
                 float _NormalStrength;
                 float4 _NormalScrollSpeed;
                 float _NormalTiling;
+                float _NormalWorldSize;
 
                 // Foam
                 half4 _FoamColor;
@@ -143,6 +151,7 @@ Shader "Custom/URP_WaterShader"
                 float3 normalOS   : NORMAL;
                 float4 tangentOS  : TANGENT;
                 float2 uv         : TEXCOORD0;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct Varyings
@@ -154,6 +163,7 @@ Shader "Custom/URP_WaterShader"
                 float3 bitangentWS    : TEXCOORD3;
                 float4 screenPos      : TEXCOORD4;
                 float2 uv             : TEXCOORD5;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             // ─── Gerstner Wave ─────────────────────────────────────────────
@@ -187,31 +197,35 @@ Shader "Custom/URP_WaterShader"
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
+                UNITY_SETUP_INSTANCE_ID(IN);
+                UNITY_TRANSFER_INSTANCE_ID(IN, OUT);
+
                 float t = _Time.y * _WaveSpeed;
 
                 float3 posOS = IN.positionOS.xyz;
+                float3 baseWS = TransformObjectToWorld(posOS);
 
                 // 3-layer Gerstner waves
                 GerstnerWaveResult w1 = GerstnerWave(_WaveDirection1.xy, _WaveAmplitude,
-                                                      6.28 / _WaveFrequency, posOS, t);
+                                                      6.28 / _WaveFrequency, baseWS, t);
                 GerstnerWaveResult w2 = GerstnerWave(_WaveDirection2.xy, _WaveAmplitude * 0.6,
-                                                      6.28 / (_WaveFrequency * 1.5), posOS, t * 1.3);
+                                                      6.28 / (_WaveFrequency * 1.5), baseWS, t * 1.3);
                 GerstnerWaveResult w3 = GerstnerWave(_WaveDirection3.xy, _WaveAmplitude * 0.4,
-                                                      6.28 / (_WaveFrequency * 2.1), posOS, t * 0.9);
+                                                      6.28 / (_WaveFrequency * 2.1), baseWS, t * 0.9);
 
-                posOS += w1.offset + w2.offset + w3.offset;
+                float3 displacedWS = baseWS + w1.offset + w2.offset + w3.offset;
 
                 float3 waveNormal = float3(0,1,0) - (w1.normal + w2.normal + w3.normal);
                 waveNormal = normalize(waveNormal);
 
-                VertexPositionInputs vpi = GetVertexPositionInputs(posOS);
-                VertexNormalInputs   vni = GetVertexNormalInputs(waveNormal, IN.tangentOS);
+                float3 tangentWS = normalize(TransformObjectToWorldDir(IN.tangentOS.xyz));
+                float3 bitangentWS = normalize(cross(waveNormal, tangentWS) * IN.tangentOS.w);
 
-                OUT.positionCS  = vpi.positionCS;
-                OUT.positionWS  = vpi.positionWS;
-                OUT.normalWS    = vni.normalWS;
-                OUT.tangentWS   = vni.tangentWS;
-                OUT.bitangentWS = vni.bitangentWS;
+                OUT.positionCS  = TransformWorldToHClip(displacedWS);
+                OUT.positionWS  = displacedWS;
+                OUT.normalWS    = waveNormal;
+                OUT.tangentWS   = tangentWS;
+                OUT.bitangentWS = bitangentWS;
                 OUT.screenPos   = ComputeScreenPos(OUT.positionCS);
                 OUT.uv          = IN.uv;
                 return OUT;
@@ -220,6 +234,8 @@ Shader "Custom/URP_WaterShader"
             // ─── Fragment ──────────────────────────────────────────────────
             half4 frag(Varyings IN) : SV_Target
             {
+                UNITY_SETUP_INSTANCE_ID(IN);
+
                 float2 screenUV = IN.screenPos.xy / IN.screenPos.w;
                 float t = _Time.y;
 
@@ -231,7 +247,7 @@ Shader "Custom/URP_WaterShader"
                 float depthNorm      = saturate(depthDiff / _DepthMaxDistance);
 
                 // ── Normal map ─────────────────────────────────────────────
-                float2 uvBase = IN.uv * _NormalTiling;
+                float2 uvBase = IN.positionWS.xz * (_NormalTiling / max(_NormalWorldSize, 0.0001));
                 float2 uv1 = uvBase + _NormalScrollSpeed.xy * t;
                 float2 uv2 = uvBase * 0.7 + _NormalScrollSpeed.zw * t;
 

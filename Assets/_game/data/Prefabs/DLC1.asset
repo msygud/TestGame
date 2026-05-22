@@ -12,22 +12,54 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 01fc4b5bb1424554b8e90718fb40537f, type: 3}
   m_Name: DLC1
   m_EditorClassIdentifier: Assembly-CSharp::CitySim.GamePrefabRegistry
-  dlcId: 0
+  dlcId: 1
   dlcName: DLC1
   displayName: DLC1Prefab
   jsonExportPath: Assets/_game/data
   items:
   - Name: car2
-    MainKey: 1
+    MainKey: 101
     VariantKey: 1
     DlcKey: 0
     Prefab: {fileID: 3990430178809915504, guid: 969e94aed9297864fb6193ce8e711ed7, type: 3}
     SpawnMode: 1
     Usage: 3
     Category: 3
+    ObjectType: 2
+    Domain: 1
+    PurposeFlags: 0
+    RequiredTechLevel: 0
+    AllowedTerrains: 1
+    RequiresFlatFootprint: 1
+    RequiresRoadAdjacency: 0
+    DoesNotBlockOccupancy: 0
     Size: {x: 1, y: 1}
     Offset: {x: 0, y: 0, z: 0}
     RoadShape: 0
+    RoadDirections: 0
     MultiItemSize: 0.5
     MultiCountPerCell: 5
     IsDeleted: 0
+  - Name: 
+    MainKey: 0
+    VariantKey: 0
+    DlcKey: 0
+    Prefab: {fileID: 0}
+    SpawnMode: 0
+    Usage: 3
+    Category: 1
+    ObjectType: 2
+    Domain: 1
+    PurposeFlags: 0
+    RequiredTechLevel: 0
+    AllowedTerrains: 1
+    RequiresFlatFootprint: 1
+    RequiresRoadAdjacency: 0
+    DoesNotBlockOccupancy: 0
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    RoadShape: 0
+    RoadDirections: 5
+    MultiItemSize: 0.5
+    MultiCountPerCell: 5
+    IsDeleted: 1
