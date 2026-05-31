@@ -9,57 +9,42 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 01fc4b5bb1424554b8e90718fb40537f, type: 3}
+  m_Script: {fileID: 11500000, guid: 5ad8e657ea563d841badd1eda06cd799, type: 3}
   m_Name: DLC1
   m_EditorClassIdentifier: Assembly-CSharp::CitySim.GamePrefabRegistry
   dlcId: 1
   dlcName: DLC1
-  displayName: DLC1Prefab
-  jsonExportPath: Assets/_game/data
+  displayName: DLC1
+  jsonExportPath: D:/Unity/TestGame/Assets/_game/data/Prefabs/Registry_DLC1.json
   items:
-  - Name: car2
-    MainKey: 101
-    VariantKey: 1
-    DlcKey: 0
-    Prefab: {fileID: 3990430178809915504, guid: 969e94aed9297864fb6193ce8e711ed7, type: 3}
-    SpawnMode: 1
-    Usage: 3
-    Category: 3
-    ObjectType: 2
-    Domain: 1
-    PurposeFlags: 0
-    RequiredTechLevel: 0
-    AllowedTerrains: 1
-    RequiresFlatFootprint: 1
-    RequiresRoadAdjacency: 0
-    DoesNotBlockOccupancy: 0
-    Size: {x: 1, y: 1}
-    Offset: {x: 0, y: 0, z: 0}
-    RoadShape: 0
-    RoadDirections: 0
-    MultiItemSize: 0.5
-    MultiCountPerCell: 5
-    IsDeleted: 0
-  - Name: 
-    MainKey: 0
+  - MainKey: 1
     VariantKey: 0
-    DlcKey: 0
-    Prefab: {fileID: 0}
-    SpawnMode: 0
-    Usage: 3
+    Name: DLC1Structure
     Category: 1
-    ObjectType: 2
-    Domain: 1
-    PurposeFlags: 0
-    RequiredTechLevel: 0
-    AllowedTerrains: 1
-    RequiresFlatFootprint: 1
-    RequiresRoadAdjacency: 0
-    DoesNotBlockOccupancy: 0
+    SpawnMode: 0
+    Usage: -1
+    Prefab: {fileID: 6189209910906397481, guid: 4bd0792bd46b5264a877739776d02206, type: 3}
+    Size: {x: 2, y: 2}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    DlcKey: 1
+    IsDeleted: 0
+  - MainKey: 2
+    VariantKey: 0
+    Name: palm
+    Category: 1
+    SpawnMode: 1
+    Usage: -1
+    Prefab: {fileID: 7468476946143455334, guid: a9d2b3a7d98b8ad4897fc0552e011a48, type: 3}
     Size: {x: 1, y: 1}
     Offset: {x: 0, y: 0, z: 0}
-    RoadShape: 0
-    RoadDirections: 5
-    MultiItemSize: 0.5
+    BuildableOn: 1
+    RoadMask: 0
     MultiCountPerCell: 5
-    IsDeleted: 1
+    MultiItemSize: 1
+    DlcKey: 1
+    IsDeleted: 0
+  NeedMaps: []

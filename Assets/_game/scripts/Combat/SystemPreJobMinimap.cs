@@ -14,7 +14,7 @@ namespace Game.Combat
         {
             state.RequireForUpdate<DetectedByRadar>();
             state.RequireForUpdate<UserPlayer>();
-            state.RequireForUpdate<LocalPlayerTag>();
+            //state.RequireForUpdate<LocalPlayerTag>();
             state.RequireForUpdate<VisibleStateData>();
         }
 

@@ -55,11 +55,11 @@ namespace Game.Unit
 
 
                         bool isplayerteam = false;
-                        foreach (var (teaminfo, teamunitcount, teamtag, entity) in SystemAPI.Query<RefRO<TeamInfoData>, RefRW<TeamUnitCountData>, LocalPlayerTag>().WithEntityAccess())
+                        foreach (var (teaminfo, teamunitcount, entity) in SystemAPI.Query<RefRO<TeamInfoData>, RefRW<TeamUnitCountData>>().WithEntityAccess())
                         {
-                            Debug.Log($"teaminfo : {teaminfo.ValueRO.GetLocalID()} request : {request.LocalID}");
+                            Debug.Log($"teaminfo : {teaminfo.ValueRO.LocalID} request : {request.LocalID}");
 
-                            if (teaminfo.ValueRO.GetLocalID() == request.LocalID)
+                            if (teaminfo.ValueRO.LocalID == request.LocalID)
                             {
                                 ecb.SetComponent(instance, teaminfo.ValueRO);
                                 teamunitcount.ValueRW.UnitCount += 1;

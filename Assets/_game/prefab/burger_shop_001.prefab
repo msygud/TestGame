@@ -73,12 +73,6 @@ PrefabInstance:
       addedObject: {fileID: 1061023386025084185}
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 9162494392694616524}
-    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 4197576632913265054}
-    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
-      insertIndex: -1
       addedObject: {fileID: 1744931172868841204}
   m_SourcePrefab: {fileID: 100100000, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
 --- !u!1 &6189209910906397481 stripped
@@ -108,32 +102,6 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 1447963221395459135, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
---- !u!114 &9162494392694616524
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6189209910906397481}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3c8b4d4fca662124ab30e1854b582e63, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.UnitBaseAuth
---- !u!114 &4197576632913265054
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6189209910906397481}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5444dc23bb135f94d9ac623ea19335c4, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.RadarAuth
-  Radius: 20
-  Strength: 5
 --- !u!114 &1744931172868841204
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -146,4 +114,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c79748cdbcacb7f47bdd3e32956e6d04, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.NameAuth
-  Name: Radar
+  Name: Burger

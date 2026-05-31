@@ -1,0 +1,9 @@
+﻿{
+  "dlcId": 1,
+  "dlcName": "DLC1",
+  "displayName": "DLC1",
+  "items": [
+    {"mainKey":1,"variantKey":0,"name":"DLC1Structure","category":1},
+    {"mainKey":2,"variantKey":0,"name":"palm","category":1}
+  ]
+}

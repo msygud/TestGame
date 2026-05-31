@@ -14,12 +14,12 @@ namespace Game.Combat
     }
     public struct DiryGrid : IComponentData
     {
-    }
+    }/*
     public struct VisibleStateData : IComponentData
     {
         public enum State { FullVisible,RealVisible}
         public State Visible;
-    }
+    }*/
     public struct CombatGridInfo : IComponentData
     {
         public float2 MapSize;

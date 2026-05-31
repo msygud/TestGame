@@ -62,7 +62,7 @@ namespace Game.Minimap
             ,in VisibleOnMinimapData radar,in LocalTransform transform)
         {
            
-            UnitDataBuffer[index] = new MinimapUnitData() { UV = transform.Position.xz, TeamIndex = team.GetLocalID(), UnitTypeIndex=0 };
+            UnitDataBuffer[index] = new MinimapUnitData() { UV = transform.Position.xz, TeamIndex = team.LocalID, UnitTypeIndex=0 };
         }
     }
     

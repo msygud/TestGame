@@ -119,63 +119,112 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1001 &202374612
-PrefabInstance:
+--- !u!1 &55793438
+GameObject:
   m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 55793440}
+  - component: {fileID: 55793439}
+  m_Layer: 0
+  m_Name: DLC1
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &55793439
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 55793438}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 45a335734b1572644a6a5d09d87adc65, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.Scenes::Unity.Scenes.SubScene
+  _SceneAsset: {fileID: 102900000, guid: dbfe7ec633a5b3341a5d28e0d3f84a26, type: 3}
+  _HierarchyColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+  AutoLoadScene: 1
+  _SceneGUID:
+    Value:
+      x: 1827139517
+      y: 1127963187
+      z: 243455393
+      w: 1654951741
+--- !u!4 &55793440
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 55793438}
   serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 0}
-    m_Modifications:
-    - target: {fileID: 1422379666498589156, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_Name
-      value: Origin
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 19.38377
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: -189.49568
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: 177.75214
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 2838637685203698875, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: cdf309bf30b29024f9dd8235a3369071, type: 3}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &915728603
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 915728606}
+  - component: {fileID: 915728605}
+  m_Layer: 0
+  m_Name: Origin
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &915728605
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 915728603}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 45a335734b1572644a6a5d09d87adc65, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.Scenes::Unity.Scenes.SubScene
+  _SceneAsset: {fileID: 102900000, guid: 958d07504eeca73469ab438c0cc60e1a, type: 3}
+  _HierarchyColor: {r: 0.5, g: 0.5, b: 0.5, a: 1}
+  AutoLoadScene: 1
+  _SceneGUID:
+    Value:
+      x: 91281497
+      y: 1132121828
+      z: 3358898838
+      w: 2715839680
+--- !u!4 &915728606
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 915728603}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &957555871
 GameObject:
   m_ObjectHideFlags: 0
@@ -363,6 +412,56 @@ Transform:
   - {fileID: 957555874}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1206696571
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1206696573}
+  - component: {fileID: 1206696572}
+  m_Layer: 0
+  m_Name: DLCBoost
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1206696572
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1206696571}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 27e7c2f9d4b991f45bcfc920f51a0d4d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.DlcBootstrap
+  SubSceneManifests:
+  - {fileID: 11400000, guid: 265570b87a9f87e4b94ad5b83bd1df4e, type: 2}
+  - {fileID: 11400000, guid: e276fa5a97a67244eb2b2631688e1ab8, type: 2}
+  OwnedDlcIdsForDev: 01000000
+  StartMapId: 
+  DevMapJson: 
+--- !u!4 &1206696573
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1206696571}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 11.67266, y: -0, z: -6.58043}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1435198267
 GameObject:
   m_ObjectHideFlags: 0
@@ -521,7 +620,7 @@ MonoBehaviour:
   m_ShadowLayerMask: 1
   m_RenderingLayers: 1
   m_ShadowRenderingLayers: 1
---- !u!1 &1863456442
+--- !u!1 &1701608964
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -529,86 +628,50 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 1863456444}
-  - component: {fileID: 1863456443}
-  - component: {fileID: 1863456445}
-  - component: {fileID: 1863456446}
+  - component: {fileID: 1701608966}
+  - component: {fileID: 1701608965}
   m_Layer: 0
-  m_Name: boostrab
+  m_Name: test
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1863456443
+--- !u!114 &1701608965
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1863456442}
+  m_GameObject: {fileID: 1701608964}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 508bc2d6429a88c4e957586c49502590, type: 3}
+  m_Script: {fileID: 11500000, guid: 1a5415c6536d154449d191160dafd801, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CitySim.MapLoadBootstrap
-  loadOnStart: 1
-  mapJsonAsset: {fileID: 4900000, guid: 7c83a7205d9ae6d409d3a538936fc42f, type: 3}
-  mapJsonPath: 
-  waitFramesAfterWorldReady: 2
---- !u!4 &1863456444
+  m_EditorClassIdentifier: Assembly-CSharp::Test
+--- !u!4 &1701608966
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1863456442}
+  m_GameObject: {fileID: 1701608964}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 12.91423, y: 0, z: -1.59697}
+  m_LocalPosition: {x: 25.86457, y: 0, z: 13.70273}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1863456445
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1863456442}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b3dfc55199ce56549bdceb7f2abf791c, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Test
---- !u!114 &1863456446
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1863456442}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7b176d6de1f36ba46b8f150a262e749d, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CitySim.AddressableContentModuleLoader
-  StartupModuleKeys: []
-  ContentModules: []
-  CheckRemoteCatalogOnStart: 1
-  LoadOnStart: 1
-  LoadMissingDlcOnMapWait: 1
-  EnforceDlcOwnership: 1
-  OwnedDlcIds: 
-  BlockOnStreamIn: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
   - {fileID: 1435198268}
-  - {fileID: 1863456444}
   - {fileID: 1181421717}
   - {fileID: 1607714984}
-  - {fileID: 202374612}
+  - {fileID: 1206696573}
+  - {fileID: 1701608966}
+  - {fileID: 915728606}
+  - {fileID: 55793440}

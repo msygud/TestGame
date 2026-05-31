@@ -16,9 +16,9 @@ partial struct SystemFilterMinimap : ISystem
     [BurstCompile]
     public void OnCreate(ref SystemState state)
     {
-        state.RequireForUpdate<LocalPlayerTag>();
+        //state.RequireForUpdate<LocalPlayerTag>();
 
-        _teamQuery = SystemAPI.QueryBuilder().WithAll<LocalPlayerTag>().Build();
+        //_teamQuery = SystemAPI.QueryBuilder().WithAll<LocalPlayerTag>().Build();
         _targetGroup=SystemAPI.QueryBuilder().WithAll<LocalTransform,DetectedByRadar>().WithPresentRW<VisibleOnMinimapData>().Build();
 
         _gridRadarUnit = new NativeParallelMultiHashMap<int2, PlayTeamRadarUnit>(100, Allocator.Persistent);
@@ -30,7 +30,7 @@ partial struct SystemFilterMinimap : ISystem
         var tic = Time.frameCount;
         if (tic / 5 != 0)
             return;
-        TeamInfoData teamdata=new TeamInfoData();
+        TeamInfoData teamdata=new TeamInfoData();/*
         foreach (var (tag,team) in SystemAPI.Query<LocalPlayerTag,TeamInfoData>())
         {
             if (team.IsPlayer())
@@ -38,7 +38,7 @@ partial struct SystemFilterMinimap : ISystem
                 teamdata = team;
                 break;
             }
-        }
+        }*/
         
         foreach (var (a,radar,index) in SystemAPI.Query<PlayerTeam,Radar,GridPositionData>())
         {
