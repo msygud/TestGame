@@ -20,6 +20,7 @@ namespace CitySim
     //        Cell      = hoveredCell,
     //        RotationY = 0f,
     //        TeamIndex = playerTeamIndex,
+    //        FactionId = playerFactionId,  // 도로 배치 시 필수 (건물/환경은 무시됨)
     //    });
     //
     //  BuildingPlacementSystem이 처리 후 엔티티를 파괴한다.
@@ -37,6 +38,12 @@ namespace CitySim
         public float RotationY;
         /// <summary>배치 팀 인덱스 (점유 기록용).</summary>
         public int   TeamIndex;
+        /// <summary>
+        /// 배치 주체의 팩션 ID. 도로 분기(EmitRoad)에서 PlaceRoadCommand로 전달.
+        /// 건물/환경은 MainKey가 이미 확정돼 있어 직접 쓰지 않지만,
+        /// 도로는 (FactionId, dirMask)로 MainKey를 해소하므로 필요하다.
+        /// </summary>
+        public int   FactionId;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -274,9 +281,9 @@ namespace CitySim
                 Cell      = req.Cell,
                 TeamIndex = req.TeamIndex,
                 LaneCount = 2,
-                MainKey   = req.MainKey,
+                FactionId = req.FactionId,   // (FactionId, dirMask)→MainKey 해소용
             });
-            // Road 점유는 RoadSystem이 처리
+            // Road 점유 및 (FactionId,dirMask)→MainKey→프리팹은 RoadSystem이 처리
         }
 
         // ── OccupancyLayer 점유 등록 ──────────────────────────────────

@@ -130,6 +130,7 @@ namespace CitySim
                         Cell       = cell,
                         RotationY  = b.RotationY,
                         TeamIndex  = teamIndex,
+                        FactionId  = slot.FactionId,   // 도로 분기용 팩션 전달
                     });
 
                     requestCount++;

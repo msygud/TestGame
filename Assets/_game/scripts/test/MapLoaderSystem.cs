@@ -218,7 +218,7 @@ namespace CitySim
                 Cell = new int2(p.CellX, p.CellZ),
                 TeamIndex = 0,
                 LaneCount = 2,
-                MainKey = p.MainKey,
+                FactionId = 0,   // 맵에 미리 깔린 도로 = 중립/공통(FactionId 0)
             });
             ecb.AddComponent<MapLoaded>(e);
         }

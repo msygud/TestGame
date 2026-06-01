@@ -55,6 +55,69 @@ namespace CitySim
         Other       = 99,
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  MainKeyRange — 카테고리별 MainKey 허용 범위
+    //
+    //  종류마다 MainKey 구역을 강제한다. 안 막아두면 키가 뒤섞여
+    //  나중에 고생하므로, 등록 시점(Validate)에서 위반을 잡는다.
+    //
+    //  배정 (프리팹 많을 종류 = 큰 구역):
+    //    0            : 무효(null) 키 — 미지정 표식 전용
+    //    1   ~ 999    : Road        (철도/고속도로/보도 + 팩션 다수 대비)
+    //    1000~ 4999   : Building    (종류 가장 많음)
+    //    5000~ 6999   : Environment (나무/바위/장식 등)
+    //    7000~ 8999   : CombatUnit  (팩션별 병종)
+    //    9000~ 9499   : Projectile
+    //    9500~ 9999   : Effect
+    //    10000+       : Other       (자유)
+    //
+    //  ※ Road의 dirMask(1~15)는 VariantKey 자리에 들어간다.
+    //    MainKey 자체는 이 범위(1~999)를 따른다.
+    // ══════════════════════════════════════════════════════════════
+    public static class MainKeyRange
+    {
+        public const int NullKey = 0;
+
+        public const int RoadMin        = 1,     RoadMax        = 999;
+        public const int BuildingMin    = 1000,  BuildingMax    = 4999;
+        public const int EnvironmentMin = 5000,  EnvironmentMax = 6999;
+        public const int CombatUnitMin  = 7000,  CombatUnitMax  = 8999;
+        public const int ProjectileMin  = 9000,  ProjectileMax  = 9499;
+        public const int EffectMin      = 9500,  EffectMax      = 9999;
+        public const int OtherMin       = 10000; // 상한 없음
+
+        /// <summary>해당 카테고리의 허용 [min,max] 반환. Other는 max=int.MaxValue.</summary>
+        public static (int min, int max) For(PrefabCategory cat) => cat switch
+        {
+            PrefabCategory.Road        => (RoadMin,        RoadMax),
+            PrefabCategory.Building    => (BuildingMin,    BuildingMax),
+            PrefabCategory.Environment => (EnvironmentMin, EnvironmentMax),
+            PrefabCategory.CombatUnit  => (CombatUnitMin,  CombatUnitMax),
+            PrefabCategory.Projectile  => (ProjectileMin,  ProjectileMax),
+            PrefabCategory.Effect      => (EffectMin,      EffectMax),
+            _                          => (OtherMin,       int.MaxValue),
+        };
+
+        /// <summary>mainKey가 cat의 허용 범위 안인가.</summary>
+        public static bool IsInRange(int mainKey, PrefabCategory cat)
+        {
+            var (min, max) = For(cat);
+            return mainKey >= min && mainKey <= max;
+        }
+
+        /// <summary>mainKey가 속한 카테고리 추론(범위 기반). 못 찾으면 Other.</summary>
+        public static PrefabCategory CategoryOf(int mainKey)
+        {
+            if (mainKey >= RoadMin        && mainKey <= RoadMax)        return PrefabCategory.Road;
+            if (mainKey >= BuildingMin    && mainKey <= BuildingMax)    return PrefabCategory.Building;
+            if (mainKey >= EnvironmentMin && mainKey <= EnvironmentMax) return PrefabCategory.Environment;
+            if (mainKey >= CombatUnitMin  && mainKey <= CombatUnitMax)  return PrefabCategory.CombatUnit;
+            if (mainKey >= ProjectileMin  && mainKey <= ProjectileMax)  return PrefabCategory.Projectile;
+            if (mainKey >= EffectMin      && mainKey <= EffectMax)      return PrefabCategory.Effect;
+            return PrefabCategory.Other;
+        }
+    }
+
     [Flags]
     public enum PrefabUsage
     {
@@ -267,6 +330,21 @@ namespace CitySim
                     {
                         Level   = ValidationLevel.Warning,
                         Message = $"[{item.Name}]: MainKey=0, VariantKey=0 is the null key — consider using 1+.",
+                    });
+                }
+
+                // ── MainKey 범위 강제 (카테고리별 구역 위반 검사) ──
+                if (item.MainKey != MainKeyRange.NullKey
+                    && !MainKeyRange.IsInRange(item.MainKey, item.Category))
+                {
+                    var (min, max) = MainKeyRange.For(item.Category);
+                    var actualCat  = MainKeyRange.CategoryOf(item.MainKey);
+                    issues.Add(new ValidationIssue
+                    {
+                        Level   = ValidationLevel.Error,
+                        Message = $"[{item.Name}] MainKey={item.MainKey}: "
+                                + $"{item.Category} 범위[{min}~{max}] 위반 "
+                                + $"(이 키는 {actualCat} 구역). 카테고리나 MainKey를 맞추세요.",
                     });
                 }
             }

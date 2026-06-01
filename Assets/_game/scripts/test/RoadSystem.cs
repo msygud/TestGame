@@ -15,12 +15,14 @@ namespace CitySim
         {
             state.RequireForUpdate<GridLayers>();
             state.RequireForUpdate<PrefabLookup>();
+            state.RequireForUpdate<RoadKeyLookup>();
         }
 
         public void OnUpdate(ref SystemState state)
         {
             var layers = SystemAPI.GetSingleton<GridLayers>();
             var lookup = SystemAPI.GetSingleton<PrefabLookup>();
+            var roadKeys = SystemAPI.GetSingleton<RoadKeyLookup>();
             var em = state.EntityManager;
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
@@ -46,7 +48,7 @@ namespace CitySim
                 var cell = cmd.ValueRO.Cell;
                 var teamIndex = cmd.ValueRO.TeamIndex;
                 var laneCount = cmd.ValueRO.LaneCount == 0 ? (byte)2 : cmd.ValueRO.LaneCount;
-                var mainKey = cmd.ValueRO.MainKey;
+                var factionId = cmd.ValueRO.FactionId;
 
                 if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty)
                 {
@@ -62,7 +64,7 @@ namespace CitySim
                 ecb.AddComponent(road, new Road
                 {
                     Directions = dirs,
-                    MainKey = mainKey,
+                    FactionId = factionId,
                     LaneCount = laneCount,
                 });
                 ecb.AddComponent(road, new RoadVisualInstance { Instance = Entity.Null });
@@ -174,8 +176,19 @@ namespace CitySim
                     road.ValueRW.LaneCount = roadCell.LaneCount;
                 }
 
-                var mask = (byte)road.ValueRO.Directions;
-                var prefabEntity = lookup.GetRoad(road.ValueRO.MainKey, mask);
+                // (FactionId, dirMask) → MainKey → 프리팹
+                // A 방식: 방향마다 MainKey가 다르므로 dirMask로 매번 MainKey를 찾는다.
+                var dirs2 = road.ValueRO.Directions;
+                var factionId = road.ValueRO.FactionId;
+                Entity prefabEntity = Entity.Null;
+
+                if (dirs2 != RoadDir.None
+                    && roadKeys.TryGet(factionId, dirs2, out int mainKey))
+                {
+                    // VariantKey는 외형 베리언트 자리(현재 0=기본).
+                    // 도로 외형 베리언트가 생기면 여기서 해소한다.
+                    prefabEntity = lookup.Get(mainKey, 0);
+                }
 
                 if (prefabEntity != Entity.Null)
                 {

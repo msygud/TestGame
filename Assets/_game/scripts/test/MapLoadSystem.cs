@@ -284,9 +284,10 @@ namespace CitySim
                     Cell      = new int2(road.CellX, road.CellZ),
                     TeamIndex = 0,
                     LaneCount = 2,
-                    MainKey   = road.MainKey,
+                    FactionId = 0,   // 맵에 미리 깔린 도로 = 중립/공통(FactionId 0)
                 });
-                // RoadSystem이 비트마스크 + 인접 갱신 + 프리팹 스폰 처리
+                // RoadSystem이 (FactionId, dirMask)→MainKey→프리팹 + 인접 갱신 처리.
+                // 공통 도로 프리팹은 RoadPrefabRegistry에 Faction 0으로 등록해 둔다.
             }
             Debug.Log($"[MapLoadSystem] 도로 {mapData.Roads.Count}개 PlaceRoadCommand 발행");
         }

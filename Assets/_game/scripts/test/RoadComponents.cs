@@ -24,10 +24,13 @@ namespace CitySim
         public RoadDir Directions;
 
         /// <summary>
-        /// 프리팹 레지스트리의 MainKey.
-        /// RoadSystem이 PrefabLookup.GetRoad(MainKey, mask)로 시각 프리팹을 찾는다.
+        /// 이 도로를 소유한 팩션 ID. 게임 시작 시 팀별로 고정.
+        /// RoadSystem이 (FactionId, dirMask) → MainKey (RoadKeyLookup) →
+        /// PrefabLookup.Get(MainKey, VariantKey) 로 시각 프리팹을 찾는다.
+        /// dirMask가 바뀌면 MainKey도 바뀌므로(방향마다 다른 MainKey),
+        /// MainKey는 저장하지 않고 매번 FactionId+dirMask로 조회한다.
         /// </summary>
-        public int MainKey;
+        public int FactionId;
 
         /// <summary>차선 수 (2 or 4).</summary>
         public byte LaneCount;
@@ -58,10 +61,10 @@ namespace CitySim
         public int  TeamIndex;
         public byte LaneCount; // 기본 2
         /// <summary>
-        /// GamePrefabRegistry의 도로 MainKey.
-        /// 이 값으로 PrefabLookup.GetRoad(MainKey, dirMask)를 조회한다.
+        /// 이 도로를 짓는 팩션 ID. (FactionId, dirMask) → MainKey 조회에 사용.
+        /// 유저: UI 진입 시 자기 팀의 FactionId. AI: 의도 발행 시 자기 FactionId.
         /// </summary>
-        public int  MainKey;
+        public int  FactionId;
     }
 
     /// <summary>도로 철거 명령. 단발성.</summary>
