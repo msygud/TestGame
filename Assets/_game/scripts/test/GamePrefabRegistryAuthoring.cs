@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
@@ -8,21 +9,14 @@ namespace CitySim.Authoring
     //  GamePrefabRegistryAuthoring
     //
     //  DLC 하나당 하나의 SubScene에 배치.
-    //  Baker가 GamePrefabRegistry SO의 모든 항목을
-    //  BakedPrefabEntry DynamicBuffer로 변환한다.
-    //
-    //  SubScene 구성 예:
-    //    Origin SubScene
-    //      └─ GameObject "RegistryBaker"
-    //           └─ GamePrefabRegistryAuthoring (Registry = Origin SO)
-    //
-    //    DLC1 SubScene
-    //      └─ GameObject "RegistryBaker"
-    //           └─ GamePrefabRegistryAuthoring (Registry = DLC1 SO)
+    //  Baker가 GamePrefabRegistry SO를 두 버퍼로 변환한다:
+    //    items[]     → BakedPrefabEntry
+    //    Entrances[] → BakedEntranceEntry (평탄화)
     //
     //  런타임 흐름:
-    //    SubScene 로드 → Baker 결과 엔티티 + BakedPrefabEntry 버퍼 생성
-    //    → PrefabLookupBuildSystem이 수집 → PrefabLookup/PrefabMetaLookup 반영
+    //    SubScene 로드 → Baker 결과 버퍼 생성
+    //    → PrefabLookupBuildSystem이 수집
+    //      → PrefabLookup / PrefabMetaLookup / EntranceLookup 반영
     // ══════════════════════════════════════════════════════════════
     public class GamePrefabRegistryAuthoring : MonoBehaviour
     {
@@ -43,7 +37,9 @@ namespace CitySim.Authoring
 
                 DependsOn(authoring.Registry);
 
-                var e      = GetEntity(TransformUsageFlags.None);
+                var e = GetEntity(TransformUsageFlags.None);
+
+                // ── ① 프리팹 항목 베이킹 ──────────────────────────
                 var buffer = AddBuffer<BakedPrefabEntry>(e);
 
                 int baked   = 0;
@@ -60,7 +56,6 @@ namespace CitySim.Authoring
 
                     var prefabEntity = GetEntity(item.Prefab, TransformUsageFlags.Dynamic);
 
-                    // 개별 DlcKey가 설정되어 있으면 우선, 아니면 레지스트리 DlcId 사용
                     int itemDlcId = item.DlcKey != 0 ? item.DlcKey : dlcId;
 
                     buffer.Add(new BakedPrefabEntry
@@ -75,16 +70,37 @@ namespace CitySim.Authoring
                         MultiItemSize = item.MultiItemSize,
                         DlcId         = itemDlcId,
                         BuildableOn   = item.BuildableOn,
-                        SpawnMode     = item.SpawnMode,
+                        Category      = item.Category,
                     });
 
                     baked++;
                 }
 
+                // ── ② 입구 베이킹 (Entrances[] 평탄화) ────────────
+                // 버퍼는 입구가 없어도 항상 생성 (BuildSystem 조회 일관성).
+                var entranceBuffer = AddBuffer<BakedEntranceEntry>(e);
+
+                int entranceCount = 0;
+                foreach (var ent in authoring.Registry.Entrances)
+                {
+                    if (ent == null || ent.Offsets == null) continue;
+
+                    foreach (var off in ent.Offsets)
+                    {
+                        entranceBuffer.Add(new BakedEntranceEntry
+                        {
+                            MainKey = ent.MainKey,
+                            Offset  = new int2(off.x, off.y),
+                        });
+                        entranceCount++;
+                    }
+                }
+
                 Debug.Log(
                     $"[Baker] '{authoring.Registry.dlcName}' 베이킹 완료: " +
-                    $"{baked}개 등록, {skipped}개 스킵 " +
-                    $"(총 {authoring.Registry.items.Count}개)");
+                    $"프리팹 {baked}개 등록, {skipped}개 스킵, " +
+                    $"입구 {entranceCount}개 " +
+                    $"(총 {authoring.Registry.items.Count}개 항목)");
             }
         }
     }

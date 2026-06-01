@@ -7,16 +7,16 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════
     //  PrefabLookupBuildSystem
     //
-    //  SubScene이 로드될 때마다 BakedPrefabEntry 버퍼를 수집하여
-    //  PrefabLookup / PrefabMetaLookup NativeHashMap에 반영한다.
+    //  SubScene이 로드될 때마다 베이킹 버퍼를 수집하여 룩업에 반영:
+    //    BakedPrefabEntry    → PrefabLookup + PrefabMetaLookup
+    //    BakedEntranceEntry  → EntranceLookup
     //
-    //  - 이미 처리된 엔티티는 PrefabRegistryProcessed 태그로 구분.
-    //  - 싱글플레이에서는 세션 내 SubScene 언로드가 없으므로
-    //    처리 후 항목은 게임 종료까지 유지.
+    //  - 처리 완료 엔티티는 PrefabRegistryProcessed 태그로 구분.
+    //  - 두 버퍼는 같은 엔티티(GamePrefabRegistryAuthoring)에 함께 존재.
     //
     //  실행 순서:
     //    InitializationSystemGroup 내 GridInitSystem 이후.
-    //    이후 MapLoadSystem이 PrefabLookup을 사용하므로 반드시 앞서야 함.
+    //    이후 MapLoadSystem 등이 룩업을 사용하므로 반드시 앞서야 함.
     // ══════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(InitializationSystemGroup))]
     [UpdateAfter(typeof(GridInitSystem))]
@@ -24,19 +24,28 @@ namespace CitySim
     {
         public void OnCreate(ref SystemState state)
         {
-            // PrefabLookup 싱글톤 생성 (빈 테이블)
-            var lookupEntity = state.EntityManager.CreateEntity();
-            state.EntityManager.AddComponentData(lookupEntity, new PrefabLookup
+            var em = state.EntityManager;
+
+            // PrefabLookup 싱글톤
+            var lookupEntity = em.CreateEntity();
+            em.AddComponentData(lookupEntity, new PrefabLookup
             {
                 Table        = new NativeHashMap<int2, Entity>(256, Allocator.Persistent),
                 LoadedDlcIds = new NativeHashSet<int>(16, Allocator.Persistent),
             });
 
-            // PrefabMetaLookup 싱글톤 생성
-            var metaEntity = state.EntityManager.CreateEntity();
-            state.EntityManager.AddComponentData(metaEntity, new PrefabMetaLookup
+            // PrefabMetaLookup 싱글톤
+            var metaEntity = em.CreateEntity();
+            em.AddComponentData(metaEntity, new PrefabMetaLookup
             {
                 Table = new NativeHashMap<int2, PrefabMeta>(256, Allocator.Persistent),
+            });
+
+            // EntranceLookup 싱글톤
+            var entranceEntity = em.CreateEntity();
+            em.AddComponentData(entranceEntity, new EntranceLookup
+            {
+                Table = new NativeHashMap<int, FixedList64Bytes<int2>>(64, Allocator.Persistent),
             });
         }
 
@@ -49,24 +58,26 @@ namespace CitySim
 
             if (unprocessedQuery.IsEmpty) return;
 
-            var lookup     = SystemAPI.GetSingletonRW<PrefabLookup>();
-            var metaLookup = SystemAPI.GetSingletonRW<PrefabMetaLookup>();
-            var ecb        = new EntityCommandBuffer(Allocator.Temp);
+            var lookup         = SystemAPI.GetSingletonRW<PrefabLookup>();
+            var metaLookup     = SystemAPI.GetSingletonRW<PrefabMetaLookup>();
+            var entranceLookup = SystemAPI.GetSingletonRW<EntranceLookup>();
+            var ecb            = new EntityCommandBuffer(Allocator.Temp);
 
             int added    = 0;
             int conflict = 0;
+            int entrances = 0;
 
             foreach (var (entries, entity) in
                 SystemAPI.Query<DynamicBuffer<BakedPrefabEntry>>()
                     .WithNone<PrefabRegistryProcessed>()
                     .WithEntityAccess())
             {
+                // ── 프리팹 + 메타 등록 ────────────────────────────
                 for (int i = 0; i < entries.Length; i++)
                 {
                     var e   = entries[i];
                     var key = new int2(e.MainKey, e.VariantKey);
 
-                    // PrefabLookup 등록
                     if (lookup.ValueRW.Table.TryAdd(key, e.Prefab))
                     {
                         added++;
@@ -75,23 +86,47 @@ namespace CitySim
                     {
                         UnityEngine.Debug.LogWarning(
                             $"[PrefabLookupBuildSystem] 키 충돌 " +
-                            $"MainKey={e.MainKey}, VariantKey={e.VariantKey}. " +
-                            $"기존 항목 유지.");
+                            $"MainKey={e.MainKey}, VariantKey={e.VariantKey}. 기존 항목 유지.");
                         conflict++;
                     }
 
-                    // PrefabMetaLookup 등록
+                    // PrefabMeta 등록 (Category·BuildableOn 포함 — 이전 누락 수정)
                     metaLookup.ValueRW.Table.TryAdd(key, new PrefabMeta
                     {
-                        Size         = e.Size,
-                        Offset       = e.Offset,
-                        RoadMask     = e.RoadMask,
-                        MultiCount   = e.MultiCount,
+                        Size          = e.Size,
+                        Offset        = e.Offset,
+                        RoadMask      = e.RoadMask,
+                        MultiCount    = e.MultiCount,
                         MultiItemSize = e.MultiItemSize,
+                        BuildableOn   = e.BuildableOn,
+                        Category      = e.Category,
                     });
 
-                    // DLC ID 기록
                     lookup.ValueRW.LoadedDlcIds.Add(e.DlcId);
+                }
+
+                // ── 입구 등록 (같은 엔티티의 BakedEntranceEntry) ──
+                if (SystemAPI.HasBuffer<BakedEntranceEntry>(entity))
+                {
+                    var entranceEntries = SystemAPI.GetBuffer<BakedEntranceEntry>(entity);
+                    for (int i = 0; i < entranceEntries.Length; i++)
+                    {
+                        var en = entranceEntries[i];
+
+                        entranceLookup.ValueRW.Table.TryGetValue(en.MainKey, out var list);
+                        if (list.Length < list.Capacity)
+                        {
+                            list.Add(en.Offset);
+                            entranceLookup.ValueRW.Table[en.MainKey] = list;
+                            entrances++;
+                        }
+                        else
+                        {
+                            UnityEngine.Debug.LogWarning(
+                                $"[PrefabLookupBuildSystem] 입구 초과(MainKey={en.MainKey}). " +
+                                $"최대 {list.Capacity}개까지만 등록.");
+                        }
+                    }
                 }
 
                 ecb.AddComponent<PrefabRegistryProcessed>(entity);
@@ -102,8 +137,9 @@ namespace CitySim
 
             if (added > 0)
                 UnityEngine.Debug.Log(
-                    $"[PrefabLookupBuildSystem] {added}개 등록" +
-                    (conflict > 0 ? $", {conflict}개 충돌 스킵" : ""));
+                    $"[PrefabLookupBuildSystem] 프리팹 {added}개 등록" +
+                    (conflict  > 0 ? $", {conflict}개 충돌 스킵" : "") +
+                    (entrances > 0 ? $", 입구 {entrances}개 등록" : ""));
         }
 
         public void OnDestroy(ref SystemState state)
@@ -119,6 +155,12 @@ namespace CitySim
             {
                 var m = SystemAPI.GetSingleton<PrefabMetaLookup>();
                 if (m.Table.IsCreated) m.Table.Dispose();
+            }
+
+            if (SystemAPI.HasSingleton<EntranceLookup>())
+            {
+                var en = SystemAPI.GetSingleton<EntranceLookup>();
+                if (en.Table.IsCreated) en.Table.Dispose();
             }
         }
     }

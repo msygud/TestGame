@@ -7,11 +7,6 @@ using UnityEngine;
 namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════
-    //  열거형
-    // ══════════════════════════════════════════════════════════════
-
-
-    // ══════════════════════════════════════════════════════════════
     //  TerrainMask  — 건물이 배치 가능한 지형 종류 (비트마스크)
     // ══════════════════════════════════════════════════════════════
     [Flags]
@@ -23,20 +18,41 @@ namespace CitySim
         Any   = Land | Water,
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  PrefabCategory  — 스폰(인스턴싱) 방식 기준 분류
+    //
+    //  카테고리가 스폰 방식을 완전히 결정한다 (별도 SpawnMode 불필요).
+    //
+    //  ── 건설 (건설 UI에서 유저가 배치) ──
+    //    Road        1:N 연결성 드래그 (비트마스크 셰이프 자동)
+    //    Building    1:1 단일, footprint 점유, 입구 보유
+    //    Environment 1:N 랜덤 다중 (셀 내), 단일+드래그
+    //
+    //  ── 생산 (건물이 생산, 직접 배치 아님) ──
+    //    CombatUnit  생산 건물 → 유닛 선택 → 스폰
+    //
+    //  ── 런타임 전용 (시스템 스폰, 배치 UI 미노출) ──
+    //    Projectile  투사체
+    //    Effect      이펙트
+    //
+    //  ※ 기존 Terrain/Unit 제거됨. 기존 SO 항목은 재분류 필요.
+    //     (Terrain → Building 또는 Environment, Unit → CombatUnit)
+    // ══════════════════════════════════════════════════════════════
     public enum PrefabCategory
     {
-        Terrain    = 0,  // 지형·장식물 (나무, 바위, 지형물 등)
-        Unit       = 1,  // 유닛
-        Projectile = 2,  // 투사체
-        Effect     = 3,  // 이펙트 (파티클, VFX 등)
-        Road       = 4,  // 도로
-        Other      = 99, // 그 외
-    }
+        // 건설
+        Road        = 0,
+        Building    = 1,
+        Environment = 2,
 
-    public enum PrefabSpawnMode
-    {
-        Single = 0,  // 셀 크기(Size)만큼 점유, 1개 인스턴싱
-        Multi  = 1,  // 셀 1개 강제, 셀 내 N개 랜덤 배치
+        // 생산
+        CombatUnit  = 3,
+
+        // 런타임 전용
+        Projectile  = 10,
+        Effect      = 11,
+
+        Other       = 99,
     }
 
     [Flags]
@@ -66,7 +82,7 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  RegistryItem  — SO 내 개별 프리팹 항목
+    //  RegistryItem  — SO 내 개별 프리팹 항목 (MainKey + VariantKey 단위)
     // ══════════════════════════════════════════════════════════════
     [Serializable]
     public class RegistryItem
@@ -79,14 +95,13 @@ namespace CitySim
         [Header("Info")]
         public string         Name;
         public PrefabCategory Category;
-        public PrefabSpawnMode SpawnMode;
         public PrefabUsage    Usage;
 
         [Header("Prefab")]
         public GameObject Prefab;
 
         [Header("Placement")]
-        public Vector2Int Size        = new(1, 1);            // XZ 셀 단위 (Single만 의미 있음)
+        public Vector2Int Size        = new(1, 1);            // XZ 셀 단위 (Building만 의미 있음)
         public Vector3    Offset      = Vector3.zero;
         [Tooltip("배치 가능한 지형. Land=땅 전용, Water=물 전용, Any=모두 가능.")]
         public TerrainMask BuildableOn = TerrainMask.Land;
@@ -96,7 +111,7 @@ namespace CitySim
         // None(0)이면 도로가 아님.
         public RoadDir RoadMask;
 
-        [Header("Multi")]
+        [Header("Environment (Multi)")]
         public int   MultiCountPerCell = 5;
         public float MultiItemSize     = 0.5f;
 
@@ -107,10 +122,33 @@ namespace CitySim
         [Header("State")]
         public bool IsDeleted;
 
-        // ── 헬퍼 ─────────────────────────────────────────────────
-        public bool IsRoad  => Category == PrefabCategory.Road;
-        public bool IsMulti => SpawnMode == PrefabSpawnMode.Multi;
+        // ── 헬퍼 (스폰 방식·속성은 Category에서 파생) ─────────────
+        public bool IsRoad         => Category == PrefabCategory.Road;
+        public bool IsBuilding     => Category == PrefabCategory.Building;
+        public bool IsMulti        => Category == PrefabCategory.Environment; // 셀 내 랜덤 다중
+        public bool IsCombatUnit   => Category == PrefabCategory.CombatUnit;
+        public bool HasEntrance    => Category == PrefabCategory.Building;
+        public bool IsConstructable
+            => Category is PrefabCategory.Road
+                        or PrefabCategory.Building
+                        or PrefabCategory.Environment;
         public bool IsValid => Prefab != null && !IsDeleted;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  EntranceEntry  — MainKey 단위 입구 정의 (Building 전용)
+    //
+    //  NeedMappingEntry와 동일하게 MainKey 키로 별도 관리.
+    //  외형(VariantKey) 무관 — 게임플레이 속성.
+    //
+    //  Offsets: footprint 원점(좌하단) 기준 상대 셀.
+    //           배치 시 origin + offset 셀이 도로면 연결 성립.
+    // ══════════════════════════════════════════════════════════════
+    [Serializable]
+    public class EntranceEntry
+    {
+        public int               MainKey;
+        public List<Vector2Int>  Offsets = new();
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -118,7 +156,11 @@ namespace CitySim
     //
     //  DLC 하나당 하나의 SO.
     //  인게임에서는 SubScene 베이킹을 통해 ECS Entity로 제공된다.
-    //  에디터에서는 맵에디터 프리팹 목록과 Addressables 등록에 사용.
+    //
+    //  MainKey 단위 매핑 리스트 (NeedMaps와 동일 패턴):
+    //    items[]     — L1 소스 (MainKey, VariantKey, Prefab)
+    //    NeedMaps[]  — L2 소스 (NeedMask → MainKey)
+    //    Entrances[] — 입구 소스 (MainKey → 입구 오프셋들)
     //
     //  메뉴: Assets > Create > CitySim > Game Prefab Registry
     // ══════════════════════════════════════════════════════════════
@@ -128,7 +170,6 @@ namespace CitySim
     public class GamePrefabRegistry : ScriptableObject
     {
         [Header("DLC Identity")]
-        // 소문자 필드명: Editor의 FindProperty("dlcId") 등과 일치
         public int    dlcId;
         public string dlcName;
         public string displayName; // UI 표시용 (비면 dlcName 사용)
@@ -143,8 +184,12 @@ namespace CitySim
         // NeedLayer L2 구성 소스. NeedMappingAuthoring이 BakedNeedMapping 버퍼로 베이킹.
         public List<NeedMappingEntry> NeedMaps = new();
 
+        [Header("Entrances")]
+        // 입구 구성 소스 (Building MainKey 전용).
+        // GamePrefabRegistryAuthoring이 BakedEntranceEntry 버퍼로 베이킹.
+        public List<EntranceEntry> Entrances = new();
+
         // ── 프로퍼티 (외부 접근 편의) ─────────────────────────────
-        // PrefabRegistryWindow / GamePrefabRegistryEditor 에서 사용
         public int    DlcId   => dlcId;
         public string DlcName => dlcName;
         public List<RegistryItem> Items => items;
@@ -169,6 +214,14 @@ namespace CitySim
                 if (!item.IsDeleted && item.MainKey == mainKey)
                     result.Add(item);
             return result;
+        }
+
+        /// <summary>MainKey의 입구 정의 조회. 없으면 null.</summary>
+        public EntranceEntry GetEntrance(int mainKey)
+        {
+            foreach (var e in Entrances)
+                if (e.MainKey == mainKey) return e;
+            return null;
         }
 
         /// <summary>새 항목 추가 후 반환.</summary>
@@ -217,6 +270,26 @@ namespace CitySim
                     });
                 }
             }
+
+            // 입구는 Building MainKey에만 의미가 있음
+            foreach (var ent in Entrances)
+            {
+                bool isBuilding = false;
+                foreach (var item in items)
+                {
+                    if (item.IsDeleted) continue;
+                    if (item.MainKey == ent.MainKey && item.IsBuilding) { isBuilding = true; break; }
+                }
+                if (!isBuilding)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        Level   = ValidationLevel.Warning,
+                        Message = $"Entrance(MainKey={ent.MainKey}): 대응하는 Building 항목이 없습니다.",
+                    });
+                }
+            }
+
             return issues;
         }
 

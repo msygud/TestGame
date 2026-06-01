@@ -18,22 +18,36 @@ namespace CitySim
         public int    VariantKey;
         public Entity Prefab;
 
-        /// <summary>XZ 점유 크기 (셀 단위). Single 배치 시 점유 검사에 사용.</summary>
+        /// <summary>XZ 점유 크기 (셀 단위). Building 배치 시 점유 검사에 사용.</summary>
         public int2   Size;
         /// <summary>인스턴싱 시 위치 보정 오프셋 (월드 단위).</summary>
         public float3 Offset;
         /// <summary>도로 비트마스크 (RoadDir). 0 = 도로 아님.</summary>
         public byte   RoadMask;
-        /// <summary>Multi 모드: 셀당 배치 수.</summary>
+        /// <summary>Environment 모드: 셀당 배치 수.</summary>
         public int    MultiCount;
-        /// <summary>Multi 모드: 개별 아이템 크기.</summary>
+        /// <summary>Environment 모드: 개별 아이템 크기.</summary>
         public float  MultiItemSize;
         /// <summary>DLC 소속 ID. DLC 보유 검증에 사용.</summary>
         public int          DlcId;
         /// <summary>배치 가능한 지형 종류 (Land / Water / Any).</summary>
         public TerrainMask  BuildableOn;
-        /// <summary>Single / Multi 배치 모드.</summary>
-        public PrefabSpawnMode SpawnMode;
+        /// <summary>스폰 방식·속성을 결정하는 카테고리.</summary>
+        public PrefabCategory Category;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  BakedEntranceEntry  (DynamicBuffer)
+    //
+    //  GamePrefabRegistryAuthoring.Baker가 SO의 Entrances[]를 평탄화하여 작성.
+    //  (MainKey 하나에 입구가 여러 개면 항목도 여러 개)
+    //  PrefabLookupBuildSystem이 EntranceLookup으로 집계.
+    // ══════════════════════════════════════════════════════════════
+    [InternalBufferCapacity(32)]
+    public struct BakedEntranceEntry : IBufferElementData
+    {
+        public int  MainKey;
+        public int2 Offset;   // footprint 원점 기준 상대 셀
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -47,7 +61,7 @@ namespace CitySim
         /// <summary>key = int2(MainKey, VariantKey), value = 프리팹 Entity.</summary>
         public NativeHashMap<int2, Entity> Table;
 
-        /// <summary>로드된 DLC ID 집합. IsDlcAvailable 검사에 사용.</summary>
+        /// <summary>로드된 DLC ID 집합. HasDlc 검사에 사용.</summary>
         public NativeHashSet<int> LoadedDlcIds;
 
         /// <summary>키로 프리팹 Entity 조회. 없으면 Entity.Null.</summary>
@@ -68,33 +82,37 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════
     //  PrefabRegistryProcessed  (태그)
     //
-    //  BakedPrefabEntry 버퍼가 PrefabLookup에 반영 완료된 엔티티에 부착.
-    //  PrefabLookupBuildSystem이 중복 처리를 방지하기 위해 사용.
+    //  BakedPrefabEntry/BakedEntranceEntry 버퍼가 룩업에 반영 완료된
+    //  엔티티에 부착. PrefabLookupBuildSystem이 중복 처리 방지에 사용.
     // ══════════════════════════════════════════════════════════════
     public struct PrefabRegistryProcessed : IComponentData { }
 
     // ══════════════════════════════════════════════════════════════
     //  PrefabMeta  — 프리팹 배치 메타정보 (PrefabMetaLookup 값 타입)
+    //
+    //  스폰 방식·속성은 Category에서 파생한다.
     // ══════════════════════════════════════════════════════════════
     public struct PrefabMeta
     {
         public int2          Size;          // XZ 점유 크기 (셀 단위)
         public float3        Offset;        // 배치 위치 보정
-        public byte          RoadMask;      // 0 = 도로 아님
-        public int           MultiCount;    // Multi 배치 수
-        public float         MultiItemSize; // Multi 개별 아이템 크기
+        public byte          RoadMask;      // 도로 셰이프 비트마스크 (0 = 도로 아님)
+        public int           MultiCount;    // Environment 배치 수
+        public float         MultiItemSize; // Environment 개별 아이템 크기
         public TerrainMask   BuildableOn;   // 배치 가능 지형
-        public PrefabSpawnMode SpawnMode;   // Single / Multi
+        public PrefabCategory Category;     // 스폰 방식 결정
 
-        public bool IsRoad  => RoadMask != 0;
-        public bool IsMulti => SpawnMode == PrefabSpawnMode.Multi && !IsRoad;
+        public bool IsRoad     => Category == PrefabCategory.Road;
+        public bool IsMulti    => Category == PrefabCategory.Environment;
+        public bool IsBuilding => Category == PrefabCategory.Building;
+        public bool HasEntrance => Category == PrefabCategory.Building;
     }
 
     // ══════════════════════════════════════════════════════════════
     //  PrefabMetaLookup  (ECS 싱글톤)
     //
     //  (MainKey, VariantKey) → PrefabMeta 런타임 조회 테이블.
-    //  MapLoadSystem, MapLoaderSystem 등이 참조.
+    //  MapLoadSystem, MapLoaderSystem, BuildingPlacementSystem 등이 참조.
     // ══════════════════════════════════════════════════════════════
     public struct PrefabMetaLookup : IComponentData
     {
@@ -107,8 +125,30 @@ namespace CitySim
             return m;
         }
 
-        /// <summary>메타 조회 (out 패턴). MultiCount 등 있을 때만 쓰는 경우.</summary>
+        /// <summary>메타 조회 (out 패턴).</summary>
         public bool TryGetMeta(int mainKey, int variantKey, out PrefabMeta meta)
             => Table.TryGetValue(new int2(mainKey, variantKey), out meta);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  EntranceLookup  (ECS 싱글톤)
+    //
+    //  MainKey → 입구 오프셋 목록 (footprint 원점 기준).
+    //  배치 시 BuildingPlacementSystem이 입구셀=origin+offset 을 계산하여
+    //  도로 연결을 검증·기록할 때 사용.
+    //
+    //  값 타입은 FixedList64Bytes<int2> (입구 최대 ~7개).
+    //  생명주기: PrefabLookupBuildSystem이 관리.
+    // ══════════════════════════════════════════════════════════════
+    public struct EntranceLookup : IComponentData
+    {
+        public NativeHashMap<int, FixedList64Bytes<int2>> Table;
+
+        /// <summary>MainKey의 입구 오프셋 목록 조회.</summary>
+        public bool TryGet(int mainKey, out FixedList64Bytes<int2> offsets)
+            => Table.TryGetValue(mainKey, out offsets);
+
+        /// <summary>입구 정의가 있는지 여부.</summary>
+        public bool Has(int mainKey) => Table.ContainsKey(mainKey);
     }
 }

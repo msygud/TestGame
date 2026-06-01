@@ -13,7 +13,7 @@ namespace Game.Unit
         public override void Bake(AuthInstanceID authoring)
         {
             var entity = GetEntity(TransformUsageFlags.Dynamic);
-            AddComponent(entity, new InstanceIDData { InstanceID = authoring.InstanceID });
+            //AddComponent(entity, new InstanceIDData { InstanceID = authoring.InstanceID });
         }
     }
 }

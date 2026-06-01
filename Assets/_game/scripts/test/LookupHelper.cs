@@ -7,26 +7,22 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════════════════
     //  LookupHelper
     //
-    //  L2 → L1(PrefabLookup) 두 단계 조회를 하나의 호출로 제공하는 정적 유틸리티.
+    //  L2(NeedLookupL2) → L1(PrefabLookup) 두 단계 조회를 하나의 호출로 제공.
     //
-    //  호출 측은 L1/L2 구분을 몰라도 된다:
-    //    bool ok = LookupHelper.TryGetPrefab(needMask, factionL2, l1, variantKey, out prefab);
+    //  오버로드 두 가지:
+    //    ① int variantKey        — VariantKey를 직접 지정 (레거시 호환)
+    //    ② VariantProfile + who  — SlotController(User/AI) 기반 자동 해결
     //
-    //  생성/파괴가 잦은 프리팹 스폰 시스템에서 NeedMask를 인수로 직접 넘기는 패턴:
-    //    SpawnByNeedSystem → LookupHelper.TryGetPrefab(entity.NeedMask, ...) → Instantiate
+    //  호출 측은 L1/L2 구분을 몰라도 된다.
     // ══════════════════════════════════════════════════════════════════════════
     public static class LookupHelper
     {
-        // ── 기본 조회 ───────────────────────────────────────────────────────
+        // ── ① 직접 지정 오버로드 (레거시 호환) ────────────────────────────
 
         /// <summary>
-        /// NeedMask → MainKey (L2) → Prefab Entity (L1 = PrefabLookup) 두 단계 조회.
+        /// NeedMask → MainKey (L2) → Prefab Entity (L1) 두 단계 조회.
+        /// VariantKey를 직접 지정. 없으면 V0 폴백.
         /// </summary>
-        /// <param name="needMask">조회할 니드 비트 조합</param>
-        /// <param name="factionL2">해당 팩션의 NeedLookupL2 컴포넌트</param>
-        /// <param name="l1">전역 PrefabLookup 싱글톤</param>
-        /// <param name="variantKey">플레이어가 선택한 베리언트 키</param>
-        /// <param name="prefab">결과 프리팹 엔티티</param>
         public static bool TryGetPrefab(
             uint needMask,
             in NeedLookupL2 factionL2,
@@ -36,21 +32,56 @@ namespace CitySim
         {
             prefab = Entity.Null;
 
-            // L2: NeedMask → MainKey
             if (!factionL2.Table.TryGetValue(needMask, out int mainKey))
                 return false;
 
-            // L1: (MainKey, VariantKey) → Prefab
             prefab = l1.Get(mainKey, variantKey);
             if (prefab != Entity.Null) return true;
 
-            // 선택한 베리언트가 없으면 V0(기본)으로 폴백
+            // 선택한 베리언트 없으면 V0(기본)으로 폴백
             prefab = l1.Get(mainKey, 0);
             return prefab != Entity.Null;
         }
 
-        // ── MainKey 직접 조회 (L2만 필요한 경우) ──────────────────────────
+        // ── ② VariantProfile 오버로드 ─────────────────────────────────────
 
+        /// <summary>
+        /// NeedMask → MainKey (L2) → Prefab Entity (L1) 두 단계 조회.
+        /// VariantKey는 VariantProfile.Resolve(mainKey, who) 로 자동 결정.
+        /// 해결된 베리언트가 없으면 V0 폴백.
+        /// </summary>
+        /// <param name="needMask">조회할 니드 비트 조합.</param>
+        /// <param name="factionL2">해당 팩션의 NeedLookupL2.</param>
+        /// <param name="l1">전역 PrefabLookup 싱글톤.</param>
+        /// <param name="profile">세션 베리언트 설정 (VariantProfile 싱글톤).</param>
+        /// <param name="who">User 또는 AI — VariantProfile 조회 키.</param>
+        /// <param name="prefab">결과 프리팹 엔티티.</param>
+        public static bool TryGetPrefab(
+            uint needMask,
+            in NeedLookupL2 factionL2,
+            in PrefabLookup l1,
+            in VariantProfile profile,
+            SlotController who,
+            out Entity prefab)
+        {
+            prefab = Entity.Null;
+
+            if (!factionL2.Table.TryGetValue(needMask, out int mainKey))
+                return false;
+
+            int vk = profile.Resolve(mainKey, who);
+
+            prefab = l1.Get(mainKey, vk);
+            if (prefab != Entity.Null) return true;
+
+            // V0 폴백
+            prefab = l1.Get(mainKey, 0);
+            return prefab != Entity.Null;
+        }
+
+        // ── MainKey 직접 조회 ──────────────────────────────────────────────
+
+        /// <summary>NeedMask → MainKey 조회 (L2만 필요한 경우).</summary>
         public static bool TryGetMainKey(
             uint needMask,
             in NeedLookupL2 factionL2,
@@ -63,10 +94,10 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════════════════
     public struct UpgradeNeedMappingCommand : IComponentData
     {
-        public int FactionId;   // 어떤 팩션의 L2를 바꿀 것인가
+        public int  FactionId;   // 어떤 팩션의 L2를 바꿀 것인가
         public uint OldNeedMask; // 기존 키 (0이면 신규 추가)
         public uint NewNeedMask; // 새 키
-        public int MainKey;     // 연결할 MainKey
+        public int  MainKey;     // 연결할 MainKey
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -81,7 +112,9 @@ namespace CitySim
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate(
-                SystemAPI.QueryBuilder().WithAll<UpgradeNeedMappingCommand>().Build());
+                SystemAPI.QueryBuilder()
+                    .WithAll<UpgradeNeedMappingCommand>()
+                    .Build());
         }
 
         public void OnUpdate(ref SystemState state)
@@ -89,7 +122,8 @@ namespace CitySim
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
             foreach (var (cmd, cmdEntity) in
-                     SystemAPI.Query<RefRO<UpgradeNeedMappingCommand>>().WithEntityAccess())
+                     SystemAPI.Query<RefRO<UpgradeNeedMappingCommand>>()
+                         .WithEntityAccess())
             {
                 var c = cmd.ValueRO;
 
@@ -120,42 +154,58 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  SpawnByNeedCommand / SpawnByNeedSystem — NeedMask 기반 즉시 스폰
+    //  SpawnByNeedCommand — NeedMask 기반 즉시 스폰 명령
     //
-    //  생성/파괴가 잦은 유닛/이펙트에 적합한 패턴.
+    //  생성/파괴가 잦은 유닛·이펙트 스폰에 적합.
+    //  Who 필드로 User/AI를 구분해 VariantProfile에서 올바른 베리언트 해결.
     // ══════════════════════════════════════════════════════════════════════════
     public struct SpawnByNeedCommand : IComponentData
     {
-        public uint NeedMask;
-        public int FactionId;
-        public Unity.Mathematics.float3 Position;
+        public uint          NeedMask;
+        public int           FactionId;
+        public float3        Position;
+        /// <summary>
+        /// 이 스폰이 유저 팀 유닛인지 AI 팀 유닛인지.
+        /// VariantProfile.Resolve(mainKey, Who) 호출에 사용.
+        /// </summary>
+        public SlotController Who;
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    //  SpawnByNeedSystem — SpawnByNeedCommand 처리
+    //
+    //  VariantProfile 싱글톤에서 Who(User/AI)에 맞는 VariantKey를 해결.
+    // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct SpawnByNeedSystem : ISystem
     {
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<PrefabLookup>();
+            state.RequireForUpdate<VariantProfile>();
             state.RequireForUpdate(
-                SystemAPI.QueryBuilder().WithAll<SpawnByNeedCommand>().Build());
+                SystemAPI.QueryBuilder()
+                    .WithAll<SpawnByNeedCommand>()
+                    .Build());
         }
 
         public void OnUpdate(ref SystemState state)
         {
-            var em = state.EntityManager;
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-            var l1 = SystemAPI.GetSingleton<PrefabLookup>();
-            var variantKey = SystemAPI.GetSingleton<PlayerVariantSetting>().VariantKey;
+            var em      = state.EntityManager;
+            var ecb     = new EntityCommandBuffer(Allocator.Temp);
+            var l1      = SystemAPI.GetSingleton<PrefabLookup>();
+            var profile = SystemAPI.GetSingleton<VariantProfile>();
 
             // 팩션별 L2 캐시
-            var factionL2Cache = new NativeHashMap<int, NeedLookupL2>(8, Allocator.Temp);
+            var factionL2Cache =
+                new NativeHashMap<int, NeedLookupL2>(8, Allocator.Temp);
             foreach (var (fid, lookup) in
                      SystemAPI.Query<RefRO<FactionId>, RefRO<NeedLookupL2>>())
                 factionL2Cache.TryAdd(fid.ValueRO.Value, lookup.ValueRO);
 
             foreach (var (cmd, cmdEntity) in
-                     SystemAPI.Query<RefRO<SpawnByNeedCommand>>().WithEntityAccess())
+                     SystemAPI.Query<RefRO<SpawnByNeedCommand>>()
+                         .WithEntityAccess())
             {
                 var c = cmd.ValueRO;
 
@@ -165,15 +215,18 @@ namespace CitySim
                     continue;
                 }
 
-                if (LookupHelper.TryGetPrefab(c.NeedMask, l2, l1, variantKey, out var prefab))
+                // VariantProfile + SlotController(Who) 기반 해결
+                if (LookupHelper.TryGetPrefab(
+                    c.NeedMask, l2, l1, profile, c.Who, out var prefab))
                 {
                     var spawned = ecb.Instantiate(prefab);
-                    ecb.SetComponent(spawned, new Unity.Transforms.LocalTransform
-                    {
-                        Position = c.Position,
-                        Rotation = Unity.Mathematics.quaternion.identity,
-                        Scale = 1f,
-                    });
+                    ecb.SetComponent(spawned,
+                        new Unity.Transforms.LocalTransform
+                        {
+                            Position = c.Position,
+                            Rotation = quaternion.identity,
+                            Scale    = 1f,
+                        });
                 }
 
                 ecb.DestroyEntity(cmdEntity);
@@ -185,4 +238,3 @@ namespace CitySim
         }
     }
 }
-

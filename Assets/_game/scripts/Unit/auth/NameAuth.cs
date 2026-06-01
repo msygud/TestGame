@@ -14,7 +14,7 @@ namespace Game.Unit
         {
 #if UNITY_EDITOR
             var entity = GetEntity(TransformUsageFlags.Dynamic);
-            AddComponent(entity, new UnitName { Name = authoring.Name });
+            //AddComponent(entity, new UnitName { Name = authoring.Name });
 #endif
         }
     }

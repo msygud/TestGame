@@ -23,7 +23,7 @@ namespace CitySim
     //    });
     //
     //  BuildingPlacementSystem이 처리 후 엔티티를 파괴한다.
-    //  PrefabMeta.SpawnMode / RoadMask 를 보고 Single·Multi·Road를 자동 판단.
+    //  PrefabMeta.Category(Road/Building/Environment)를 보고 스폰 방식을 자동 판단.
     // ══════════════════════════════════════════════════════════════════
     public struct PlaceBuildingRequest : IComponentData
     {

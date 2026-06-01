@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
@@ -18,6 +19,8 @@ namespace Game
     /// 흐름:
     ///   슬롯 구성 → BuildTeamInfos() → CreateEntities()
     ///   → ECS: TeamInfoData + TeamStartPoint (슬롯당 1 엔티티)
+    ///           FactionConfig.Slots 채우기
+    ///           VariantProfile 싱글톤 생성
     ///           UserPlayer 싱글톤 (플레이어 슬롯이 있을 때)
     ///           VisibleStateData 싱글톤
     /// </summary>
@@ -25,6 +28,11 @@ namespace Game
     {
         // ── Inspector ─────────────────────────────────────────────────────
         [SerializeField] private List<TeamSlot> _slots = new();
+
+        [Tooltip("베리언트 선택 창(VariantSelectionWindow)에서 편집한 SO.\n" +
+                 "null이면 모든 유닛·건물이 기본 외형(V0)을 사용한다.")]
+        [SerializeField] private VariantSettings _variantSettings;
+
         [Tooltip("true 이면 전장의 안개 없이 전맵 공개 (관전·테스트용)")]
         [SerializeField] private bool _allMapClear;
 
@@ -102,25 +110,21 @@ namespace Game
 
             foreach (var (idx, slot) in open)
             {
-                TeamMask ally   = 0;
-                TeamMask enemy  = 0;
-                // neutral: 추후 필요 시 슬롯에 Stance 필드 추가
+                TeamMask ally  = 0;
+                TeamMask enemy = 0;
 
                 foreach (var (otherIdx, other) in open)
                 {
-                    if (otherIdx == idx) continue; // 자기 자신 제외
+                    if (otherIdx == idx) continue;
 
                     var bit = (TeamMask)(1 << otherIdx);
-                    if (other.TeamID == slot.TeamID)
-                        ally  |= bit;
-                    else
-                        enemy |= bit;
+                    if (other.TeamID == slot.TeamID) ally  |= bit;
+                    else                             enemy |= bit;
                 }
 
                 bool isPlayerTeam = (UserTeamID >= 0) && (slot.TeamID == UserTeamID);
                 bool isPlayer     = slot.IsPlayer;
 
-                // TeamInfoData 빌드
                 var data = TeamInfoData.CreateTeamInfo(
                     teamIndex    : idx,
                     enemyTeams   : enemy,
@@ -136,9 +140,10 @@ namespace Game
                 {
                     SlotIndex    = idx,
                     Data         = data,
-                    Cell         = slot.Cell,   // ← 슬롯 위치 = 스타트포인트
+                    Cell         = slot.Cell,
                     IsPlayer     = isPlayer,
                     IsPlayerTeam = isPlayerTeam,
+                    FactionId    = slot.FactionId,   // ← 팩션 배정
                 });
             }
 
@@ -153,7 +158,13 @@ namespace Game
         {
             EntityManager em = _world.EntityManager;
 
-            // ── UserPlayer 싱글톤 ──────────────────────────────────────────
+            // ── ① VariantProfile 생성 (가장 먼저) ────────────────────────
+            CreateVariantProfile(em);
+
+            // ── ② FactionConfig 슬롯 채우기 ───────────────────────────────
+            FillFactionConfig(infos, em);
+
+            // ── ③ UserPlayer 싱글톤 ───────────────────────────────────────
             if (HasUserPlayer)
             {
                 var e = em.CreateEntity();
@@ -165,25 +176,25 @@ namespace Game
                 });
             }
 
-            // ── 팀 엔티티 (슬롯당 1개) ────────────────────────────────────
+            // ── ④ 팀 엔티티 (슬롯당 1개) ──────────────────────────────────
             foreach (var info in infos)
             {
                 var e = em.CreateEntity();
-                em.SetName(e, $"Team_{info.SlotIndex}" + (info.IsPlayer ? "_Player" : "_AI"));
+                em.SetName(e,
+                    $"Team_{info.SlotIndex}" +
+                    (info.IsPlayer ? "_Player" : "_AI"));
 
                 em.AddComponentData(e, info.Data);
                 em.AddComponentData(e, new TeamUnitCountData { UnitCount = 0 });
 
-                // 스타트포인트: 슬롯 Cell이 곧 시작 위치
                 em.AddComponentData(e, new TeamStartPoint
                 {
                     Cell      = new int2(info.Cell.x, info.Cell.y),
                     TeamIndex = info.SlotIndex,
                 });
-
             }
 
-            // ── 가시성 싱글톤 ──────────────────────────────────────────────
+            // ── ⑤ 가시성 싱글톤 ───────────────────────────────────────────
             var visEntity = em.CreateEntity();
             em.SetName(visEntity, "VisibleState");
             em.AddComponentData(visEntity, new VisibleStateData
@@ -195,19 +206,85 @@ namespace Game
         }
 
         // ══════════════════════════════════════════════════════════════════
+        //  VariantProfile 생성
+        //
+        //  VariantSettings SO → NativeHashMap 두 개(User/AI)로 변환.
+        //  SO가 null이면 빈 테이블 생성 (모든 유닛 기본 외형).
+        // ══════════════════════════════════════════════════════════════════
+
+        private void CreateVariantProfile(EntityManager em)
+        {
+            var userTable = new NativeHashMap<int, int>(64, Allocator.Persistent);
+            var aiTable   = new NativeHashMap<int, int>(64, Allocator.Persistent);
+
+            if (_variantSettings != null)
+            {
+                foreach (var entry in _variantSettings.Entries)
+                {
+                    // VariantKey=0은 기본값이므로 저장 불필요
+                    if (entry.VariantKey == 0) continue;
+
+                    if ((entry.ApplyTo & SlotController.User) != 0)
+                        userTable.TryAdd(entry.MainKey, entry.VariantKey);
+
+                    if ((entry.ApplyTo & SlotController.AI) != 0)
+                        aiTable.TryAdd(entry.MainKey, entry.VariantKey);
+                }
+            }
+
+            var e = em.CreateEntity();
+            em.SetName(e, "VariantProfile");
+            em.AddComponentData(e, new VariantProfile
+            {
+                UserTable = userTable,
+                AITable   = aiTable,
+            });
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  FactionConfig 슬롯 채우기
+        //
+        //  FactionConfig는 FactionConfigAuthoring Baker가 빈 상태로 생성.
+        //  여기서 실제 팩션 배정값을 기록한다.
+        //
+        //  NativeHashMap은 포인터 기반이므로
+        //  GetSingleton으로 얻은 복사본을 통해 직접 수정 가능.
+        // ══════════════════════════════════════════════════════════════════
+
+        private void FillFactionConfig(List<TeamBuildInfo> infos, EntityManager em)
+        {
+            using var query = em.CreateEntityQuery(
+                ComponentType.ReadWrite<FactionConfig>());
+
+            if (query.IsEmpty)
+            {
+                Debug.LogWarning(
+                    "[SkirmishLobby] FactionConfig 싱글톤 없음.\n" +
+                    "FactionConfigAuthoring을 서브씬에 배치하세요.");
+                return;
+            }
+
+            // NativeHashMap은 포인터 기반이므로 GetSingleton 복사본 수정이 원본에 반영됨
+            var config = query.GetSingleton<FactionConfig>();
+            foreach (var info in infos)
+                config.Slots[info.SlotIndex] = new FactionSlot
+                {
+                    FactionId = info.FactionId,
+                };
+        }
+
+        // ══════════════════════════════════════════════════════════════════
         //  Inner types
         // ══════════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// BuildTeamInfos → CreateEntities 사이의 중간 전달 데이터.
-        /// </summary>
         private struct TeamBuildInfo
         {
             public int          SlotIndex;
             public TeamInfoData Data;
-            public Vector2Int   Cell;        // 스타트포인트 셀
+            public Vector2Int   Cell;
             public bool         IsPlayer;
             public bool         IsPlayerTeam;
+            public int          FactionId;    // ← 팩션 배정
         }
 
         // ── Inspector 슬롯 ────────────────────────────────────────────────
@@ -215,6 +292,7 @@ namespace Game
         /// <summary>
         /// 로비에 배치하는 팀 슬롯 1개.
         /// Cell 값이 이 팀의 스타트포인트 그리드 좌표.
+        /// FactionId가 이 팀이 사용하는 팩션.
         /// </summary>
         [Serializable]
         public sealed class TeamSlot
@@ -232,6 +310,11 @@ namespace Game
             [Tooltip("이 슬롯의 스타트포인트 그리드 셀.\n" +
                      "MapEditorWindow의 StartPoint 모드에서 찍은 위치와 맞춰야 한다.")]
             public Vector2Int Cell;
+
+            [Tooltip("이 슬롯이 사용하는 팩션 ID.\n" +
+                     "FactionDefinition SO의 FactionId 및\n" +
+                     "FactionBaseDefinition SO의 FactionId와 일치해야 한다.")]
+            public int FactionId;
         }
     }
 }

@@ -9,9 +9,9 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════
     //  FactionDefinition  (ScriptableObject)
     //
-    //  팩션 메타 정보 (이름/색상/기본 VariantKey).
-    //  기존 FactionRegistry의 팩션 식별 부분만 분리.
-    //  프리팹 목록은 UnifiedPrefabRegistry로 이동.
+    //  팩션 메타 정보 (이름/색상).
+    //  프리팹 목록은 NeedMappingEntry(FactionFlags)로 관리.
+    //  베리언트 설정은 VariantSettings SO + VariantProfile로 분리.
     //
     //  메뉴: Assets > Create > CitySim > Faction Definition
     // ══════════════════════════════════════════════════════════════
@@ -20,47 +20,50 @@ namespace CitySim
         fileName = "FactionDef_New")]
     public class FactionDefinition : ScriptableObject
     {
-        [Tooltip("전역 고유 팩션 ID. UnifiedPrefabRegistry의 FactionId와 매핑.")]
+        [Tooltip("전역 고유 팩션 ID.\n" +
+                 "NeedMappingEntry.FactionFlags 및\n" +
+                 "FactionBaseDefinition.FactionId와 반드시 일치.")]
         public int FactionId;
 
-        [Tooltip("DLC 식별자.")]
+        [Tooltip("이 팩션이 속한 DLC 식별자.")]
         public int DlcId = 0;
 
-        [Tooltip("팩션 이름.")]
+        [Tooltip("팩션 이름 (UI 표시용).")]
         public string FactionName = "New Faction";
 
-        [Tooltip("팩션 대표 색상 (미니맵/UI).")]
+        [Tooltip("팩션 대표 색상 (미니맵/팀 표시).")]
         public Color FactionColor = Color.white;
 
-        [Tooltip("이 팩션의 기본 VariantKey.\n" +
-                 "게임 시작 시 FactionConfig 싱글톤에 등록되어\n" +
-                 "NeedResolver가 프리팹 선택 시 참조.")]
-        public int DefaultVariantKey = 0;
+        // VariantKey는 VariantSettings SO + VariantProfile로 이관.
+        // (VariantSelectionWindow에서 유닛별 User/AI 독립 설정)
     }
 
     // ══════════════════════════════════════════════════════════════
     //  FactionConfig  (ECS 싱글톤)
     //
-    //  게임 시작(로비) 시 확정된 팩션 설정을 보관.
-    //  팀 인덱스 → (FactionId, VariantKey) 매핑.
+    //  게임 시작(로비) 시 확정된 팀→팩션 배정 정보를 보관.
+    //  key   = TeamIndex (0~7)
+    //  value = FactionSlot (FactionId)
     //
-    //  NeedResolver가 프리팹 선택 시 이 싱글톤을 참조해
-    //  현재 팩션의 VariantKey를 결정.
+    //  VariantKey는 VariantProfile 싱글톤으로 분리됨.
+    //  FactionBaseSpawnSystem / NeedResolver 등이 FactionId 조회에 사용.
     // ══════════════════════════════════════════════════════════════
     public struct FactionConfig : IComponentData
     {
         /// <summary>
-        /// key   = TeamIndex (0~7)
-        /// value = FactionSlot (FactionId + VariantKey)
-        /// 게임 시작 시 로비 데이터로 채워짐.
+        /// TeamIndex → FactionSlot 매핑.
+        /// 게임 시작(SkirmishLobby.CreateEntities) 시 채워진다.
         /// </summary>
         public NativeHashMap<int, FactionSlot> Slots;
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  FactionSlot  — 팀 1개의 팩션 배정 정보
+    // ══════════════════════════════════════════════════════════════
     public struct FactionSlot
     {
-        public int FactionId;    // -1 = 미배정
-        public int VariantKey;   // 게임 시작 시 고정
+        /// <summary>배정된 팩션 ID. -1 = 미배정.</summary>
+        public int FactionId;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -68,7 +71,8 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════
     public class FactionConfigAuthoring : UnityEngine.MonoBehaviour
     {
-        [Tooltip("프로젝트의 모든 FactionDefinition SO 목록.")]
+        [Tooltip("프로젝트의 모든 FactionDefinition SO 목록.\n" +
+                 "Baker가 참조만 하며, 실제 슬롯 값은 SkirmishLobby가 런타임에 채운다.")]
         public FactionDefinition[] FactionDefinitions;
 
         class Baker : Unity.Entities.Baker<FactionConfigAuthoring>
@@ -78,13 +82,13 @@ namespace CitySim
                 var e      = GetEntity(TransformUsageFlags.None);
                 var config = new FactionConfig
                 {
-                    // 최대 8팀. 실제 값은 로비에서 채움.
+                    // 최대 8팀. 실제 FactionId는 SkirmishLobby에서 채움.
                     Slots = new NativeHashMap<int, FactionSlot>(8, Allocator.Persistent),
                 };
 
-                // 기본값으로 미배정 초기화
+                // 기본값: 전부 미배정 (-1)
                 for (int i = 0; i < 8; i++)
-                    config.Slots[i] = new FactionSlot { FactionId = -1, VariantKey = 0 };
+                    config.Slots[i] = new FactionSlot { FactionId = -1 };
 
                 AddComponent(e, config);
             }
@@ -92,7 +96,7 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  FactionConfigSystem  — 생명주기 관리
+    //  FactionConfigSystem  — FactionConfig 생명주기 관리
     // ══════════════════════════════════════════════════════════════
     [Unity.Entities.UpdateInGroup(typeof(Unity.Entities.InitializationSystemGroup))]
     public partial struct FactionConfigSystem : Unity.Entities.ISystem
