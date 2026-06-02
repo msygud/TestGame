@@ -1,0 +1,182 @@
+using Unity.Collections;
+using Unity.Entities;
+using Unity.Mathematics;
+using Game.Unit;
+
+namespace CitySim
+{
+    // ══════════════════════════════════════════════════════════════════════════
+    //  AiCityGrowthSystem — AI 팀의 도시 성장 결정 (단순 성장 버전)
+    //
+    //  역할: BlockOps 헬퍼가 나열한 '가능성'을 받아 '결정'을 내린다(정책).
+    //    헬퍼 = 사실(후보·공유변·가능여부), 시스템 = 선택·발행.
+    //
+    //  느슨함 원칙(§메모):
+    //    - 트리거는 게임시간 경계(DayChanged). 일시정지/배속 자동 반영.
+    //    - 결정 예산: 한 틱(하루)에 팀당 구획 1개만. 비용 상한 + 점진 성장.
+    //    - 즉각 반응이 아니라 관성 있는 성장 → 재미 + 성능.
+    //
+    //  단순 성장 정책(이번 단계):
+    //    - "무엇을 지을까"는 고정 (GrowthConfig.BuildingMainKey, 고정 구획 크기).
+    //    - 후보 점수 = 공유 변 수(CountSharedEdges)만. 클수록 응집(빈틈부터 메움).
+    //    - needs/자원/응집·자유 가중치는 추후 점수 항목으로 추가.
+    //
+    //  처리 흐름(팀별):
+    //    1. CollectAnchorCandidates → 도로 특이점 인접 빈 자리 후보
+    //    2. 각 후보에 고정 크기 구획이 CanPlaceBlock?
+    //    3. 통과 후보 중 CountSharedEdges 최대 선택
+    //    4. RegisterBlock + 구획 원점에 건물 PlaceBuildingRequest 발행
+    //
+    //  주의(ECS 구조 변경):
+    //    - request 엔티티 생성은 ECB로만. OnUpdate 본문에서 직접 구조변경 금지.
+    //    - 헬퍼는 NativeHashMap 값 수정/조회만 (구조 변경 아님) → 메인스레드 OK.
+    // ══════════════════════════════════════════════════════════════════════════
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    public partial struct AiCityGrowthSystem : ISystem
+    {
+        public void OnCreate(ref SystemState state)
+        {
+            state.RequireForUpdate<GameClock>();
+            state.RequireForUpdate<GridLayers>();
+            state.RequireForUpdate<FactionConfig>();
+        }
+
+        public void OnUpdate(ref SystemState state)
+        {
+            var clock = SystemAPI.GetSingleton<GameClock>();
+
+            // ── 느슨한 트리거: 하루 경계에서만 1회 ──────────────────────
+            if (!clock.DayChanged) return;
+
+            var layers = SystemAPI.GetSingleton<GridLayers>();
+            var factionConfig = SystemAPI.GetSingleton<FactionConfig>();
+            var cfg = GrowthConfig.Default;
+
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+
+            // ── AI 팀만 순회 (플레이어 제외) ───────────────────────────
+            //   팀 인덱스 출처는 TeamStartPoint.TeamIndex (FactionBaseSpawnSystem과 일치).
+            foreach (var (teamRO, startRO) in
+                     SystemAPI.Query<RefRO<TeamInfoData>, RefRO<TeamStartPoint>>())
+            {
+                var team = teamRO.ValueRO;
+                if (team.IsPlayer()) continue;        // 플레이어 도시는 자율 성장 안 함
+
+                int teamIndex = startRO.ValueRO.TeamIndex;
+                int factionId = ResolveFactionId(in factionConfig, teamIndex);
+
+                TryGrowOneBlock(in layers, teamIndex, factionId, in cfg, ref ecb);
+            }
+
+            ecb.Playback(state.EntityManager);
+            ecb.Dispose();
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        //  팀 1개에 대해 구획 1개 성장 시도 (결정 예산 = 1)
+        // ──────────────────────────────────────────────────────────────────
+        static void TryGrowOneBlock(
+            in GridLayers layers,
+            int teamIndex, int factionId,
+            in GrowthConfig cfg,
+            ref EntityCommandBuffer ecb)
+        {
+            // 1) 후보 수집 (도로 특이점 인접 빈 저해상도 자리)
+            var candidates = new NativeList<int2>(64, Allocator.Temp);
+            BlockOps.CollectAnchorCandidates(
+                in layers.RoadLayer,
+                in layers.BlockLayer,
+                in layers.OccupancyLayer,
+                in layers.TerrainLayer,
+                ref candidates);
+
+            // 후보 없음 → 이 팀은 이번 턴 성장 안 함 (느슨하게 넘어감)
+            if (candidates.Length == 0)
+            {
+                candidates.Dispose();
+                return;
+            }
+
+            int2 blockSize = cfg.BlockSize;   // 고정 크기 (저해상도 단위)
+
+            // 2~3) 통과 후보 중 공유 변 최대 선택
+            int bestScore = -1;
+            int2 bestPos = default;
+            bool found = false;
+
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                int2 pos = candidates[i];
+
+                if (!BlockOps.CanPlaceBlock(
+                        in layers.BlockLayer,
+                        in layers.OccupancyLayer,
+                        in layers.TerrainLayer,
+                        pos, blockSize))
+                    continue;
+
+                int score = BlockOps.CountSharedEdges(in layers.BlockLayer, pos, blockSize);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestPos = pos;
+                    found = true;
+                }
+            }
+
+            candidates.Dispose();
+
+            if (!found) return;   // 들어갈 자리 없음
+
+            // 4) 구획 등록 + 건물 발행
+            //    RegisterBlock 은 BlockLayer(NativeHashMap)만 갱신 (구조 변경 아님).
+            //    layers 는 싱글톤 복사본이지만 NativeHashMap 핸들은 내부 버퍼를
+            //    공유하므로 쓰기가 원본에 반영된다.
+            var blockLayer = layers.BlockLayer;
+            BlockOps.RegisterBlock(ref blockLayer, bestPos, blockSize, teamIndex);
+
+            // 구획 원점의 실셀 좌표 = 건물 배치 기준 셀
+            int2 realCell = BlockGrid.ToReal(bestPos);
+
+            var e = ecb.CreateEntity();
+            ecb.AddComponent(e, new PlaceBuildingRequest
+            {
+                MainKey = cfg.BuildingMainKey,
+                VariantKey = 0,
+                Cell = realCell,
+                RotationY = 0f,
+                TeamIndex = teamIndex,
+                FactionId = factionId,
+            });
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        //  팀 인덱스 → FactionId (FactionConfig.Slots 조회)
+        // ──────────────────────────────────────────────────────────────────
+        static int ResolveFactionId(in FactionConfig cfg, int teamIndex)
+        {
+            if (cfg.Slots.IsCreated && cfg.Slots.TryGetValue(teamIndex, out var slot))
+                return slot.FactionId;
+            return 0;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  GrowthConfig — 단순 성장 단계의 설정값
+    //
+    //  지금은 고정 기본값. 추후 SO/싱글톤으로 팩션·난이도별 분리 가능.
+    //    - BuildingMainKey: 성장에 사용할 건물 프리팹 키 (PrefabLookup에 등록돼야 함).
+    //    - BlockSize: 한 번에 놓는 구획 크기 (저해상도 단위). {2,4,8} → {1,2,4}.
+    // ══════════════════════════════════════════════════════════════════════════
+    public struct GrowthConfig
+    {
+        public int BuildingMainKey;
+        public int2 BlockSize;
+
+        public static GrowthConfig Default => new GrowthConfig
+        {
+            BuildingMainKey = 1000,           // Building 범위(1000~4999). TODO: 실제 등록 키로 교체.
+            BlockSize = new int2(1, 1), // 저해상도 1×1 = 실셀 2×2
+        };
+    }
+}
