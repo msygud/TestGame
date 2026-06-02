@@ -57,6 +57,79 @@ namespace CitySim
         /// value = TeamIndex (-1 = 중립)
         /// </summary>
         public NativeHashMap<int2, int> TerritoryLayer;
+
+        /// <summary>
+        /// 구획 레이어 — 저해상도 격자 (1셀 = BlockGrid.UNIT × UNIT 실셀).
+        ///
+        /// 구획(Block) 단위 메타데이터의 단일 소스:
+        ///   "이 구획이 등록됐나 / 누구 것이냐 / 어느 구획 소속이냐 / 그 크기는".
+        ///
+        /// 셀 단위 점유는 담지 않는다 (그것은 OccupancyLayer의 단일 소스).
+        /// 구획 내 빈 셀을 알려면:
+        ///   BlockCell.BlockOrigin → 실셀 범위 변환 → OccupancyLayer 조회.
+        ///
+        /// key   = 저해상도 셀 좌표 (실셀 좌표 / UNIT)
+        /// value = BlockCell
+        /// </summary>
+        public NativeHashMap<int2, BlockCell> BlockLayer;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  BlockCell  — 구획 레이어 셀 데이터 (저해상도)
+    //
+    //  하나의 구획은 BlockOrigin이 동일한 저해상도 셀들의 묶음이다.
+    //  큰 구획(예: 실셀 4×8 = 저해상도 2×4)은 여러 BlockCell이
+    //  같은 BlockOrigin을 가리켜 하나의 구획으로 묶인다.
+    // ══════════════════════════════════════════════════════════════
+    public struct BlockCell
+    {
+        /// <summary>소유 팀 인덱스. -1 = 빈 격자 (구획 미등록).</summary>
+        public int  TeamIndex;
+
+        /// <summary>
+        /// 이 저해상도 셀이 속한 구획의 원점 (저해상도 좌표).
+        /// 어느 셀을 찍어도 이 값으로 구획 대표(원점 셀)에 도달한다.
+        /// </summary>
+        public int2 BlockOrigin;
+
+        /// <summary>이 구획의 크기 (저해상도 단위). 예: 실셀 4×8 → (2,4).</summary>
+        public int2 BlockSize;
+
+        /// <summary>이 격자가 구획에 등록돼 있는가 (TeamIndex 음수 여부로도 판별 가능).</summary>
+        public bool IsRegistered => TeamIndex >= 0;
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  BlockGrid  — 저해상도 ↔ 실해상도 변환 헬퍼
+    //
+    //  저해상도 1셀 = UNIT × UNIT 실셀.
+    //  구획 변 길이는 {2,4,8} (전부 UNIT의 배수)이므로
+    //  저해상도에서는 {1,2,4}로 환원된다.
+    // ══════════════════════════════════════════════════════════════
+    public static class BlockGrid
+    {
+        /// <summary>저해상도 1칸이 덮는 실셀 변 길이. 구획 최소 단위(=2)와 일치.</summary>
+        public const int UNIT = 2;
+
+        /// <summary>실셀 좌표 → 저해상도 셀 좌표 (내림).</summary>
+        public static int2 ToBlock(int2 realCell)
+            => new int2(FloorDiv(realCell.x, UNIT), FloorDiv(realCell.y, UNIT));
+
+        /// <summary>저해상도 셀 좌표 → 실셀 좌표 (구획 원점의 좌하단 실셀).</summary>
+        public static int2 ToReal(int2 blockCell)
+            => new int2(blockCell.x * UNIT, blockCell.y * UNIT);
+
+        /// <summary>저해상도 크기 → 실셀 크기.</summary>
+        public static int2 RealSize(int2 blockSize)
+            => new int2(blockSize.x * UNIT, blockSize.y * UNIT);
+
+        /// <summary>음수 좌표에서도 올바르게 내림 나눗셈.</summary>
+        static int FloorDiv(int a, int b)
+        {
+            int q = a / b;
+            if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
+            return q;
+        }
     }
 
     // ══════════════════════════════════════════════════════════════

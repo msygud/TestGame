@@ -45,6 +45,7 @@ namespace CitySim
                     TerrainLayer   = new NativeHashMap<int2, TerrainCell>  (2048, Allocator.Persistent),
                     ResourceLayer  = new NativeHashMap<int2, ResourceCell> (512,  Allocator.Persistent),
                     TerritoryLayer = new NativeHashMap<int2, int>          (1024, Allocator.Persistent),
+                    BlockLayer     = new NativeHashMap<int2, BlockCell>    (1024, Allocator.Persistent),
                 };
                 var layerEntity = state.EntityManager.CreateEntity(typeof(GridLayers));
                 state.EntityManager.SetComponentData(layerEntity, layers);
@@ -81,6 +82,7 @@ namespace CitySim
                 if (layers.TerrainLayer.IsCreated)   layers.TerrainLayer.Dispose();
                 if (layers.ResourceLayer.IsCreated)  layers.ResourceLayer.Dispose();
                 if (layers.TerritoryLayer.IsCreated) layers.TerritoryLayer.Dispose();
+                if (layers.BlockLayer.IsCreated)     layers.BlockLayer.Dispose();
             }
 
             // GridMap 해제

@@ -1,9 +1,0 @@
-﻿{
-  "dlcId": 0,
-  "dlcName": "Origin",
-  "displayName": "Origin",
-  "items": [
-    {"mainKey":100001,"variantKey":0,"name":"Ground","category":0},
-    {"mainKey":100002,"variantKey":0,"name":"Water","category":0}
-  ]
-}

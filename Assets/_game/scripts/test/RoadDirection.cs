@@ -53,5 +53,20 @@ namespace CitySim
 
         /// <summary>4방향 모두 열려있는지 (교차로, Cross).</summary>
         public static bool IsCross(RoadDir dirs) => dirs == (RoadDir.N | RoadDir.E | RoadDir.S | RoadDir.W);
+
+        /// <summary>
+        /// 마주보는 두 방향만 연결된 직선인지 (N|S 또는 E|W).
+        /// 직선 도로의 '옆구리'는 구획 시작 후보에서 제외된다.
+        /// </summary>
+        public static bool IsStraight(RoadDir dirs)
+            => dirs == (RoadDir.N | RoadDir.S) || dirs == (RoadDir.E | RoadDir.W);
+
+        /// <summary>
+        /// 구획 확장의 기점이 되는 특이점인가?
+        /// 끝점(1방향) · 꺾임(L자) · 분기(T/십자)는 특이점.
+        /// 직선(옆구리)과 비도로(None)는 특이점이 아니다.
+        /// </summary>
+        public static bool IsAnchor(RoadDir dirs)
+            => dirs != RoadDir.None && !IsStraight(dirs);
     }
 }
