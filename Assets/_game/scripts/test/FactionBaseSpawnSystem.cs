@@ -131,6 +131,11 @@ namespace CitySim
                         RotationY  = b.RotationY,
                         TeamIndex  = teamIndex,
                         FactionId  = slot.FactionId,   // 도로 분기용 팩션 전달
+                        // 베이스 건물도 입구-도로 정렬 검증 대상. 회전은 SO(RotationY)에
+                        // 디자이너가 맞춘 값을 그대로 쓰되, 그 회전이 실제로 도로에 닿는지
+                        // BuildingPlacementSystem이 검증한다(디자이너 실수·도로 미설치 방어).
+                        // 입구 정의가 없는 베이스 구조물은 EntranceOps가 제약 없이 통과시킨다.
+                        RequireRoadAccess = true,
                     });
 
                     requestCount++;

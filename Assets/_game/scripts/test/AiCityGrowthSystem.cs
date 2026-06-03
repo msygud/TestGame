@@ -39,6 +39,8 @@ namespace CitySim
             state.RequireForUpdate<GameClock>();
             state.RequireForUpdate<GridLayers>();
             state.RequireForUpdate<FactionConfig>();
+            state.RequireForUpdate<EntranceLookup>();
+            state.RequireForUpdate<PrefabMetaLookup>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -50,6 +52,8 @@ namespace CitySim
 
             var layers = SystemAPI.GetSingleton<GridLayers>();
             var factionConfig = SystemAPI.GetSingleton<FactionConfig>();
+            var entranceLookup = SystemAPI.GetSingleton<EntranceLookup>();
+            var metaLookup = SystemAPI.GetSingleton<PrefabMetaLookup>();
             var cfg = GrowthConfig.Default;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -65,7 +69,8 @@ namespace CitySim
                 int teamIndex = startRO.ValueRO.TeamIndex;
                 int factionId = ResolveFactionId(in factionConfig, teamIndex);
 
-                TryGrowOneBlock(in layers, teamIndex, factionId, in cfg, ref ecb);
+                TryGrowOneBlock(in layers, in entranceLookup, in metaLookup,
+                    teamIndex, factionId, in cfg, ref ecb);
             }
 
             ecb.Playback(state.EntityManager);
@@ -77,6 +82,8 @@ namespace CitySim
         // ──────────────────────────────────────────────────────────────────
         static void TryGrowOneBlock(
             in GridLayers layers,
+            in EntranceLookup entranceLookup,
+            in PrefabMetaLookup metaLookup,
             int teamIndex, int factionId,
             in GrowthConfig cfg,
             ref EntityCommandBuffer ecb)
@@ -128,6 +135,41 @@ namespace CitySim
 
             if (!found) return;   // 들어갈 자리 없음
 
+            // 구획 원점의 실셀 좌표 = 건물 배치 기준 셀
+            int2 realCell = BlockGrid.ToReal(bestPos);
+
+            // 3.5) 입구-도로 정렬 회전 탐색 ─────────────────────────────
+            //   작은 건물이 (큰 건물 기준으로 잡힌) 구획에 들어갈 때, 입구가
+            //   경계 도로를 향하도록 회전을 고른다. 헬퍼는 "어느 회전이면 닿는가"
+            //   라는 가능성만 반환하고, "그 회전으로 발행한다"는 결정은 여기서 한다.
+            //
+            //   입구 정의가 없는 건물(HasEntrance=false 또는 EntranceLookup 미등록)은
+            //   FindRoadFacingRotation이 0을 돌려주므로 기본 회전으로 발행된다.
+            //   어느 회전으로도 도로에 닿지 않으면(-1) 이번 턴 이 구획은 포기한다
+            //   (구획 등록도 하지 않음 → 다음 기회에 다른 자리/도로 확장 후 재시도).
+            //
+            //   ⚠ 현재 건물 footprint는 정사각(저해상도 1×1 = 실셀 2×2)이라 회전이
+            //     점유 셀 집합을 바꾸지 않으므로 입구만 보는 이 오버로드로 충분하다.
+            //     비정사각 건물(Size.x≠Size.y)로 확장하면 회전마다 footprint가 달라지므로
+            //     EntranceOps.FindRoadFacingRotation(origin, size, ..., footprintFree)
+            //     오버로드로 교체하고, footprintFree 콜백에 BlockOps의 점유/범위 판정을
+            //     연결해야 한다(입구 정렬 + footprint 적합을 함께 만족하는 회전 선택).
+            float rotationY = 0f;
+
+            if (metaLookup.TryGetMeta(cfg.BuildingMainKey, 0, out var meta) &&
+                meta.HasEntrance &&
+                entranceLookup.TryGet(cfg.BuildingMainKey, out var entranceOffsets))
+            {
+                int steps = EntranceOps.FindRoadFacingRotation(
+                    realCell, in entranceOffsets, in layers.RoadLayer,
+                    requireAll: false);
+
+                if (steps < 0)
+                    return;   // 입구를 도로로 향하게 할 수 없음 → 이 자리 포기
+
+                rotationY = EntranceOps.StepsToRotationY(steps);
+            }
+
             // 4) 구획 등록 + 건물 발행
             //    RegisterBlock 은 BlockLayer(NativeHashMap)만 갱신 (구조 변경 아님).
             //    layers 는 싱글톤 복사본이지만 NativeHashMap 핸들은 내부 버퍼를
@@ -135,18 +177,16 @@ namespace CitySim
             var blockLayer = layers.BlockLayer;
             BlockOps.RegisterBlock(ref blockLayer, bestPos, blockSize, teamIndex);
 
-            // 구획 원점의 실셀 좌표 = 건물 배치 기준 셀
-            int2 realCell = BlockGrid.ToReal(bestPos);
-
             var e = ecb.CreateEntity();
             ecb.AddComponent(e, new PlaceBuildingRequest
             {
                 MainKey = cfg.BuildingMainKey,
                 VariantKey = 0,
                 Cell = realCell,
-                RotationY = 0f,
+                RotationY = rotationY,
                 TeamIndex = teamIndex,
                 FactionId = factionId,
+                RequireRoadAccess = true,   // AI 자율 성장 → 입구-도로 정렬 강제
             });
         }
 
