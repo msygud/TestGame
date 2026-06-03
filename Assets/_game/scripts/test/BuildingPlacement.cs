@@ -186,11 +186,10 @@ namespace CitySim
             //   여기서는 그 회전이 실제로 도로에 닿는지 "검증"만 한다(탐색하지 않음).
             //   rotSteps는 위에서 이미 계산됨 — 입구 오프셋과 footprint가 동일 회전 공유.
             if (req.RequireRoadAccess && meta.HasEntrance &&
-                entranceLookup.TryGet(req.MainKey, out var entranceOffsets))
+                entranceLookup.TryGet(req.MainKey, out var entrance))
             {
-                bool onRoad = EntranceOps.AreEntrancesOnRoad(
-                    req.Cell, rotSteps, in entranceOffsets, in layers.RoadLayer,
-                    requireAll: false);
+                bool onRoad = EntranceOps.IsEntranceOnRoad(
+                    req.Cell, meta.Size, in entrance, rotSteps, in layers.RoadLayer);
 
                 if (!onRoad)
                 {
