@@ -37,17 +37,23 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  BakedEntranceEntry  (DynamicBuffer)
-    //
-    //  GamePrefabRegistryAuthoring.Baker가 SO의 Entrances[]를 평탄화하여 작성.
-    //  (MainKey 하나에 입구가 여러 개면 항목도 여러 개)
-    //  PrefabLookupBuildSystem이 EntranceLookup으로 집계.
+    //  BakedEntranceEntry  (DynamicBuffer) — 단일 입구
     // ══════════════════════════════════════════════════════════════
     [InternalBufferCapacity(32)]
     public struct BakedEntranceEntry : IBufferElementData
     {
-        public int  MainKey;
-        public int2 Offset;   // footprint 원점 기준 상대 셀
+        public int MainKey;
+        public int2 Offset;   // footprint 원점(최소코너) 기준 상대 셀
+        public byte Dir;      // RoadDir 단일 비트 (N/E/S/W)
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  EntranceInfo  — EntranceLookup 값 타입 (단일 입구)
+    // ══════════════════════════════════════════════════════════════
+    public struct EntranceInfo
+    {
+        public int2 Offset;   // 최소코너 기준 상대 셀 (비음수)
+        public byte Dir;      // RoadDir 단일 비트
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -131,22 +137,15 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  EntranceLookup  (ECS 싱글톤)
-    //
-    //  MainKey → 입구 오프셋 목록 (footprint 원점 기준).
-    //  배치 시 BuildingPlacementSystem이 입구셀=origin+offset 을 계산하여
-    //  도로 연결을 검증·기록할 때 사용.
-    //
-    //  값 타입은 FixedList64Bytes<int2> (입구 최대 ~7개).
-    //  생명주기: PrefabLookupBuildSystem이 관리.
+    //  EntranceLookup  (ECS 싱글톤) — MainKey → 단일 입구 정보.
     // ══════════════════════════════════════════════════════════════
     public struct EntranceLookup : IComponentData
     {
-        public NativeHashMap<int, FixedList64Bytes<int2>> Table;
+        public NativeHashMap<int, EntranceInfo> Table;
 
-        /// <summary>MainKey의 입구 오프셋 목록 조회.</summary>
-        public bool TryGet(int mainKey, out FixedList64Bytes<int2> offsets)
-            => Table.TryGetValue(mainKey, out offsets);
+        /// <summary>MainKey의 입구 정보 조회.</summary>
+        public bool TryGet(int mainKey, out EntranceInfo info)
+            => Table.TryGetValue(mainKey, out info);
 
         /// <summary>입구 정의가 있는지 여부.</summary>
         public bool Has(int mainKey) => Table.ContainsKey(mainKey);

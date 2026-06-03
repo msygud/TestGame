@@ -158,11 +158,10 @@ namespace CitySim
 
             if (metaLookup.TryGetMeta(cfg.BuildingMainKey, 0, out var meta) &&
                 meta.HasEntrance &&
-                entranceLookup.TryGet(cfg.BuildingMainKey, out var entranceOffsets))
+                entranceLookup.TryGet(cfg.BuildingMainKey, out var entrance))
             {
                 int steps = EntranceOps.FindRoadFacingRotation(
-                    realCell, in entranceOffsets, in layers.RoadLayer,
-                    requireAll: false);
+                    realCell, meta.Size, in entrance, in layers.RoadLayer);
 
                 if (steps < 0)
                     return;   // 입구를 도로로 향하게 할 수 없음 → 이 자리 포기

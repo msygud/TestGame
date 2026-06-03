@@ -76,24 +76,22 @@ namespace CitySim.Authoring
                     baked++;
                 }
 
-                // ── ② 입구 베이킹 (Entrances[] 평탄화) ────────────
+                // ── ② 입구 베이킹 (단일 Offset + Dir) ────────────
                 // 버퍼는 입구가 없어도 항상 생성 (BuildSystem 조회 일관성).
                 var entranceBuffer = AddBuffer<BakedEntranceEntry>(e);
 
                 int entranceCount = 0;
                 foreach (var ent in authoring.Registry.Entrances)
                 {
-                    if (ent == null || ent.Offsets == null) continue;
+                    if (ent == null) continue;
 
-                    foreach (var off in ent.Offsets)
+                    entranceBuffer.Add(new BakedEntranceEntry
                     {
-                        entranceBuffer.Add(new BakedEntranceEntry
-                        {
-                            MainKey = ent.MainKey,
-                            Offset  = new int2(off.x, off.y),
-                        });
-                        entranceCount++;
-                    }
+                        MainKey = ent.MainKey,
+                        Offset = new int2(ent.Offset.x, ent.Offset.y),
+                        Dir = (byte)ent.Dir,
+                    });
+                    entranceCount++;
                 }
 
                 Debug.Log(

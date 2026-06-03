@@ -199,19 +199,21 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  EntranceEntry  — MainKey 단위 입구 정의 (Building 전용)
+    //  EntranceEntry  — MainKey 단위 입구 정의 (Building 전용, 단일 입구)
     //
-    //  NeedMappingEntry와 동일하게 MainKey 키로 별도 관리.
-    //  외형(VariantKey) 무관 — 게임플레이 속성.
+    //  Offset: footprint 원점(좌하단=최소코너) 기준 상대 셀. 0 ≤ Offset < Size.
+    //          이 셀은 건물 footprint에 속하는 경계 셀이다.
+    //  Dir   : 입구가 바라보는 바깥 방향 (N/E/S/W 중 단일 비트).
+    //          도로 접합 셀 = origin + Rotate(Offset) + DirOffset(Rotate(Dir)).
     //
-    //  Offsets: footprint 원점(좌하단) 기준 상대 셀.
-    //           배치 시 origin + offset 셀이 도로면 연결 성립.
+    //  단일 입구 확정 (단일 = 다중의 특수형). 외형(VariantKey) 무관 — 게임플레이 속성.
     // ══════════════════════════════════════════════════════════════
     [Serializable]
     public class EntranceEntry
     {
-        public int               MainKey;
-        public List<Vector2Int>  Offsets = new();
+        public int MainKey;
+        public Vector2Int Offset;          // 최소코너 기준 상대 셀 (비음수, footprint 내)
+        public RoadDir Dir = RoadDir.S; // 입구가 향하는 단일 방향 (기본 남쪽)
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -352,18 +354,41 @@ namespace CitySim
             // 입구는 Building MainKey에만 의미가 있음
             foreach (var ent in Entrances)
             {
-                bool isBuilding = false;
+                RegistryItem building = null;
                 foreach (var item in items)
                 {
                     if (item.IsDeleted) continue;
-                    if (item.MainKey == ent.MainKey && item.IsBuilding) { isBuilding = true; break; }
+                    if (item.MainKey == ent.MainKey && item.IsBuilding) { building = item; break; }
                 }
-                if (!isBuilding)
+                if (building == null)
                 {
                     issues.Add(new ValidationIssue
                     {
-                        Level   = ValidationLevel.Warning,
+                        Level = ValidationLevel.Warning,
                         Message = $"Entrance(MainKey={ent.MainKey}): 대응하는 Building 항목이 없습니다.",
+                    });
+                    continue;
+                }
+
+                // Dir이 단일 비트(N/E/S/W 중 하나)인지
+                if (RoadDirOps.PopCount(ent.Dir) != 1)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        Level = ValidationLevel.Error,
+                        Message = $"Entrance(MainKey={ent.MainKey}): Dir은 N/E/S/W 중 정확히 하나여야 합니다 (현재 {ent.Dir}).",
+                    });
+                }
+
+                // Offset이 footprint(Size) 범위 안인지 (회전 전 기준)
+                if (ent.Offset.x < 0 || ent.Offset.y < 0
+                    || ent.Offset.x >= building.Size.x || ent.Offset.y >= building.Size.y)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        Level = ValidationLevel.Error,
+                        Message = $"Entrance(MainKey={ent.MainKey}): Offset {ent.Offset}이 "
+                                + $"footprint(Size={building.Size.x}x{building.Size.y}) 범위를 벗어났습니다.",
                     });
                 }
             }

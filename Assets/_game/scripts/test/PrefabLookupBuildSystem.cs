@@ -45,7 +45,7 @@ namespace CitySim
             var entranceEntity = em.CreateEntity();
             em.AddComponentData(entranceEntity, new EntranceLookup
             {
-                Table = new NativeHashMap<int, FixedList64Bytes<int2>>(64, Allocator.Persistent),
+                Table = new NativeHashMap<int, EntranceInfo>(64, Allocator.Persistent),
             });
         }
 
@@ -105,26 +105,24 @@ namespace CitySim
                     lookup.ValueRW.LoadedDlcIds.Add(e.DlcId);
                 }
 
-                // ── 입구 등록 (같은 엔티티의 BakedEntranceEntry) ──
+                // ── 입구 등록 (단일, 같은 엔티티의 BakedEntranceEntry) ──
                 if (SystemAPI.HasBuffer<BakedEntranceEntry>(entity))
                 {
                     var entranceEntries = SystemAPI.GetBuffer<BakedEntranceEntry>(entity);
                     for (int i = 0; i < entranceEntries.Length; i++)
                     {
                         var en = entranceEntries[i];
+                        var info = new EntranceInfo { Offset = en.Offset, Dir = en.Dir };
 
-                        entranceLookup.ValueRW.Table.TryGetValue(en.MainKey, out var list);
-                        if (list.Length < list.Capacity)
+                        if (entranceLookup.ValueRW.Table.TryAdd(en.MainKey, info))
                         {
-                            list.Add(en.Offset);
-                            entranceLookup.ValueRW.Table[en.MainKey] = list;
                             entrances++;
                         }
                         else
                         {
                             UnityEngine.Debug.LogWarning(
-                                $"[PrefabLookupBuildSystem] 입구 초과(MainKey={en.MainKey}). " +
-                                $"최대 {list.Capacity}개까지만 등록.");
+                                $"[PrefabLookupBuildSystem] 입구 중복(MainKey={en.MainKey}). " +
+                                $"단일 입구 규약 — 기존 항목 유지.");
                         }
                     }
                 }
