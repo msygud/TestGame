@@ -13,4 +13,8 @@ MonoBehaviour:
   m_Name: humanbase
   m_EditorClassIdentifier: Assembly-CSharp:CitySim:FactionBaseDefinition
   FactionId: 0
-  BaseEntries: []
+  BaseEntries:
+  - MainKey: 0
+    VariantKeyOverride: 0
+    CellOffset: {x: 0, y: 0}
+    RotationY: 0

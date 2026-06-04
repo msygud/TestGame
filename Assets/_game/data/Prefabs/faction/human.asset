@@ -14,5 +14,5 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp:CitySim:FactionDefinition
   FactionId: 0
   DlcId: 0
-  FactionName: New Faction
+  FactionName: human
   FactionColor: {r: 1, g: 1, b: 1, a: 1}
