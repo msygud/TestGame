@@ -118,9 +118,27 @@ namespace CitySim
             int rotSteps,
             in NativeHashMap<int2, RoadCell> roadLayer)
         {
+            return roadLayer.ContainsKey(EntranceRoadCell(origin, size, in entrance, rotSteps));
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        //  입구가 향하는 도로셀 좌표 — "그 셀이 어디냐" (좌표 반환).
+        //
+        //  IsEntranceOnRoad가 내부에서 쓰던 두 줄을 추출. 도달성 BFS의
+        //  시작점(공급자가 도장을 찍기 시작하는 도로셀)으로 그대로 쓴다.
+        //  도로 존재 여부는 보지 않는다 — 좌표만 계산 (사실 판정은 호출자 몫).
+        //
+        //  entranceCell = origin + RotateOffset(Offset, size, rot)   (footprint 정규화)
+        //  roadCell     = entranceCell + RotateDirOffset(Dir, rot)   (한 칸 바깥)
+        // ──────────────────────────────────────────────────────────────
+        public static int2 EntranceRoadCell(
+            int2 origin,
+            int2 size,
+            in EntranceInfo entrance,
+            int rotSteps)
+        {
             int2 entranceCell = origin + RotateOffset(entrance.Offset, size, rotSteps);
-            int2 roadCell = entranceCell + RotateDirOffset((RoadDir)entrance.Dir, rotSteps);
-            return roadLayer.ContainsKey(roadCell);
+            return entranceCell + RotateDirOffset((RoadDir)entrance.Dir, rotSteps);
         }
 
         // ──────────────────────────────────────────────────────────────
