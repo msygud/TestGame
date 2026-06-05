@@ -84,7 +84,8 @@ namespace CitySim
                          RefRO<TeamInfoData>,
                          RefRO<TeamStartPoint>>())
             {
-                int  teamIndex  = startPoint.ValueRO.TeamIndex;
+                int teamIndex = startPoint.ValueRO.TeamIndex;   // 포지션 번호 (FactionConfig 키)
+                int ownerLocalId = teamInfo.ValueRO.LocalID;     // 소유는 LocalId 단위
                 int2 originCell = startPoint.ValueRO.Cell;
 
                 // FactionConfig에서 FactionId 조회
@@ -129,7 +130,7 @@ namespace CitySim
                         VariantKey = vk,
                         Cell       = cell,
                         RotationY  = b.RotationY,
-                        TeamIndex  = teamIndex,
+                        OwnerLocalId = ownerLocalId,
                         FactionId  = slot.FactionId,   // 도로 분기용 팩션 전달
                         // 베이스 건물도 입구-도로 정렬 검증 대상. 회전은 SO(RotationY)에
                         // 디자이너가 맞춘 값을 그대로 쓰되, 그 회전이 실제로 도로에 닿는지

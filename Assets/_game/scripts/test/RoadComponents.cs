@@ -58,7 +58,7 @@ namespace CitySim
     public struct PlaceRoadCommand : IComponentData
     {
         public int2 Cell;
-        public int  TeamIndex;
+        public int OwnerLocalId;
         public byte LaneCount; // 기본 2
         /// <summary>
         /// 이 도로를 짓는 팩션 ID. (FactionId, dirMask) → MainKey 조회에 사용.
@@ -71,20 +71,20 @@ namespace CitySim
     public struct RemoveRoadCommand : IComponentData
     {
         public int2 Cell;
-        public int  TeamIndex; // 소유 팀만 철거 가능
+        public int OwnerLocalId; // 소유 플레이어만 철거 가능
     }
 
     /// <summary>도로 업그레이드 명령 (2차선 → 4차선). 단발성.</summary>
     public struct UpgradeRoadCommand : IComponentData
     {
         public int2 Cell;
-        public int  TeamIndex;
+        public int OwnerLocalId;
     }
 
     /// <summary>프리뷰 명령. 단발성.</summary>
     public struct PreviewRoadCommand : IComponentData
     {
         public int2 Cell;
-        public int  TeamIndex;
+        public int OwnerLocalId;
     }
 }

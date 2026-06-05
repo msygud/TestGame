@@ -216,7 +216,7 @@ namespace CitySim
             ecb.AddComponent(e, new PlaceRoadCommand
             {
                 Cell = new int2(p.CellX, p.CellZ),
-                TeamIndex = 0,
+                OwnerLocalId = 0,
                 LaneCount = 2,
                 FactionId = 0,   // 맵에 미리 깔린 도로 = 중립/공통(FactionId 0)
             });

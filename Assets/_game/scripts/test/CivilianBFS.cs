@@ -158,10 +158,10 @@ namespace CitySim
         }
 
         /// <summary>팀 소유 + 도로 존재 체크.</summary>
-        static bool IsPassable(RoadCell cell, int myTeam)
+        static bool IsPassable(RoadCell cell, int ownerid)
         {
-            if (myTeam < 0) return true; // 팀 체크 생략 (프리뷰용)
-            return cell.TeamIndex == myTeam;
+            if (ownerid < 0) return true; // 팀 체크 생략 (프리뷰용)
+            return cell.OwnerLocalId == ownerid;
         }
 
         struct BFSNode

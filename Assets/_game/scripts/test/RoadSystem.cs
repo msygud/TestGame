@@ -46,7 +46,7 @@ namespace CitySim
                      SystemAPI.Query<RefRO<PlaceRoadCommand>>().WithEntityAccess())
             {
                 var cell = cmd.ValueRO.Cell;
-                var teamIndex = cmd.ValueRO.TeamIndex;
+                var ownerLocalId = cmd.ValueRO.OwnerLocalId;
                 var laneCount = cmd.ValueRO.LaneCount == 0 ? (byte)2 : cmd.ValueRO.LaneCount;
                 var factionId = cmd.ValueRO.FactionId;
 
@@ -75,7 +75,7 @@ namespace CitySim
                     Directions = dirs,
                     FlowAxis = flowAxis,
                     LaneCount = laneCount,
-                    TeamIndex = teamIndex,
+                    OwnerLocalId = ownerLocalId,
                     RoadEntity = Entity.Null,
                 });
 
@@ -83,7 +83,7 @@ namespace CitySim
                 {
                     Type = OccupantType.Road,
                     Occupant = Entity.Null,
-                    TeamIndex = teamIndex,
+                    OwnerLocalId = ownerLocalId,
                 };
 
                 UpdateNeighborDirections(cell, layers, em, ecb);
@@ -95,10 +95,10 @@ namespace CitySim
                      SystemAPI.Query<RefRO<RemoveRoadCommand>>().WithEntityAccess())
             {
                 var cell = cmd.ValueRO.Cell;
-                var teamIndex = cmd.ValueRO.TeamIndex;
+                var ownerLocalId = cmd.ValueRO.OwnerLocalId;
 
                 if (!layers.RoadLayer.TryGetValue(cell, out var roadCell) ||
-                    roadCell.TeamIndex != teamIndex)
+                    roadCell.OwnerLocalId != ownerLocalId)
                 {
                     ecb.DestroyEntity(cmdEntity);
                     continue;
@@ -123,10 +123,10 @@ namespace CitySim
                      SystemAPI.Query<RefRO<UpgradeRoadCommand>>().WithEntityAccess())
             {
                 var cell = cmd.ValueRO.Cell;
-                var teamIndex = cmd.ValueRO.TeamIndex;
+                var ownerLocalId = cmd.ValueRO.OwnerLocalId;
 
                 if (!layers.RoadLayer.TryGetValue(cell, out var roadCell) ||
-                    roadCell.TeamIndex != teamIndex ||
+                    roadCell.OwnerLocalId != ownerLocalId ||
                     roadCell.LaneCount >= 4)
                 {
                     ecb.DestroyEntity(cmdEntity);

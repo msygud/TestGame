@@ -170,7 +170,7 @@ namespace CitySim
                     _em.AddComponentData(e, new PlaceRoadCommand
                     {
                         Cell      = cell,
-                        TeamIndex = slot,       // 소유 슬롯(=TeamIndex)
+                        OwnerLocalId = slot,       // 소유 슬롯(=TeamIndex)
                         LaneCount = LaneCount,
                         FactionId = faction,    // 호출자 책임: 해소한 FactionId를 채워 넘김
                     });

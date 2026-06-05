@@ -200,11 +200,11 @@ namespace CitySim
         // ──────────────────────────────────────────────────────────────
         public static void RegisterBlock(
             ref NativeHashMap<int2, BlockCell> blockLayer,
-            int2 blockPos, int2 blockSize, int teamIndex)
+            int2 blockPos, int2 blockSize, int ownerLocalId)
         {
             var cell = new BlockCell
             {
-                TeamIndex   = teamIndex,
+                OwnerLocalId = ownerLocalId,
                 BlockOrigin = blockPos,
                 BlockSize   = blockSize,
             };

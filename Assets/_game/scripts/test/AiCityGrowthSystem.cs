@@ -59,18 +59,21 @@ namespace CitySim
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
             // ── AI 팀만 순회 (플레이어 제외) ───────────────────────────
-            //   팀 인덱스 출처는 TeamStartPoint.TeamIndex (FactionBaseSpawnSystem과 일치).
+            //   포지션 번호 출처는 TeamStartPoint.TeamIndex (FactionBaseSpawnSystem과 일치).
+            //   포지션 번호 → FactionId 조회에만 사용하고,
+            //   셀 소유 기록에는 소유주 LocalId(= 이 슬롯)를 넘긴다.
             foreach (var (teamRO, startRO) in
                      SystemAPI.Query<RefRO<TeamInfoData>, RefRO<TeamStartPoint>>())
             {
                 var team = teamRO.ValueRO;
                 if (team.IsPlayer()) continue;        // 플레이어 도시는 자율 성장 안 함
 
-                int teamIndex = startRO.ValueRO.TeamIndex;
-                int factionId = ResolveFactionId(in factionConfig, teamIndex);
+                int positionIndex = startRO.ValueRO.TeamIndex;
+                int ownerLocalId = team.LocalID;     // 소유는 LocalId 단위
+                int factionId = ResolveFactionId(in factionConfig, positionIndex);
 
                 TryGrowOneBlock(in layers, in entranceLookup, in metaLookup,
-                    teamIndex, factionId, in cfg, ref ecb);
+                    ownerLocalId, factionId, in cfg, ref ecb);
             }
 
             ecb.Playback(state.EntityManager);
@@ -84,7 +87,7 @@ namespace CitySim
             in GridLayers layers,
             in EntranceLookup entranceLookup,
             in PrefabMetaLookup metaLookup,
-            int teamIndex, int factionId,
+            int ownerLocalId, int factionId,
             in GrowthConfig cfg,
             ref EntityCommandBuffer ecb)
         {
@@ -174,7 +177,7 @@ namespace CitySim
             //    layers 는 싱글톤 복사본이지만 NativeHashMap 핸들은 내부 버퍼를
             //    공유하므로 쓰기가 원본에 반영된다.
             var blockLayer = layers.BlockLayer;
-            BlockOps.RegisterBlock(ref blockLayer, bestPos, blockSize, teamIndex);
+            BlockOps.RegisterBlock(ref blockLayer, bestPos, blockSize, ownerLocalId);
 
             var e = ecb.CreateEntity();
             ecb.AddComponent(e, new PlaceBuildingRequest
@@ -183,7 +186,7 @@ namespace CitySim
                 VariantKey = 0,
                 Cell = realCell,
                 RotationY = rotationY,
-                TeamIndex = teamIndex,
+                OwnerLocalId = ownerLocalId,
                 FactionId = factionId,
                 RequireRoadAccess = true,   // AI 자율 성장 → 입구-도로 정렬 강제
             });
@@ -192,9 +195,9 @@ namespace CitySim
         // ──────────────────────────────────────────────────────────────────
         //  팀 인덱스 → FactionId (FactionConfig.Slots 조회)
         // ──────────────────────────────────────────────────────────────────
-        static int ResolveFactionId(in FactionConfig cfg, int teamIndex)
+        static int ResolveFactionId(in FactionConfig cfg, int positionIndex)
         {
-            if (cfg.Slots.IsCreated && cfg.Slots.TryGetValue(teamIndex, out var slot))
+            if (cfg.Slots.IsCreated && cfg.Slots.TryGetValue(positionIndex, out var slot))
                 return slot.FactionId;
             return 0;
         }

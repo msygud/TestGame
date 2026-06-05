@@ -51,10 +51,10 @@ namespace CitySim
         public NativeHashMap<int2, ResourceCell> ResourceLayer;
 
         /// <summary>
-        /// 팀 영역 레이어 — 어느 팀이 이 셀을 지배하는가.
+        /// 영역 레이어 — 어느 플레이어가 이 셀을 지배하는가.
         /// 인게임 시작 시 스타트포인트 기반 초기화.
         /// 전투/점령 시 실시간 변경.
-        /// value = TeamIndex (-1 = 중립)
+        /// value = OwnerLocalId (-1 = 중립)
         /// </summary>
         public NativeHashMap<int2, int> TerritoryLayer;
 
@@ -83,8 +83,8 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════
     public struct BlockCell
     {
-        /// <summary>소유 팀 인덱스. -1 = 빈 격자 (구획 미등록).</summary>
-        public int  TeamIndex;
+        /// <summary>소유 플레이어 LocalId (슬롯 0~7). -1 = 빈 격자 (구획 미등록).</summary>
+        public int OwnerLocalId;
 
         /// <summary>
         /// 이 저해상도 셀이 속한 구획의 원점 (저해상도 좌표).
@@ -95,8 +95,8 @@ namespace CitySim
         /// <summary>이 구획의 크기 (저해상도 단위). 예: 실셀 4×8 → (2,4).</summary>
         public int2 BlockSize;
 
-        /// <summary>이 격자가 구획에 등록돼 있는가 (TeamIndex 음수 여부로도 판별 가능).</summary>
-        public bool IsRegistered => TeamIndex >= 0;
+        /// <summary>이 격자가 구획에 등록돼 있는가 (OwnerLocalId 음수 여부로도 판별 가능).</summary>
+        public bool IsRegistered => OwnerLocalId >= 0;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -177,8 +177,8 @@ namespace CitySim
         /// <summary>차선 수 (2=기본, 4=업그레이드). 혼잡도 계산용.</summary>
         public byte LaneCount;
 
-        /// <summary>소유 팀. 타 팀 통행 불가.</summary>
-        public int TeamIndex;
+        /// <summary>소유 플레이어 LocalId. 타 플레이어 통행 불가.</summary>
+        public int OwnerLocalId;
 
         /// <summary>도로 엔티티 참조 (시각 프리팹 교체용).</summary>
         public Entity RoadEntity;
@@ -195,8 +195,8 @@ namespace CitySim
         /// <summary>점유 엔티티.</summary>
         public Entity Occupant;
 
-        /// <summary>점유 팀 (-1 = 중립/없음).</summary>
-        public int TeamIndex;
+        /// <summary>점유 플레이어 LocalId (-1 = 중립/없음).</summary>
+        public int OwnerLocalId;
 
         public bool IsEmpty => Type == OccupantType.None;
     }

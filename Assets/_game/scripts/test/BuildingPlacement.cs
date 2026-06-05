@@ -19,7 +19,7 @@ namespace CitySim
     //        VariantKey = selectedVariantKey,
     //        Cell      = hoveredCell,
     //        RotationY = 0f,
-    //        TeamIndex = playerTeamIndex,
+    //        OwnerLocalId = playerLocalId,
     //        FactionId = playerFactionId,  // 도로 배치 시 필수 (건물/환경은 무시됨)
     //    });
     //
@@ -36,8 +36,8 @@ namespace CitySim
         public int2  Cell;
         /// <summary>Y축 회전 (도). Single 배치에만 적용.</summary>
         public float RotationY;
-        /// <summary>배치 팀 인덱스 (점유 기록용).</summary>
-        public int   TeamIndex;
+        /// <summary>배치 주체 플레이어 LocalId (점유 기록용).</summary>
+        public int OwnerLocalId;
         /// <summary>
         /// 배치 주체의 팩션 ID. 도로 분기(EmitRoad)에서 PlaceRoadCommand로 전달.
         /// 건물/환경은 MainKey가 이미 확정돼 있어 직접 쓰지 않지만,
@@ -209,7 +209,7 @@ namespace CitySim
 
             // ── 4. OccupancyLayer 업데이트 (Road는 RoadSystem이 처리) ──
             if (!meta.IsRoad)
-                MarkOccupied(req.Cell, size, req.TeamIndex, ref layers, gridMap, ecb);
+                MarkOccupied(req.Cell, size, req.OwnerLocalId, ref layers, gridMap, ecb);
         }
 
         // ── 셀 검증 ───────────────────────────────────────────────────
@@ -331,7 +331,7 @@ namespace CitySim
             ecb.AddComponent(e, new PlaceRoadCommand
             {
                 Cell      = req.Cell,
-                TeamIndex = req.TeamIndex,
+                OwnerLocalId = req.OwnerLocalId,
                 LaneCount = 2,
                 FactionId = req.FactionId,   // (FactionId, dirMask)→MainKey 해소용
             });
@@ -343,7 +343,7 @@ namespace CitySim
         static void MarkOccupied(
             int2                 origin,
             int2                 size,
-            int                  teamIndex,
+            int                  ownerLocalId,
             ref GridLayers       layers,
             GridMap              gridMap,
             EntityCommandBuffer  ecb)
@@ -355,7 +355,7 @@ namespace CitySim
             {
                 Type      = OccupantType.Building,
                 Occupant  = Entity.Null,
-                TeamIndex = teamIndex,
+                OwnerLocalId = ownerLocalId,
             };
 
             for (int dx = 0; dx < size.x; dx++)
