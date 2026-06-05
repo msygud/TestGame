@@ -37,7 +37,7 @@ namespace CitySim
         /// <summary>Y축 회전 (도). Single 배치에만 적용.</summary>
         public float RotationY;
         /// <summary>배치 주체 플레이어 LocalId (점유 기록용).</summary>
-        public int OwnerLocalId;
+        public int   OwnerLocalId;
         /// <summary>
         /// 배치 주체의 팩션 ID. 도로 분기(EmitRoad)에서 PlaceRoadCommand로 전달.
         /// 건물/환경은 MainKey가 이미 확정돼 있어 직접 쓰지 않지만,
@@ -209,7 +209,14 @@ namespace CitySim
 
             // ── 4. OccupancyLayer 업데이트 (Road는 RoadSystem이 처리) ──
             if (!meta.IsRoad)
+            {
                 MarkOccupied(req.Cell, size, req.OwnerLocalId, ref layers, gridMap, ecb);
+
+                // 건물 추가 → 잠재적 공급자 변경. 이 플레이어 stamp 무효화.
+                // (도로 배치는 RoadSystem이 dirty를 발행하므로 여기선 비-도로만)
+                var dirtyE = ecb.CreateEntity();
+                ecb.AddComponent(dirtyE, new StampDirtyEvent { OwnerLocalId = req.OwnerLocalId });
+            }
         }
 
         // ── 셀 검증 ───────────────────────────────────────────────────

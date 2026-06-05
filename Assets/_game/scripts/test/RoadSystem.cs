@@ -87,6 +87,11 @@ namespace CitySim
                 };
 
                 UpdateNeighborDirections(cell, layers, em, ecb);
+
+                // 도로 추가 → 이 플레이어 stamp 무효화 (재BFS 필요)
+                var dirtyAdd = ecb.CreateEntity();
+                ecb.AddComponent(dirtyAdd, new StampDirtyEvent { OwnerLocalId = ownerLocalId });
+
                 ecb.DestroyEntity(cmdEntity);
             }
 
@@ -115,6 +120,11 @@ namespace CitySim
                 layers.RoadLayer.Remove(cell);
                 layers.OccupancyLayer.Remove(cell);
                 UpdateNeighborDirections(cell, layers, em, ecb);
+
+                // 도로 철거 → 이 플레이어 stamp 무효화 (재BFS 필요)
+                var dirtyRemove = ecb.CreateEntity();
+                ecb.AddComponent(dirtyRemove, new StampDirtyEvent { OwnerLocalId = ownerLocalId });
+
                 ecb.DestroyEntity(cmdEntity);
             }
 
@@ -144,6 +154,8 @@ namespace CitySim
                     ecb.AddComponent<DirtyRoadTag>(roadCell.RoadEntity);
                 }
 
+                // 차선 업그레이드는 '도달성'을 바꾸지 않으므로 stamp 무효화 불필요.
+                // (stamp = 어디까지 닿는가. 혼잡도/거리 가중에 LaneCount를 쓰게 되면 그때 추가)
                 ecb.DestroyEntity(cmdEntity);
             }
 
