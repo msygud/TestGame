@@ -205,7 +205,7 @@ namespace CitySim
             else if (meta.IsMulti)
                 EmitMulti(req, meta, size, settings, ecb);
             else
-                EmitSingle(req, meta, prefab, baseHeight, settings, ecb);
+                EmitSingle(req, meta, prefab, baseHeight, rotSteps, entranceLookup, settings, ecb);
 
             // ── 4. OccupancyLayer 업데이트 (Road는 RoadSystem이 처리) ──
             if (!meta.IsRoad)
@@ -281,11 +281,18 @@ namespace CitySim
             PrefabMeta           meta,
             Entity               prefab,
             byte                 baseHeight,
+            int                  rotSteps,
+            EntranceLookup       entranceLookup,
             GridSettings         settings,
             EntityCommandBuffer  ecb)
         {
             float3 pos = settings.CellCenter(req.Cell.x, req.Cell.y, baseHeight)
                          + meta.Offset;
+
+            // 입구 정보: 입구 있는 건물만 적재 (검증부와 동일한 조회 경로).
+            EntranceInfo entrance = default;
+            bool hasEntrance = meta.HasEntrance &&
+                               entranceLookup.TryGet(req.MainKey, out entrance);
 
             var e = ecb.CreateEntity();
             ecb.AddComponent(e, new SpawnRequest
@@ -295,6 +302,21 @@ namespace CitySim
                 Position   = pos,
                 Rotation   = quaternion.RotateY(math.radians(req.RotationY)),
                 Scale      = 1f,
+
+                // ── footprint 승격 (모든 단일 건물) ──
+                HasFootprint    = true,
+                FootprintOrigin = req.Cell,
+                FootprintSize   = meta.Size,   // 원본 Size (회전 전) — 정규화 규약
+                RotSteps        = rotSteps,
+                OwnerLocalId    = req.OwnerLocalId,
+
+                HasEntrance     = hasEntrance,
+                Entrance        = entrance,
+
+                // 공급자 판정은 이번 단계 보류 (PrefabMeta 확장 시 채움).
+                IsSupplier      = false,
+                Relief          = NeedType.None,
+                SupplyMaxDist   = 0,
             });
             ecb.AddComponent<MapLoaded>(e);
         }

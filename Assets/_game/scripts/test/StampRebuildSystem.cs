@@ -5,32 +5,22 @@ using Unity.Mathematics;
 namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════════════
-    //  StampSupplier  — 공급자 식별용 임시 컴포넌트
+    //  StampSupplier  — "이 건물은 공급자다" 표식 (축소판)
     // ──────────────────────────────────────────────────────────────────────
-    //  임시 단계: Relief(NeedType)와 입구 정보를 엔티티에 직접 박아 BFS가 바로
-    //  읽게 한다. 나중에 생산/소비 레이어 컴포넌트(ServiceRelief / 건물 배치가
-    //  남기는 footprint·입구 정보)에서 직접 읽도록 흡수하면서 제거 예정.
+    //  footprint/입구는 BuildingFootprint/BuildingEntrance에서 읽으므로
+    //  여기엔 공급자 고유 의미만 남긴다(중복 제거).
+    //  BFS 시작점 = EntranceOps.EntranceRoadCell(footprint.Origin,
+    //    footprint.Size, entrance.Entrance, footprint.RotSteps).
     //
-    //  BFS 시작점 = EntranceOps.EntranceRoadCell(Origin, Size, Entrance, RotSteps).
-    //  ※ Origin/Size/Entrance/RotSteps 중복 보관은 임시. 건물 배치 결과 컴포넌트
-    //    구조 확인 후 거기서 직접 읽도록 정리할 것(앞선 메모).
+    //  부착: SpawnSystem이 SpawnRequest.IsSupplier일 때 건물 인스턴스에 부착.
+    //  ※ 임시: Relief를 직접 박는다. 나중에 PrefabMeta/ResourceType 테이블로 이관.
+    //  ※ 입구 없는 공급자(BuildingEntrance 미부착)는 BFS 시작점을 못 구하므로
+    //    재빌드에서 건너뛴다 (입구가 도달 진입점이라는 설계 전제).
     // ══════════════════════════════════════════════════════════════════════
     public struct StampSupplier : IComponentData
     {
         /// <summary>이 공급자를 소유한 플레이어 (0~7). 자기 도로망에만 도장.</summary>
         public int OwnerLocalId;
-
-        /// <summary>footprint 원점(좌하단 실셀).</summary>
-        public int2 Origin;
-
-        /// <summary>footprint 원본 크기 (회전 정규화용).</summary>
-        public int2 Size;
-
-        /// <summary>입구 정보 (Offset 셀 + Dir 방향).</summary>
-        public EntranceInfo Entrance;
-
-        /// <summary>현재 회전 스텝 (0~3). 배치 시 확정된 값.</summary>
-        public int RotSteps;
 
         /// <summary>이 공급자가 해소하는 Need 조합 (임시 직접 값).</summary>
         public NeedType Relief;
@@ -107,17 +97,21 @@ namespace CitySim
 
             // ── ③ 그 플레이어 소유 공급자 전수 → 각자 BFS ──────────────
             //   (공급자 수는 시민보다 압도적으로 적어 전수 스캔 + 값 비교로 충분 — 메모리 원칙.)
+            //   footprint/입구는 BuildingFootprint/BuildingEntrance에서 읽는다.
+            //   BuildingEntrance를 쿼리에 포함 → 입구 없는 공급자는 자동 제외
+            //   (BFS 시작점=입구 도로셀이 없으므로 도달 범위를 그릴 수 없음).
             var queue = new NativeQueue<int2>(Allocator.Temp);
             var visited = new NativeHashMap<int2, int>(1024, Allocator.Temp);
 
-            foreach (var (supplier, entity) in
-                     SystemAPI.Query<RefRO<StampSupplier>>().WithEntityAccess())
+            foreach (var (supplier, footprint, bEntrance, entity) in
+                     SystemAPI.Query<RefRO<StampSupplier>, RefRO<BuildingFootprint>,
+                                     RefRO<BuildingEntrance>>().WithEntityAccess())
             {
                 if (supplier.ValueRO.OwnerLocalId != target)
                     continue;
 
-                StampOne(in supplier.ValueRO, entity, target, ref map, in roadLayer,
-                         ref queue, ref visited);
+                StampOne(in supplier.ValueRO, in footprint.ValueRO, in bEntrance.ValueRO,
+                         entity, target, ref map, in roadLayer, ref queue, ref visited);
             }
 
             visited.Dispose();
@@ -138,15 +132,17 @@ namespace CitySim
         //  · 같은 공급자의 같은 셀 재방문은 visited로 차단 (최단거리 먼저 도달).
         // ──────────────────────────────────────────────────────────────────
         static void StampOne(
-            in StampSupplier s,
-            Entity supplierEntity,
-            int owner,
+            in StampSupplier    s,
+            in BuildingFootprint fp,
+            in BuildingEntrance  be,
+            Entity              supplierEntity,
+            int                 owner,
             ref NativeParallelMultiHashMap<int2, SupplierRef> map,
             in NativeHashMap<int2, RoadCell> roadLayer,
             ref NativeQueue<int2> queue,
             ref NativeHashMap<int2, int> visited)
         {
-            int2 start = EntranceOps.EntranceRoadCell(s.Origin, s.Size, in s.Entrance, s.RotSteps);
+            int2 start = EntranceOps.EntranceRoadCell(fp.Origin, fp.Size, in be.Entrance, fp.RotSteps);
 
             if (!IsOwnedRoad(start, owner, in roadLayer))
                 return;

@@ -47,6 +47,34 @@ namespace CitySim
                     req.ValueRO.Scale));
 
                 ecb.AddComponent<MapLoaded>(instance);
+
+                // ── footprint/입구/공급자 승격 (인게임 배치 경로만) ──
+                //   HasFootprint=false인 경로(맵 로더 등)는 아래를 건너뛴다.
+                if (req.ValueRO.HasFootprint)
+                {
+                    ecb.AddComponent(instance, new BuildingFootprint
+                    {
+                        Origin       = req.ValueRO.FootprintOrigin,
+                        Size         = req.ValueRO.FootprintSize,
+                        RotSteps     = req.ValueRO.RotSteps,
+                        OwnerLocalId = req.ValueRO.OwnerLocalId,
+                    });
+
+                    if (req.ValueRO.HasEntrance)
+                        ecb.AddComponent(instance, new BuildingEntrance
+                        {
+                            Entrance = req.ValueRO.Entrance,
+                        });
+
+                    if (req.ValueRO.IsSupplier)
+                        ecb.AddComponent(instance, new StampSupplier
+                        {
+                            OwnerLocalId = req.ValueRO.OwnerLocalId,
+                            Relief       = req.ValueRO.Relief,
+                            MaxDist      = req.ValueRO.SupplyMaxDist,
+                        });
+                }
+
                 ecb.DestroyEntity(reqEntity);
             }
 
