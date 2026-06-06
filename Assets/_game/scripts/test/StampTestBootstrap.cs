@@ -36,6 +36,7 @@ namespace CitySim
         int _frame;
         bool _roadsIssued;
         bool _supplierSpawned;
+        bool _citizenSpawned;
 
         // 테스트 파라미터 ─────────────────────────────────────────────────
         const int   TestOwner   = 0;          // 플레이어 슬롯 0
@@ -48,6 +49,7 @@ namespace CitySim
             _frame = 0;
             _roadsIssued = false;
             _supplierSpawned = false;
+            _citizenSpawned = false;
             // 그리드/도로/stamp 인프라가 준비된 뒤에만 동작.
             state.RequireForUpdate<GridLayers>();
             state.RequireForUpdate<StampLayers>();
@@ -57,22 +59,25 @@ namespace CitySim
         {
             _frame++;
 
-            // ── F0: 도로 ㄱ자 발행 (실제 PlaceRoadCommand 경로) ───────────
+            // ── F0: 도로 ㄱ자를 RoadLayer에 직접 꽂음 ────────────────────
+            //   ※ PlaceRoadCommand(→RoadSystem) 경로를 우회한다. RoadSystem은
+            //     RoadKeyLookup(도로 프리팹 키 테이블) 싱글톤을 RequireForUpdate
+            //     하는데, 테스트 씬엔 그게 없어 RoadSystem이 통째로 스킵된다.
+            //     지금 목적은 "도로가 있을 때 BFS가 도장 찍는가"의 격리 검증이지
+            //     RoadSystem 동작 검증이 아니므로, RoadLayer에 직접 등록한다.
             if (!_roadsIssued)
             {
-                var ecb = new EntityCommandBuffer(Allocator.Temp);
+                var layers = SystemAPI.GetSingleton<GridLayers>();
+                var road = layers.RoadLayer; // 핸들 — 직접 Add 반영됨.
 
-                // (10,10) → (14,10) 가로 5칸, 이어서 (14,11) → (14,13) 세로 3칸.
+                // (10,10)→(14,10) 가로 5칸 + (14,11)→(14,13) 세로 3칸 = 8칸.
                 for (int x = 10; x <= 14; x++)
-                    IssueRoad(ref ecb, new int2(x, 10));
+                    AddRoad(ref road, new int2(x, 10));
                 for (int y = 11; y <= 13; y++)
-                    IssueRoad(ref ecb, new int2(14, y));
-
-                ecb.Playback(state.EntityManager);
-                ecb.Dispose();
+                    AddRoad(ref road, new int2(14, y));
 
                 _roadsIssued = true;
-                Debug.Log("[StampTest] F" + _frame + ": 도로 8칸 PlaceRoadCommand 발행");
+                Debug.Log("[StampTest] F" + _frame + ": RoadLayer에 도로 8칸 직접 등록 (owner=0)");
                 return;
             }
 
@@ -82,18 +87,32 @@ namespace CitySim
             {
                 SpawnSupplier(ref state);
                 _supplierSpawned = true;
+                return;
+            }
+
+            // ── F5: 집 건물 + 시민 생성 ───────────────────────────────────
+            //   공급자 dirty(F3) → 재빌드가 도장을 찍을 시간을 준 뒤(F5) 시민 투입.
+            //   집을 (15,13)에 두고 입구 서향(W) → 입구 도로셀 (14,13).
+            //   거기엔 공급자 E172가 d=7로 도장돼 있어야 함 → 시민이 그걸 찾는다.
+            if (!_citizenSpawned && _frame >= 5)
+            {
+                SpawnCitizenAtHome(ref state);
+                _citizenSpawned = true;
             }
         }
 
-        void IssueRoad(ref EntityCommandBuffer ecb, int2 cell)
+        void AddRoad(ref Unity.Collections.NativeHashMap<int2, RoadCell> road, int2 cell)
         {
-            var e = ecb.CreateEntity();
-            ecb.AddComponent(e, new PlaceRoadCommand
+            // 이미 있으면 덮어쓰지 않음(중복 Add 예외 회피). 없을 때만 등록.
+            if (road.ContainsKey(cell))
+                return;
+            road.Add(cell, new RoadCell
             {
-                Cell         = cell,
-                OwnerLocalId = TestOwner,
+                Directions   = RoadDir.None, // BFS는 4방 존재검사만 하므로 방향 불필요
+                FlowAxis     = default,
                 LaneCount    = 2,
-                FactionId    = TestFaction,
+                OwnerLocalId = TestOwner,
+                RoadEntity   = Entity.Null,
             });
         }
 
@@ -154,6 +173,67 @@ namespace CitySim
                       + " 입구도로셀=" + roadCell + " (도로 첫칸=(10,10)과 일치해야 함)"
                       + " / StampDirtyEvent(owner=0) 발행");
         }
+
+        // ──────────────────────────────────────────────────────────────────
+        //  집 건물 1개 + 그 집에 있는 시민 1명을 직접 생성.
+        //
+        //  집: (15,13) 1×1, 입구 서향(W) → 입구 도로셀 (14,13).
+        //      (14,13)엔 공급자 E172가 d=7로 도장돼 있어야 함.
+        //  시민: CurrentBuilding=집, Pursuing=TestRelief(0x1), CitizenOwner(0).
+        //  기대: ServiceSearchSystem이 ServiceTarget.Supplier=E172, Dist=7로 채움.
+        // ──────────────────────────────────────────────────────────────────
+        void SpawnCitizenAtHome(ref SystemState state)
+        {
+            var em = state.EntityManager;
+
+            // ── 집 건물 (footprint + 입구) ──
+            int2 homeOrigin = new int2(15, 13);
+            int2 homeSize   = new int2(1, 1);
+            int  homeRot    = 0;
+            var homeEntrance = new EntranceInfo
+            {
+                Offset = new int2(0, 0),
+                Dir    = (byte)RoadDir.W, // 서향 → 입구 도로셀 (14,13)
+            };
+            int2 homeRoadCell = EntranceOps.EntranceRoadCell(
+                homeOrigin, homeSize, in homeEntrance, homeRot);
+
+            var home = em.CreateEntity();
+            em.AddComponentData(home, new BuildingFootprint
+            {
+                Origin = homeOrigin, Size = homeSize,
+                RotSteps = homeRot, OwnerLocalId = TestOwner,
+            });
+            em.AddComponentData(home, new BuildingEntrance { Entrance = homeEntrance });
+
+            // ── 시민 (집에 있음, 욕구 활성) ──
+            var citizen = em.CreateEntity();
+            em.AddComponent<CitizenTag>(citizen);
+            em.AddSharedComponent(citizen, new CitizenOwner(TestOwner));
+            em.AddComponentData(citizen, new CitizenNeeds
+            {
+                Pursuing   = TestRelief,   // 이 욕구를 추구 → ServiceSearch가 공급자 검색
+            });
+            // 욕구 컴포넌트(Hunger) 부착 — 활성 상태로 둬서 검증.
+            em.AddComponentData(citizen, new Hunger
+            {
+                Level     = 0.8f,   // 임계(0.6) 초과 = 활성
+                Rate      = 0.010f,
+                Threshold = 0.6f,
+            });
+            em.AddComponentData(citizen, new CitizenState
+            {
+                Activity        = CitizenActivity.AtHome,
+                CurrentBuilding = home,    // ← 기준 건물
+                ActionEndTime   = 0.0,
+            });
+            em.AddComponentData(citizen, ServiceTarget.None);
+
+            Debug.Log("[StampTest] F" + _frame + ": 집 생성 origin=" + homeOrigin
+                      + " 입구도로셀=" + homeRoadCell + " (=(14,13) 기대, 거기 E172 d=7)"
+                      + " / 시민 생성 CurrentBuilding=집, Pursuing=0x"
+                      + ((ulong)TestRelief).ToString("X"));
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -179,6 +259,46 @@ namespace CitySim
                 return;
 
             var stamp = SystemAPI.GetSingleton<StampLayers>();
+
+            // ── 진단 A: DirtyMask 현재값 (재빌드가 dirty를 소비했는가) ──────
+            Debug.Log("[StampDiag] DirtyMask=0x" + stamp.DirtyMask.ToString("X")
+                      + " (0이면 재빌드가 dirty 소비 완료 / 0이 아니면 재빌드 미실행)");
+
+            // ── 진단 B: RoadLayer 상태 (도로가 owner=0으로 등록됐는가) ──────
+            if (SystemAPI.HasSingleton<GridLayers>())
+            {
+                var road = SystemAPI.GetSingleton<GridLayers>().RoadLayer;
+                if (road.IsCreated)
+                {
+                    bool has1010 = road.TryGetValue(new int2(10, 10), out var rc1010);
+                    Debug.Log("[StampDiag] (10,10) 존재=" + has1010
+                              + (has1010 ? " owner=" + rc1010.OwnerLocalId : " <- 도로 미등록!"));
+                    // 도로 가로줄 끝 칸도 확인 (전 구간 등록됐는지).
+                    bool has1410 = road.ContainsKey(new int2(14, 10));
+                    bool has1413 = road.ContainsKey(new int2(14, 13));
+                    Debug.Log("[StampDiag] (14,10) 존재=" + has1410
+                              + " / (14,13) 존재=" + has1413);
+                }
+                else
+                {
+                    Debug.Log("[StampDiag] RoadLayer 미생성");
+                }
+            }
+
+            // ── 진단 C: 공급자 엔티티 (쿼리 3종 컴포넌트 보유 여부) ──────────
+            int supAll = 0, supWithFp = 0, supWithEnt = 0;
+            foreach (var (sup, e) in
+                     SystemAPI.Query<RefRO<StampSupplier>>().WithEntityAccess())
+            {
+                supAll++;
+                if (SystemAPI.HasComponent<BuildingFootprint>(e)) supWithFp++;
+                if (SystemAPI.HasComponent<BuildingEntrance>(e)) supWithEnt++;
+            }
+            Debug.Log("[StampDiag] StampSupplier 엔티티=" + supAll
+                      + " / +BuildingFootprint=" + supWithFp
+                      + " / +BuildingEntrance=" + supWithEnt
+                      + " (BFS는 셋 다 가진 엔티티만 처리)");
+
             var map = stamp[0]; // 슬롯 0만 확인.
             if (!map.IsCreated)
             {
@@ -186,17 +306,21 @@ namespace CitySim
                 return;
             }
 
-            // 키별로 묶어 출력. GetUniqueKeyArray = (중복 제거된 키, 개수).
-            var (keys, uniqueCount) = map.GetUniqueKeyArray(Allocator.Temp);
+            // 키 배열(중복 포함 — 값마다 1개씩 나옴)을 받아 수동 dedup.
+            // GetUniqueKeyArray는 키 정렬(IComparable)을 요구해 int2엔 못 쓴다.
+            var keys = map.GetKeyArray(Allocator.Temp);
+            var seen = new NativeHashSet<int2>(keys.Length, Allocator.Temp); // int2는 IEquatable
             int uniqueCells = 0;
             int totalStamps = 0;
 
             var sb = new System.Text.StringBuilder();
             sb.Append("[StampDump] 슬롯0 도장 현황 (frame ").Append(_frame).Append(")\n");
 
-            for (int i = 0; i < uniqueCount; i++)
+            for (int i = 0; i < keys.Length; i++)
             {
                 var cell = keys[i];
+                if (!seen.Add(cell))
+                    continue; // 이미 출력한 셀.
                 uniqueCells++;
 
                 sb.Append("  cell ").Append(cell.ToString()).Append(" : ");
@@ -224,7 +348,61 @@ namespace CitySim
 
             Debug.Log(sb.ToString());
 
+            seen.Dispose();
             keys.Dispose();
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  ServiceDumpSystem — 시민의 ServiceTarget(찾기 결과)을 주기적으로 덤프
+    // ──────────────────────────────────────────────────────────────────────
+    //  ServiceSearchSystem이 채운 ServiceTarget을 시민별로 출력.
+    //  "찾았는가 / 누구를 / 거리 얼마"를 확인. 120프레임마다 1회.
+    // ══════════════════════════════════════════════════════════════════════
+    public partial struct ServiceDumpSystem : ISystem
+    {
+        int _frame;
+
+        public void OnCreate(ref SystemState state)
+        {
+            _frame = 0;
+            state.RequireForUpdate<CitizenTag>();
+        }
+
+        public void OnUpdate(ref SystemState state)
+        {
+            _frame++;
+            if (_frame % 120 != 0)
+                return;
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append("[ServiceDump] 시민 ServiceTarget 현황 (frame ").Append(_frame).Append(")\n");
+
+            int n = 0;
+            foreach (var (target, needs, st) in
+                     SystemAPI.Query<RefRO<ServiceTarget>, RefRO<CitizenNeeds>,
+                                     RefRO<CitizenState>>()
+                         .WithAll<CitizenTag>())
+            {
+                n++;
+                var t = target.ValueRO;
+                sb.Append("  시민#").Append(n)
+                  .Append(" Pursuing=0x").Append(((ulong)needs.ValueRO.Pursuing).ToString("X"))
+                  .Append(" CurBuilding=E").Append(st.ValueRO.CurrentBuilding.Index)
+                  .Append(" → ");
+
+                if (t.Has)
+                    sb.Append("찾음: 공급자=E").Append(t.Supplier.Index)
+                      .Append(" relief=0x").Append(((ulong)t.Relief).ToString("X"))
+                      .Append(" dist=").Append(t.Dist).Append("\n");
+                else
+                    sb.Append("못 찾음 (Supplier=Null)\n");
+            }
+
+            if (n == 0)
+                sb.Append("  (시민 없음)\n");
+
+            Debug.Log(sb.ToString());
         }
     }
 }

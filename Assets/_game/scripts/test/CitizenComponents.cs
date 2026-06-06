@@ -1,6 +1,5 @@
 using Unity.Entities;
 using Unity.Mathematics;
-using Game.Unit;
 
 namespace CitySim
 {
@@ -13,9 +12,9 @@ namespace CitySim
     //    - 팀 소속은 변하지도 사라지지도 않으므로 SharedComponentData.
     //
     //  한 시민 엔티티 구성:
-    //    [핫]   CitizenConditions, CitizenNeeds(or NeedElement buffer), CitizenState
+    //    [핫]   CitizenConditions, 욕구 컴포넌트(Hunger 등), CitizenNeeds, CitizenState
     //    [콜드] CitizenAttributes, JobData
-    //    [소속] CitizenResidence(집·직장), CitizenTeam(SharedComponent)
+    //    [소속] CitizenResidence(집·직장), CitizenOwner(SharedComponent, LocalId)
     //    [동적] CitizenLocation(현재 건물 / 이동중)
     //    + LocalTransform (Unity.Transforms)
     // ══════════════════════════════════════════════════════════════════════════
@@ -69,38 +68,42 @@ namespace CitySim
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    //  핫: 욕구 (Needs)
-    //  기존 NeedType(64bit Flags) 재사용.
+    //  핫: 욕구 (Needs) — 개별 컴포넌트 모델
     //
-    //  모델 (Stage B 확정):
-    //    - 부정 방향 게이지: 0 = 만족, 1 = 최악. 증가가 나빠짐(불만 누적).
-    //    - 매 틱 Rate만큼 증가. 해결 행동(건물 방문)이 게이지를 감소시킴(Stage F).
-    //    - 게이지 > Threshold → ActiveMask에 비트 ON("이제 해결 필요"·불만 표출·AI 신호).
-    //    - 욕구 종류별 게이지가 필요하므로 DynamicBuffer<NeedElement> 사용.
+    //  설계 전환 (버퍼 → 개별 컴포넌트):
+    //    - 욕구는 종류별 개별 IComponentData. 팩션이 가진 욕구 컴포넌트 "조합"이
+    //      곧 그 팩션을 정의한다(예: 휴먼 {Hunger, ...}, 메카닉 {EnergyLevel}).
+    //    - 정적 부착: 스폰 시 팩션 조합대로 붙고, 게임 중 떼지 않는다. 해소는
+    //      컴포넌트 제거가 아니라 Level 값 감소(구조 변경 0). 필요 시 추후
+    //      IEnableableComponent로 일시 비활성 가능.
+    //    - 욕구별 시스템: 각 욕구의 증가/해소를 전담(확장성). 한 시스템에 모든
+    //      욕구 분기를 모으지 않는다(helper=사실, system=결정).
+    //    - 부정 방향 게이지: 0=만족, 1=최악. 매 틱 Rate만큼 증가, 해소가 감소.
     //
-    //  게이지(연속) + 플래그(이산) 2층:
-    //    게이지는 부드럽게 누적, 플래그는 행동/집계 트리거.
+    //  ※ 욕구 종류는 재조정될 수 있음 — 특정 6종에 묶지 않는다. 골격(필드 형태)을
+    //    먼저 세우고(A-1: Hunger), 종류/팩션 조합은 이후 단계에서 확정.
+    //  ※ ActiveMask(비트 집계) 제거: 결정 시스템이 욕구 컴포넌트를 직접 읽어
+    //    추구 욕구를 ServiceTarget으로 넘긴다. 비트 집계 불필요.
     // ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>시민 의사결정 보조 — 현재 추구 중인 욕구(단일).
+    /// 최종적으로 ServiceTarget.Relief로 일원화 예정(결정 시스템 도입 시).</summary>
     public struct CitizenNeeds : IComponentData
     {
-        /// <summary>임계치를 넘어 "미충족"으로 활성화된 욕구 비트(불만).</summary>
-        public NeedType ActiveMask;
-
-        /// <summary>이번 의사결정에서 추구 중인 욕구(단일 선택). None이면 미정.</summary>
+        /// <summary>이번 의사결정에서 추구 중인 욕구. None이면 미정.</summary>
         public NeedType Pursuing;
     }
 
     /// <summary>
-    /// 욕구 종류별 게이지(부정 방향).
-    /// Level 0 = 만족, 1 = 최악. 매 틱 Rate만큼 증가.
+    /// 배고픔 욕구 게이지(부정 방향). Level 0=만족, 1=최악. 매 틱 Rate만큼 증가.
+    /// 개별 욕구 컴포넌트의 첫 사례 — 다른 욕구도 같은 {Level,Rate,Threshold} 골격.
+    /// (욕구마다 필드가 달라질 수 있으므로 공통 base 없이 개별 정의.)
     /// </summary>
-    [InternalBufferCapacity(8)]
-    public struct NeedElement : IBufferElementData
+    public struct Hunger : IComponentData
     {
-        public NeedType Type;
-        public float    Level;       // 0(만족) ~ 1(최악). 증가 = 나빠짐.
-        public float    Rate;        // 틱당(초당) 증가 속도.
-        public float    Threshold;   // 이 값 초과 시 ActiveMask 비트 ON.
+        public float Level;       // 0(만족) ~ 1(최악).
+        public float Rate;        // 틱당(초당) 증가 속도.
+        public float Threshold;   // 이 값 초과 시 "활성"(해결 필요).
 
         public readonly bool IsActive => Level > Threshold;
     }
@@ -166,17 +169,24 @@ namespace CitySim
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    //  팀 소속: SharedComponentData (변하지/사라지지 않음 → 청크 분리)
-    //  기존 TeamMask(Game.Unit) 재사용. 팀별 처리·필터가 거의 공짜.
-    //  주의: SharedComponent는 1~2개로 절제(조합 폭발 방지).
+    //  소유: 개별 플레이어 단위 (SharedComponentData — 변하지/사라지지 않음 → 청크 분리)
+    //
+    //  소유 단위는 "개별 플레이어(LocalId 0~7)" 하나로 통일한다. 팀 개념을 쓰지
+    //  않음 — 건물·도로·stamp 슬롯·시민이 모두 같은 LocalId 축으로 정렬되어,
+    //  교차 참조(시민→자기 stamp 슬롯, 도로 소유 검사 등)가 한 키로 떨어진다.
+    //
+    //  SharedComponent인 이유: LocalId는 생성 후 바뀌지 않으므로 청크가 플레이어
+    //  별로 갈린다 → WithSharedComponentFilter(LocalId)로 한 플레이어 시민만 묶어
+    //  그 플레이어의 stamp 슬롯으로 일괄 처리(거의 공짜). 단일 SharedComponent라
+    //  조합 폭발 없음.
     // ──────────────────────────────────────────────────────────────────────────
-    public struct CitizenTeam : ISharedComponentData
+    public struct CitizenOwner : ISharedComponentData
     {
-        public TeamMask Team;   // 슬롯 비트(+IsPlayer/IsPlayerTeam 플래그)
+        public int LocalId;   // 소유 플레이어 슬롯 (0~7). stamp[LocalId] 등에 직접 사용.
 
-        public CitizenTeam(int teamIndex, bool isPlayer = false, bool isPlayerTeam = false)
+        public CitizenOwner(int localId)
         {
-            Team = TeamInfoData.CreateTeamMask(teamIndex, isPlayerTeam, isPlayer);
+            LocalId = localId;
         }
     }
 }

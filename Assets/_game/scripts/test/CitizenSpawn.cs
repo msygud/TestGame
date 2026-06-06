@@ -2,7 +2,6 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using Unity.Transforms;
-using Game.Unit;
 
 namespace CitySim
 {
@@ -14,7 +13,7 @@ namespace CitySim
     //    2. 능력치(콜드) 결정적 랜덤 생성 (Seed)
     //    3. 컨디션(핫) Healthy 초기화, 욕구 비움
     //    4. 직업·소속·상태 초기화
-    //    5. CitizenTeam(SharedComponent) 부착 — 팀별 청크 분리
+    //    5. CitizenOwner(SharedComponent) 부착 — 플레이어 LocalId별 청크 분리
     //    6. 요청 엔티티 파괴
     //
     //  소속(집·직장) 실제 배정은 Stage A 후반 또는 별도 배정 시스템에서.
@@ -26,9 +25,7 @@ namespace CitySim
 
     public struct SpawnCitizenRequest : IComponentData
     {
-        public int     TeamIndex;     // 0~7. CitizenTeam 부착에 사용.
-        public bool     IsPlayer;     // 플레이어 본인 슬롯 여부
-        public bool     IsPlayerTeam; // 플레이어 팀 여부
+        public int     LocalId;       // 0~7. 소유 플레이어 슬롯. CitizenOwner 부착에 사용.
         public float3   Position;     // 스폰 위치
         public uint     Seed;         // 능력치 결정적 생성 시드(0이면 위치로 파생)
         public JobType  InitialJob;   // 초기 직업(Unemployed 가능)
@@ -74,21 +71,18 @@ namespace CitySim
             ecb.AddComponent(e, CitizenConditions.Healthy);
             ecb.AddComponent(e, new CitizenNeeds
             {
-                ActiveMask = NeedType.None,
                 Pursuing   = NeedType.None,
             });
 
-            // 욕구 게이지 버퍼 — 시민 개인 생활 욕구(부정 방향, 0=만족에서 시작).
-            // 증가율·임계치는 Stage B 기본값. 추후 능력치/밸런싱으로 조정.
-            var needs = ecb.AddBuffer<NeedElement>(e);
-            AddNeed(ref needs, NeedType.Hunger,           rate: 0.010f, threshold: 0.6f);
-            AddNeed(ref needs, NeedType.LowEntertainment, rate: 0.004f, threshold: 0.7f);
-            AddNeed(ref needs, NeedType.LowEducation,     rate: 0.002f, threshold: 0.7f);
-            AddNeed(ref needs, NeedType.LowReligion,      rate: 0.002f, threshold: 0.8f);
-            // 주거/직장은 배정 상태에서 파생(미배정이면 즉시 불만) → ConditionUpdate에서
-            // 다룰 수도 있으나, 일단 게이지로도 추적 가능하게 추가해 둠.
-            AddNeed(ref needs, NeedType.Homeless,         rate: 0f,     threshold: 0.5f);
-            AddNeed(ref needs, NeedType.Unemployed,       rate: 0f,     threshold: 0.5f);
+            // 욕구 컴포넌트 — 개별 부착(부정 방향, Level 0=만족에서 시작).
+            // A-1: Hunger 하나로 골격. 다른 욕구/팩션 조합은 이후 단계에서 추가.
+            // 증가율·임계치는 기본값(추후 능력치/밸런싱 조정).
+            ecb.AddComponent(e, new Hunger
+            {
+                Level     = 0f,
+                Rate      = 0.010f,
+                Threshold = 0.6f,
+            });
 
             // 콜드: 직업
             ecb.AddComponent(e, new JobData
@@ -113,9 +107,11 @@ namespace CitySim
                 ActionEndTime   = 0.0,
             });
 
-            // 팀: SharedComponent (팀별 청크 분리)
-            ecb.AddSharedComponent(e, new CitizenTeam(
-                req.TeamIndex, req.IsPlayer, req.IsPlayerTeam));
+            // 소유: SharedComponent (플레이어 LocalId별 청크 분리)
+            ecb.AddSharedComponent(e, new CitizenOwner(req.LocalId));
+
+            // 서비스 탐색 결과 슬롯(초기 비어있음). ServiceSearchSystem이 채운다.
+            ecb.AddComponent(e, ServiceTarget.None);
         }
 
         // ── 능력치 결정적 생성 ────────────────────────────────────────────
@@ -143,20 +139,6 @@ namespace CitySim
             int a = rng.NextInt(0, 256);
             int b = rng.NextInt(0, 256);
             return (byte)((a + b) >> 1);
-        }
-
-        // ── 욕구 게이지 1개 추가(초기 Level 0 = 만족) ─────────────────────
-        static void AddNeed(
-            ref DynamicBuffer<NeedElement> buf,
-            NeedType type, float rate, float threshold)
-        {
-            buf.Add(new NeedElement
-            {
-                Type      = type,
-                Level     = 0f,
-                Rate      = rate,
-                Threshold = threshold,
-            });
         }
     }
 }
