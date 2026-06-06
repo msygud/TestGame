@@ -128,7 +128,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1251264774}
-  - component: {fileID: 1251264773}
   m_Layer: 0
   m_Name: PrefabSo
   m_TagString: Untagged
@@ -136,19 +135,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1251264773
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1251264772}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c8757205ea1edbe40a289c2b7331ffb1, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CitySim.Authoring.GamePrefabRegistryAuthoring
-  Registry: {fileID: 11400000, guid: 21e4d02b8ebb06b4dae31bfaf16efe9c, type: 2}
 --- !u!4 &1251264774
 Transform:
   m_ObjectHideFlags: 0

@@ -128,7 +128,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 714397741}
-  - component: {fileID: 714397740}
   m_Layer: 0
   m_Name: RegisterBaker
   m_TagString: Untagged
@@ -136,19 +135,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &714397740
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 714397739}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c8757205ea1edbe40a289c2b7331ffb1, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CitySim.Authoring.GamePrefabRegistryAuthoring
-  Registry: {fileID: 11400000, guid: e5c70a1b65c1e5e42a29ebadb1aea7df, type: 2}
 --- !u!4 &714397741
 Transform:
   m_ObjectHideFlags: 0

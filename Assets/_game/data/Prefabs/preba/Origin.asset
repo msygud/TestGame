@@ -16,6 +16,34 @@ MonoBehaviour:
   dlcName: 0
   displayName: origin
   jsonExportPath: 
-  items: []
+  items:
+  - MainKey: 0
+    VariantKey: 2
+    Name: Road_E
+    Category: 0
+    Usage: 0
+    Prefab: {fileID: 8063682502518335741, guid: 11260831155d36d47a02b2ce8e454377, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0.1, z: 0}
+    BuildableOn: 1
+    RoadMask: 2
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 0
+    VariantKey: 0
+    Name: 
+    Category: 0
+    Usage: 0
+    Prefab: {fileID: 0}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    DlcKey: 0
+    IsDeleted: 0
   NeedMaps: []
   Entrances: []
