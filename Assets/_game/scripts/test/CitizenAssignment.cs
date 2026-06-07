@@ -19,12 +19,21 @@ namespace CitySim
     //
     //  점유 의미: 거주/소속 점유는 장기 유지(방문 예약과 달리 해제하지 않음).
     //
+    //  초기 배치(P1):
+    //    집을 "막 배정받은 순간 한 번만" 그 집에 앉힌다(Activity=AtHome,
+    //    CurrentBuilding=Home). ServiceSearchSystem이 현재 건물(CurrentBuilding)을
+    //    검색 출발점으로 쓰므로, 자리를 잡아 줘야 정식 스폰 시민도 욕구 추구 시
+    //    이동을 시작한다(미설정이면 CurrentBuilding=Null → 영영 못 움직임).
+    //    Home!=Null이 된 다음 프레임부터 배정 분기를 건너뛰므로, 이후의 이동/도착
+    //    상태(Traveling 등)를 덮어쓰지 않는다 — 즉 "한 번만" 보장.
+    //
     //  한계/메모:
     //    - 빈 집/직장이 부족하면 일부 시민은 태그를 유지한 채 다음 프레임 재시도.
     //      장기 미배정 = Homeless/Unemployed 욕구로 이어짐(Stage B/G).
     //    - "가장 먼저 찾은 빈 건물"에 배정(거리·선호 무시). 추후 §4 연결 캐싱과
     //      묶어 "가까운 집" 배정으로 고도화 가능.
     //    - 태그 제거 조건: 집·직장이 "모두" 배정된 시점. 한쪽만 되면 태그 유지.
+    //      (집만 배정돼도 위 초기 배치는 이미 적용되어 거주·이동은 가능.)
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(CitizenSpawnSystem))]
@@ -86,8 +95,9 @@ namespace CitySim
             int homeCursor = 0;
             int workCursor = 0;
 
-            foreach (var (res, job, e) in
-                     SystemAPI.Query<RefRW<CitizenResidence>, RefRW<JobData>>()
+            foreach (var (res, job, cstate, e) in
+                     SystemAPI.Query<RefRW<CitizenResidence>, RefRW<JobData>,
+                                     RefRW<CitizenState>>()
                          .WithAll<CitizenTag, UnassignedTag>()
                          .WithEntityAccess())
             {
@@ -98,6 +108,12 @@ namespace CitySim
                     TakeSlot(ref freeHomes, ref homeCursor, occLookup, out Entity home))
                 {
                     res.ValueRW.Home = home;
+
+                    // P1: 막 집을 배정받은 "이 순간 한 번만" 집에 앉힌다.
+                    //  다음 프레임부터 Home!=Null → 이 분기를 건너뛰므로 이동 상태를
+                    //  덮지 않는다(이동 출발점 = CurrentBuilding 확보).
+                    cstate.ValueRW.Activity        = CitizenActivity.AtHome;
+                    cstate.ValueRW.CurrentBuilding = home;
                 }
 
                 // 직장 배정

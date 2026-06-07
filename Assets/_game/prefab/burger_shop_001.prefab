@@ -74,6 +74,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1744931172868841204}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: -7501419791865701180}
   m_SourcePrefab: {fileID: 100100000, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
 --- !u!1 &6189209910906397481 stripped
 GameObject:
@@ -115,3 +118,26 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.NameAuth
   Name: Burger
+--- !u!114 &-7501419791865701180
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6189209910906397481}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0d796a8cc7364c72b0a533f21d35a683, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.UnitAuthoring
+  MoveSpeed: 4
+  TurnSpeedDegrees: 360
+  StopDistance: 0.15
+  FootprintSize: {x: 2, y: 1}
+  FootprintRadius: 0.5
+  SeparationWeight: 1
+  SettledPushScale: 0.03
+  SelectionWorldRadius: 0.6
+  SelectionScreenPixels: 28
+  SelectionRingRadius: 0.8
+  SelectionFootprintSize: {x: 1, y: 1}

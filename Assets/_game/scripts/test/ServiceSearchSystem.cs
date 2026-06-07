@@ -87,6 +87,16 @@ namespace CitySim
                              .WithAll<CitizenTag>()
                              .WithSharedComponentFilter(new CitizenOwner(localId)))
                 {
+                    // 검색은 "목적지를 새로 찾아야 하는" 시민만.
+                    //  · 이미 목적지가 있으면(Has) 이동/도착이 인계 중 → 건드리지 않음.
+                    //  · Idle/AtHome일 때만 검색(이동 중 CurrentBuilding=Null 상태에서
+                    //    덮어쓰면 이동이 깨진다). 도착·이동 상태는 보존.
+                    if (target.ValueRO.Has)
+                        continue;
+                    var act = st.ValueRO.Activity;
+                    if (act != CitizenActivity.Idle && act != CitizenActivity.AtHome)
+                        continue;
+
                     target.ValueRW = SearchOne(
                         needs.ValueRO, st.ValueRO, map, in fpLookup, in entLookup);
                 }

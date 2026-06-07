@@ -39,9 +39,9 @@ namespace CitySim
         bool _citizenSpawned;
 
         // 테스트 파라미터 ─────────────────────────────────────────────────
-        const int   TestOwner   = 0;          // 플레이어 슬롯 0
-        const int   TestFaction = 0;
-        const int   SupplyRange = 0;          // 0 = 무제한 (작은 맵이니 전부 도달)
+        const int TestOwner = 0;          // 플레이어 슬롯 0
+        const int TestFaction = 0;
+        const int SupplyRange = 0;          // 0 = 무제한 (작은 맵이니 전부 도달)
         static readonly NeedType TestRelief = (NeedType)0x1UL; // 임시 비트 1개
 
         public void OnCreate(ref SystemState state)
@@ -108,11 +108,11 @@ namespace CitySim
                 return;
             road.Add(cell, new RoadCell
             {
-                Directions   = RoadDir.None, // BFS는 4방 존재검사만 하므로 방향 불필요
-                FlowAxis     = default,
-                LaneCount    = 2,
+                Directions = RoadDir.None, // BFS는 4방 존재검사만 하므로 방향 불필요
+                FlowAxis = default,
+                LaneCount = 2,
                 OwnerLocalId = TestOwner,
-                RoadEntity   = Entity.Null,
+                RoadEntity = Entity.Null,
             });
         }
 
@@ -128,13 +128,13 @@ namespace CitySim
         void SpawnSupplier(ref SystemState state)
         {
             int2 origin = new int2(10, 9);
-            int2 size   = new int2(1, 1);
-            int  rot    = 0;
+            int2 size = new int2(1, 1);
+            int rot = 0;
 
             var entrance = new EntranceInfo
             {
                 Offset = new int2(0, 0),
-                Dir    = (byte)RoadDir.N, // 북 — enum 실제값에 자동 일치
+                Dir = (byte)RoadDir.N, // 북 — enum 실제값에 자동 일치
             };
 
             // 입구 도로셀 검산 (로그로 출력해 도로와 맞는지 즉시 확인).
@@ -149,9 +149,9 @@ namespace CitySim
 
             em.AddComponentData(supplier, new BuildingFootprint
             {
-                Origin       = origin,
-                Size         = size,
-                RotSteps     = rot,
+                Origin = origin,
+                Size = size,
+                RotSteps = rot,
                 OwnerLocalId = TestOwner,
             });
             em.AddComponentData(supplier, new BuildingEntrance
@@ -161,8 +161,8 @@ namespace CitySim
             em.AddComponentData(supplier, new StampSupplier
             {
                 OwnerLocalId = TestOwner,
-                Relief       = TestRelief,
-                MaxDist      = SupplyRange,
+                Relief = TestRelief,
+                MaxDist = SupplyRange,
             });
 
             // dirty 발행 → 다음 재빌드 틱에 슬롯 0 재BFS.
@@ -188,12 +188,12 @@ namespace CitySim
 
             // ── 집 건물 (footprint + 입구) ──
             int2 homeOrigin = new int2(15, 13);
-            int2 homeSize   = new int2(1, 1);
-            int  homeRot    = 0;
+            int2 homeSize = new int2(1, 1);
+            int homeRot = 0;
             var homeEntrance = new EntranceInfo
             {
                 Offset = new int2(0, 0),
-                Dir    = (byte)RoadDir.W, // 서향 → 입구 도로셀 (14,13)
+                Dir = (byte)RoadDir.W, // 서향 → 입구 도로셀 (14,13)
             };
             int2 homeRoadCell = EntranceOps.EntranceRoadCell(
                 homeOrigin, homeSize, in homeEntrance, homeRot);
@@ -201,8 +201,10 @@ namespace CitySim
             var home = em.CreateEntity();
             em.AddComponentData(home, new BuildingFootprint
             {
-                Origin = homeOrigin, Size = homeSize,
-                RotSteps = homeRot, OwnerLocalId = TestOwner,
+                Origin = homeOrigin,
+                Size = homeSize,
+                RotSteps = homeRot,
+                OwnerLocalId = TestOwner,
             });
             em.AddComponentData(home, new BuildingEntrance { Entrance = homeEntrance });
 
@@ -212,20 +214,20 @@ namespace CitySim
             em.AddSharedComponent(citizen, new CitizenOwner(TestOwner));
             em.AddComponentData(citizen, new CitizenNeeds
             {
-                Pursuing   = TestRelief,   // 이 욕구를 추구 → ServiceSearch가 공급자 검색
+                Pursuing = TestRelief,   // 이 욕구를 추구 → ServiceSearch가 공급자 검색
             });
             // 욕구 컴포넌트(Hunger) 부착 — 활성 상태로 둬서 검증.
             em.AddComponentData(citizen, new Hunger
             {
-                Level     = 0.8f,   // 임계(0.6) 초과 = 활성
-                Rate      = 0.010f,
+                Level = 0.8f,   // 임계(0.6) 초과 = 활성
+                Rate = 0.010f,
                 Threshold = 0.6f,
             });
             em.AddComponentData(citizen, new CitizenState
             {
-                Activity        = CitizenActivity.AtHome,
+                Activity = CitizenActivity.AtHome,
                 CurrentBuilding = home,    // ← 기준 건물
-                ActionEndTime   = 0.0,
+                ActionEndTime = 0.0,
             });
             em.AddComponentData(citizen, ServiceTarget.None);
 
@@ -261,8 +263,8 @@ namespace CitySim
             var stamp = SystemAPI.GetSingleton<StampLayers>();
 
             // ── 진단 A: DirtyMask 현재값 (재빌드가 dirty를 소비했는가) ──────
-            Debug.Log("[StampDiag] DirtyMask=0x" + stamp.DirtyMask.ToString("X")
-                      + " (0이면 재빌드가 dirty 소비 완료 / 0이 아니면 재빌드 미실행)");
+            //Debug.Log("[StampDiag] DirtyMask=0x" + stamp.DirtyMask.ToString("X")
+            //          + " (0이면 재빌드가 dirty 소비 완료 / 0이 아니면 재빌드 미실행)");
 
             // ── 진단 B: RoadLayer 상태 (도로가 owner=0으로 등록됐는가) ──────
             if (SystemAPI.HasSingleton<GridLayers>())
@@ -271,17 +273,17 @@ namespace CitySim
                 if (road.IsCreated)
                 {
                     bool has1010 = road.TryGetValue(new int2(10, 10), out var rc1010);
-                    Debug.Log("[StampDiag] (10,10) 존재=" + has1010
-                              + (has1010 ? " owner=" + rc1010.OwnerLocalId : " <- 도로 미등록!"));
+                    //Debug.Log("[StampDiag] (10,10) 존재=" + has1010
+                    //          + (has1010 ? " owner=" + rc1010.OwnerLocalId : " <- 도로 미등록!"));
                     // 도로 가로줄 끝 칸도 확인 (전 구간 등록됐는지).
                     bool has1410 = road.ContainsKey(new int2(14, 10));
                     bool has1413 = road.ContainsKey(new int2(14, 13));
-                    Debug.Log("[StampDiag] (14,10) 존재=" + has1410
-                              + " / (14,13) 존재=" + has1413);
+                    //Debug.Log("[StampDiag] (14,10) 존재=" + has1410
+                    //          + " / (14,13) 존재=" + has1413);
                 }
                 else
                 {
-                    Debug.Log("[StampDiag] RoadLayer 미생성");
+                    //Debug.Log("[StampDiag] RoadLayer 미생성");
                 }
             }
 
@@ -294,10 +296,10 @@ namespace CitySim
                 if (SystemAPI.HasComponent<BuildingFootprint>(e)) supWithFp++;
                 if (SystemAPI.HasComponent<BuildingEntrance>(e)) supWithEnt++;
             }
-            Debug.Log("[StampDiag] StampSupplier 엔티티=" + supAll
-                      + " / +BuildingFootprint=" + supWithFp
-                      + " / +BuildingEntrance=" + supWithEnt
-                      + " (BFS는 셋 다 가진 엔티티만 처리)");
+            //Debug.Log("[StampDiag] StampSupplier 엔티티=" + supAll
+            //          + " / +BuildingFootprint=" + supWithFp
+            //          + " / +BuildingEntrance=" + supWithEnt
+            //          + " (BFS는 셋 다 가진 엔티티만 처리)");
 
             var map = stamp[0]; // 슬롯 0만 확인.
             if (!map.IsCreated)
@@ -346,7 +348,7 @@ namespace CitySim
                 sb.Append("  요약: 셀 ").Append(uniqueCells)
                   .Append("개, 총 도장 ").Append(totalStamps).Append("개\n");
 
-            Debug.Log(sb.ToString());
+            //Debug.Log(sb.ToString());
 
             seen.Dispose();
             keys.Dispose();
@@ -378,6 +380,10 @@ namespace CitySim
             var sb = new System.Text.StringBuilder();
             sb.Append("[ServiceDump] 시민 ServiceTarget 현황 (frame ").Append(_frame).Append(")\n");
 
+            double nowSec = SystemAPI.HasSingleton<GameClock>()
+                ? SystemAPI.GetSingleton<GameClock>().TotalSeconds : -1.0;
+            sb.Append("  now(게임초)=").Append(nowSec.ToString("F2")).Append("\n");
+
             int n = 0;
             foreach (var (target, needs, st) in
                      SystemAPI.Query<RefRO<ServiceTarget>, RefRO<CitizenNeeds>,
@@ -387,6 +393,8 @@ namespace CitySim
                 n++;
                 var t = target.ValueRO;
                 sb.Append("  시민#").Append(n)
+                  .Append(" [").Append(st.ValueRO.Activity.ToString()).Append("]")
+                  .Append(" endT=").Append(st.ValueRO.ActionEndTime.ToString("F2"))
                   .Append(" Pursuing=0x").Append(((ulong)needs.ValueRO.Pursuing).ToString("X"))
                   .Append(" CurBuilding=E").Append(st.ValueRO.CurrentBuilding.Index)
                   .Append(" → ");
@@ -402,7 +410,7 @@ namespace CitySim
             if (n == 0)
                 sb.Append("  (시민 없음)\n");
 
-            Debug.Log(sb.ToString());
+            //Debug.Log(sb.ToString());
         }
     }
 }

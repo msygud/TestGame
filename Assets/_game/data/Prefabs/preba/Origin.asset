@@ -31,6 +31,20 @@ MonoBehaviour:
     MultiItemSize: 0.5
     DlcKey: 0
     IsDeleted: 0
+  - MainKey: 1
+    VariantKey: 10
+    Name: Road_EW
+    Category: 0
+    Usage: 0
+    Prefab: {fileID: 8799440274343547266, guid: 481b70de499510243945fb102c9baea0, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0.1, z: 0}
+    BuildableOn: 1
+    RoadMask: 10
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    DlcKey: 0
+    IsDeleted: 0
   - MainKey: 0
     VariantKey: 0
     Name: 

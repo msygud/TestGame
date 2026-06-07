@@ -19,20 +19,30 @@ namespace CitySim
     //  ※ 이 파일은 "그릇"만 정의한다. BFS 도장 / 수급자 조회는 후속 단계.
     // ══════════════════════════════════════════════════════════════════════
 
+    /// <summary>도장 종류. 같은 stamp 레이어에 공급자/창고가 함께 찍힌다.</summary>
+    public enum StampKind : byte
+    {
+        Supplier = 0,   // 욕구 공급자(Relief 의미 있음). ServiceSearch가 매칭.
+        Warehouse,      // 물류 창고(Relief=None). pull/push가 품목별로 사용.
+    }
+
     /// <summary>
-    /// 도로셀에 찍히는 도장 한 개. "이 셀에 이 공급자가 dist 거리로 닿는다."
-    /// 한 셀에 여러 공급자가 겹칠 수 있으므로 MultiHashMap(int2 → SupplierRef)로 보관.
+    /// 도로셀에 찍히는 도장 한 개. "이 셀에 이 시설(Kind)이 dist 거리로 닿는다."
+    /// 한 셀에 여럿이 겹칠 수 있으므로 MultiHashMap(int2 → SupplierRef)로 보관.
     /// </summary>
     public struct SupplierRef
     {
-        /// <summary>공급자 건물 엔티티.</summary>
+        /// <summary>시설 건물 엔티티(공급자 또는 창고).</summary>
         public Entity Supplier;
 
-        /// <summary>이 공급자가 해소하는 욕구 비트(.Raw). 수급자 매칭용.</summary>
+        /// <summary>욕구 공급자가 해소하는 욕구 비트(.Raw). 창고는 None. 수급자 매칭용.</summary>
         public NeedType Relief;
 
-        /// <summary>공급자 입구에서 이 셀까지의 BFS 도로 거리(셀 수). 가까운 공급자 우선용.</summary>
+        /// <summary>시설 입구에서 이 셀까지의 BFS 도로 거리(셀 수). 가까운 것 우선용.</summary>
         public int Dist;
+
+        /// <summary>도장 종류(공급자/창고). 소비처는 Kind로 걸러 읽는다.</summary>
+        public StampKind Kind;
     }
 
     /// <summary>

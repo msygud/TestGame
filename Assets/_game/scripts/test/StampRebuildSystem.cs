@@ -110,8 +110,26 @@ namespace CitySim
                 if (supplier.ValueRO.OwnerLocalId != target)
                     continue;
 
-                StampOne(in supplier.ValueRO, in footprint.ValueRO, in bEntrance.ValueRO,
-                         entity, target, ref map, in roadLayer, ref queue, ref visited);
+                StampOne(in footprint.ValueRO, in bEntrance.ValueRO, entity, target,
+                         supplier.ValueRO.Relief, supplier.ValueRO.MaxDist, StampKind.Supplier,
+                         ref map, in roadLayer, ref queue, ref visited);
+            }
+
+            // ── ③-b 같은 플레이어 소유 창고도 동일 BFS로 도장(Kind=Warehouse) ──
+            //   commodity는 need 비트가 아니므로 Relief=None. 어떤 품목을 보유/수용
+            //   하는지는 stamp에 안 싣고, pull/push가 전송 시점에 창고 stock에서 직접
+            //   읽는다(capacity 직접읽기 원칙). ServiceSearch는 Relief=None이라 무시.
+            //   입구 없는 창고(BuildingEntrance 미부착)는 쿼리에서 자동 제외.
+            foreach (var (warehouse, footprint, bEntrance, entity) in
+                     SystemAPI.Query<RefRO<WarehouseTag>, RefRO<BuildingFootprint>,
+                                     RefRO<BuildingEntrance>>().WithEntityAccess())
+            {
+                if (warehouse.ValueRO.OwnerLocalId != target)
+                    continue;
+
+                StampOne(in footprint.ValueRO, in bEntrance.ValueRO, entity, target,
+                         NeedType.None, warehouse.ValueRO.MaxDist, StampKind.Warehouse,
+                         ref map, in roadLayer, ref queue, ref visited);
             }
 
             visited.Dispose();
@@ -132,11 +150,13 @@ namespace CitySim
         //  · 같은 공급자의 같은 셀 재방문은 visited로 차단 (최단거리 먼저 도달).
         // ──────────────────────────────────────────────────────────────────
         static void StampOne(
-            in StampSupplier    s,
             in BuildingFootprint fp,
             in BuildingEntrance  be,
-            Entity              supplierEntity,
+            Entity              facilityEntity,
             int                 owner,
+            NeedType            relief,
+            int                 maxDist,
+            StampKind           kind,
             ref NativeParallelMultiHashMap<int2, SupplierRef> map,
             in NativeHashMap<int2, RoadCell> roadLayer,
             ref NativeQueue<int2> queue,
@@ -167,13 +187,14 @@ namespace CitySim
                 // 도장 찍기.
                 map.Add(cell, new SupplierRef
                 {
-                    Supplier = supplierEntity,
-                    Relief   = s.Relief,
+                    Supplier = facilityEntity,
+                    Relief   = relief,
                     Dist     = dist,
+                    Kind     = kind,
                 });
 
                 // 거리 상한 도달 시 더 확장 안 함.
-                if (s.MaxDist > 0 && dist >= s.MaxDist)
+                if (maxDist > 0 && dist >= maxDist)
                     continue;
 
                 for (int d = 0; d < 4; d++)

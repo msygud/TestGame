@@ -334,28 +334,16 @@ PrefabInstance:
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 8eecf8c103555484abbb1c09db57c557, type: 3}
       insertIndex: -1
-      addedObject: {fileID: -8463439733203108882}
+      addedObject: {fileID: -3588883242109999720}
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 8eecf8c103555484abbb1c09db57c557, type: 3}
       insertIndex: -1
-      addedObject: {fileID: -3588883242109999720}
+      addedObject: {fileID: 4725608106892207511}
   m_SourcePrefab: {fileID: 100100000, guid: 8eecf8c103555484abbb1c09db57c557, type: 3}
 --- !u!1 &8324669854303313365 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: 8eecf8c103555484abbb1c09db57c557, type: 3}
   m_PrefabInstance: {fileID: 9171091296292167812}
   m_PrefabAsset: {fileID: 0}
---- !u!114 &-8463439733203108882
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8324669854303313365}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3c8b4d4fca662124ab30e1854b582e63, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.UnitBaseAuth
 --- !u!114 &-3588883242109999720
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -369,6 +357,29 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.NameAuth
   Name: cblack
+--- !u!114 &4725608106892207511
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8324669854303313365}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0d796a8cc7364c72b0a533f21d35a683, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.UnitAuthoring
+  MoveSpeed: 6
+  TurnSpeedDegrees: 720
+  StopDistance: 0.15
+  FootprintSize: {x: 1, y: 1}
+  FootprintRadius: 0.5
+  SeparationWeight: 1
+  SettledPushScale: 0.05
+  SelectionWorldRadius: 0.6
+  SelectionScreenPixels: 28
+  SelectionRingRadius: 0.8
+  SelectionFootprintSize: {x: 1, y: 1}
 --- !u!4 &8704608762684933999 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 8eecf8c103555484abbb1c09db57c557, type: 3}
