@@ -54,8 +54,10 @@ namespace CitySim
     //    경로가 얽혀 있고, 재빌드는 한 틱에 한 플레이어(저빈도)라 비용이 작다.
     //    병목 시 BFS 본체만 IJob으로 분리 가능.
     //
-    //  ※ 게이팅: 매 프레임 도는 기본 그룹에 두면 안 된다. 저빈도(예: DayChanged
-    //    또는 N프레임마다) 갱신이 의도. 시스템 그룹/주기 배치는 후속 결정.
+    //  ※ 게이팅: GameClock.HourChanged일 때만 진입(매 게임 시간 1회).
+    //    DirtyMask = 0이면 BFS 없이 즉시 탈출하므로, dirty 없는 시간대 비용 = 0.
+    //    새 건물·도로 변경의 stamp 반영 지연 ≤ 1 게임 시간(도시 건설 페이스에 적합).
+    //    GameClock 없으면 시스템 비활성(RequireForUpdate).
     // ══════════════════════════════════════════════════════════════════════
     public partial struct StampRebuildSystem : ISystem
     {
@@ -65,13 +67,17 @@ namespace CitySim
         public void OnCreate(ref SystemState state)
         {
             _cursor = 0;
-            // 맵 alloc은 StampInitSystem 담당. 여기선 의존성만 건다.
             state.RequireForUpdate<StampLayers>();
             state.RequireForUpdate<GridLayers>();
+            state.RequireForUpdate<GameClock>();
         }
 
         public void OnUpdate(ref SystemState state)
         {
+            // 게이트: 게임 시간이 바뀐 프레임에만 진입.
+            if (!SystemAPI.GetSingleton<GameClock>().HourChanged)
+                return;
+
             var stamp = SystemAPI.GetSingleton<StampLayers>();
 
             // ── ① 라운드로빈으로 dirty한 플레이어 1명 선택 ──────────────

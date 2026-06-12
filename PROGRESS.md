@@ -22,8 +22,20 @@
 - ✅ 공급/소비자 매칭: stamp BFS + `ServiceSearchSystem`
 - ✅ `StampSupplier` 자동 부착: `RegistryItem.IsSupplier/Relief/SupplyMaxDist` → `BakedPrefabEntry` → `PrefabMeta` → `SpawnRequest` → `SpawnSystem`
 - ✅ 물류 3티어 (원재료→중간재→완성품): `StockEntry`, `LogisticsPullSystem`, `LogisticsPushSystem`
-- ⬜ 다음: 생산 시스템 (레시피 → 재고 차감/증가, 제작시간, 숙련도 보정)
-- ⬜ `StampRebuildSystem` 게이팅 (N틱마다 or 이벤트 트리거, 현재 매 프레임)
+- ✅ 생산 시스템: `RecipeDef`/`RecipeDefs`(static Burst-safe) + `ProductionJob` + `ProductionSystem`
+    - Progress=-1 대기 / ≥0 진행(게임초 누적 × SkillFactor) / 완료→Output 추가 / 출력 포화 시 클램프
+    - stub 레시피: Grain×2→Flour×1(10s), Flour×1→Meal×2(8s)
+    - 테스트: `ProductionTestBootstrap.cs`(UNITY_EDITOR)
+- ✅ `StampRebuildSystem` 게이팅: `GameClock.HourChanged` 게이트 (매 게임 시간 1회, Dirty 없으면 즉시 탈출)
+- ✅ **멀티셀 도로 지원 (N×N 정사각형)**
+    - `RegistryItem.Relief`: `NeedType : ulong` Unity 직렬화 불가 → `ulong ReliefRaw` 백킹 필드 + `NeedType Relief` 프로퍼티로 우회
+    - `RoadCell`에 `FootprintOrigin` + `Size` 추가 (철거 시 역참조)
+    - `Road` 컴포넌트에 `FootprintOrigin` + `Size` 추가 (FixupRoadLayer용)
+    - `PlaceRoadCommand`에 `Size` 추가
+    - `RoadSystem`: 배치 시 N×N 전체 셀 `RoadLayer`/`OccupancyLayer` 등록 → 내부 방향 재계산 → 외곽 이웃 갱신 / 철거 시 `FootprintOrigin`+`Size`로 전체 footprint 제거 / `FixupRoadLayer` footprint 전체 셀에 `RoadEntity` 참조 채움
+    - `BuildingPlacementSystem`: `new int2(1,1)` 하드코딩 → `meta.Size`
+    - `CivilianBFS` / `StampRebuildSystem` / 물류 시스템 / 입구 시스템 **변경 없음** (셀 단위 추상화 덕분)
+    - ❓ 멀티셀 도로 시각 메시 스케일링 미구현 (Road 엔티티의 `Size`는 저장되나 비주얼 스폰 시 아직 활용 안 함)
 
 ---
 

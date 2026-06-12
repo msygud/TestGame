@@ -16,7 +16,7 @@ public class Test : MonoBehaviour
         } while (world == null);
         EntityManager em = world.EntityManager;
         Entity e= em.CreateEntity(typeof(MapLoadCommand));
-        em.SetComponentData<MapLoadCommand>(e, new MapLoadCommand { JsonPath = "Assets/_game/data/Map/NewMap.json" });
+        em.SetComponentData<MapLoadCommand>(e, new MapLoadCommand { JsonPath = "Assets/_game/data/json/maps/NewMap.json" });
     }
 
     // Update is called once per frame

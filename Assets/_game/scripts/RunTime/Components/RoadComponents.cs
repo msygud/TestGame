@@ -34,6 +34,12 @@ namespace CitySim
 
         /// <summary>차선 수 (2 or 4).</summary>
         public byte LaneCount;
+
+        /// <summary>footprint 한 변 셀 수 (항상 정사각형). 1 = 1×1.</summary>
+        public byte Size;
+
+        /// <summary>footprint 원점(좌하단). FixupRoadLayer + 시각 스케일 계산에 사용.</summary>
+        public int2 FootprintOrigin;
     }
 
     /// <summary>
@@ -65,6 +71,8 @@ namespace CitySim
         /// 유저: UI 진입 시 자기 팀의 FactionId. AI: 의도 발행 시 자기 FactionId.
         /// </summary>
         public int  FactionId;
+        /// <summary>footprint 한 변 셀 수 (정사각형). 0 또는 1 = 1×1.</summary>
+        public byte Size;
     }
 
     /// <summary>도로 철거 명령. 단발성.</summary>

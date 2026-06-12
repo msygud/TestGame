@@ -182,6 +182,12 @@ namespace CitySim
 
         /// <summary>도로 엔티티 참조 (시각 프리팹 교체용).</summary>
         public Entity RoadEntity;
+
+        /// <summary>이 셀이 속한 도로 footprint의 원점(좌하단). 철거 시 전체 footprint 제거에 사용.</summary>
+        public int2 FootprintOrigin;
+
+        /// <summary>footprint 한 변 셀 수 (항상 정사각형). 1 = 1×1.</summary>
+        public byte Size;
     }
 
     // ══════════════════════════════════════════════════════════════

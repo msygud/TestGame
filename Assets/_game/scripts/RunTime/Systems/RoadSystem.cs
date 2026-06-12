@@ -45,83 +45,121 @@ namespace CitySim
             foreach (var (cmd, cmdEntity) in
                      SystemAPI.Query<RefRO<PlaceRoadCommand>>().WithEntityAccess())
             {
-                var cell = cmd.ValueRO.Cell;
+                var origin    = cmd.ValueRO.Cell;
                 var ownerLocalId = cmd.ValueRO.OwnerLocalId;
                 var laneCount = cmd.ValueRO.LaneCount == 0 ? (byte)2 : cmd.ValueRO.LaneCount;
                 var factionId = cmd.ValueRO.FactionId;
+                var size      = cmd.ValueRO.Size <= 1 ? (byte)1 : cmd.ValueRO.Size;
 
-                if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty)
+                // footprint 전체 셀 중 하나라도 점유돼 있으면 배치 거부
+                bool blocked = false;
+                for (int dx = 0; dx < size && !blocked; dx++)
+                for (int dz = 0; dz < size && !blocked; dz++)
                 {
-                    ecb.DestroyEntity(cmdEntity);
-                    continue;
+                    var c = origin + new int2(dx, dz);
+                    if (layers.OccupancyLayer.TryGetValue(c, out var occ) && !occ.IsEmpty)
+                        blocked = true;
+                }
+                if (blocked) { ecb.DestroyEntity(cmdEntity); continue; }
+
+                // footprint 전체 셀을 RoadLayer + OccupancyLayer에 등록
+                for (int dx = 0; dx < size; dx++)
+                for (int dz = 0; dz < size; dz++)
+                {
+                    var c    = origin + new int2(dx, dz);
+                    var dirs = ComputeDirections(c, layers.RoadLayer);
+                    layers.RoadLayer.Add(c, new RoadCell
+                    {
+                        Directions      = dirs,
+                        FlowAxis        = ComputeFlowAxis(dirs),
+                        LaneCount       = laneCount,
+                        OwnerLocalId    = ownerLocalId,
+                        RoadEntity      = Entity.Null,
+                        FootprintOrigin = origin,
+                        Size            = size,
+                    });
+                    layers.OccupancyLayer[c] = new OccupancyCell
+                    {
+                        Type         = OccupantType.Road,
+                        Occupant     = Entity.Null,
+                        OwnerLocalId = ownerLocalId,
+                    };
                 }
 
-                var dirs = ComputeDirections(cell, layers.RoadLayer);
-                var flowAxis = ComputeFlowAxis(dirs);
+                // footprint 내부 셀들의 방향 비트를 이웃 포함해 재계산
+                // (먼저 전체 등록이 끝난 뒤 재계산해야 내부 연결이 올바름)
+                for (int dx = 0; dx < size; dx++)
+                for (int dz = 0; dz < size; dz++)
+                {
+                    var c = origin + new int2(dx, dz);
+                    if (!layers.RoadLayer.TryGetValue(c, out var rc)) continue;
+                    rc.Directions = ComputeDirections(c, layers.RoadLayer);
+                    rc.FlowAxis   = ComputeFlowAxis(rc.Directions);
+                    layers.RoadLayer[c] = rc;
+                }
 
+                // Road 엔티티는 origin 셀 기준 1개 (FixupRoadLayer가 전체 셀에 참조를 채움)
                 var road = ecb.CreateEntity();
-                ecb.AddComponent(road, new GridPosition { Value = cell });
+                ecb.AddComponent(road, new GridPosition { Value = origin });
                 ecb.AddComponent(road, new Road
                 {
-                    Directions = dirs,
-                    FactionId = factionId,
-                    LaneCount = laneCount,
+                    Directions      = layers.RoadLayer[origin].Directions,
+                    FactionId       = factionId,
+                    LaneCount       = laneCount,
+                    Size            = size,
+                    FootprintOrigin = origin,
                 });
                 ecb.AddComponent(road, new RoadVisualInstance { Instance = Entity.Null });
                 ecb.AddComponent(road, new DirtyRoadTag());
 
-                layers.RoadLayer.Add(cell, new RoadCell
-                {
-                    Directions = dirs,
-                    FlowAxis = flowAxis,
-                    LaneCount = laneCount,
-                    OwnerLocalId = ownerLocalId,
-                    RoadEntity = Entity.Null,
-                });
+                // footprint 외곽 이웃 셀 방향 비트 갱신
+                UpdateFootprintBoundaryDirections(origin, size, layers, em, ecb);
 
-                layers.OccupancyLayer[cell] = new OccupancyCell
-                {
-                    Type = OccupantType.Road,
-                    Occupant = Entity.Null,
-                    OwnerLocalId = ownerLocalId,
-                };
-
-                UpdateNeighborDirections(cell, layers, em, ecb);
-
-                // 도로 추가 → 이 플레이어 stamp 무효화 (재BFS 필요)
                 var dirtyAdd = ecb.CreateEntity();
                 ecb.AddComponent(dirtyAdd, new StampDirtyEvent { OwnerLocalId = ownerLocalId });
 
                 ecb.DestroyEntity(cmdEntity);
             }
 
-            // 3) 도로 철거
+            // 3) 도로 철거 — 어느 셀이든 footprint 전체를 한 번에 제거
             foreach (var (cmd, cmdEntity) in
                      SystemAPI.Query<RefRO<RemoveRoadCommand>>().WithEntityAccess())
             {
-                var cell = cmd.ValueRO.Cell;
+                var cell         = cmd.ValueRO.Cell;
                 var ownerLocalId = cmd.ValueRO.OwnerLocalId;
 
-                if (!layers.RoadLayer.TryGetValue(cell, out var roadCell) ||
-                    roadCell.OwnerLocalId != ownerLocalId)
+                if (!layers.RoadLayer.TryGetValue(cell, out var hitCell) ||
+                    hitCell.OwnerLocalId != ownerLocalId)
                 {
                     ecb.DestroyEntity(cmdEntity);
                     continue;
                 }
 
-                if (roadCell.RoadEntity != Entity.Null)
+                var origin = hitCell.FootprintOrigin;
+                var size   = hitCell.Size <= 1 ? (byte)1 : hitCell.Size;
+
+                // Road 엔티티 파괴 (origin 셀 기준 1개)
+                if (layers.RoadLayer.TryGetValue(origin, out var originCell) &&
+                    originCell.RoadEntity != Entity.Null)
                 {
-                    var vis = em.GetComponentData<RoadVisualInstance>(roadCell.RoadEntity);
+                    var vis = em.GetComponentData<RoadVisualInstance>(originCell.RoadEntity);
                     if (vis.Instance != Entity.Null)
                         ecb.DestroyEntity(vis.Instance);
-                    ecb.DestroyEntity(roadCell.RoadEntity);
+                    ecb.DestroyEntity(originCell.RoadEntity);
                 }
 
-                layers.RoadLayer.Remove(cell);
-                layers.OccupancyLayer.Remove(cell);
-                UpdateNeighborDirections(cell, layers, em, ecb);
+                // footprint 전체 셀 제거
+                for (int dx = 0; dx < size; dx++)
+                for (int dz = 0; dz < size; dz++)
+                {
+                    var c = origin + new int2(dx, dz);
+                    layers.RoadLayer.Remove(c);
+                    layers.OccupancyLayer.Remove(c);
+                }
 
-                // 도로 철거 → 이 플레이어 stamp 무효화 (재BFS 필요)
+                // 외곽 이웃 방향 비트 갱신
+                UpdateFootprintBoundaryDirections(origin, size, layers, em, ecb);
+
                 var dirtyRemove = ecb.CreateEntity();
                 ecb.AddComponent(dirtyRemove, new StampDirtyEvent { OwnerLocalId = ownerLocalId });
 
@@ -242,54 +280,78 @@ namespace CitySim
             return hasEW ? RoadFlowAxis.Horizontal : RoadFlowAxis.Vertical;
         }
 
-        static void UpdateNeighborDirections(
-            int2 cell,
+        // footprint 외곽에 인접한 기존 도로 셀들의 방향 비트를 갱신한다.
+        // footprint 내부 셀들은 이미 올바르게 설정되어 있으므로 스킵.
+        static void UpdateFootprintBoundaryDirections(
+            int2 origin, byte size,
             GridLayers layers,
             EntityManager em,
             EntityCommandBuffer ecb)
         {
-            for (int i = 0; i < 4; i++)
+            // footprint 4변의 바깥쪽 셀들만 순회
+            var visited = new NativeHashSet<int2>(32, Allocator.Temp);
+
+            for (int dx = 0; dx < size; dx++)
+            for (int dz = 0; dz < size; dz++)
             {
-                var nCell = cell + RoadDirOps.Offsets[i];
-                if (!layers.RoadLayer.TryGetValue(nCell, out var nRoadCell)) continue;
-
-                var newDirs = ComputeDirections(nCell, layers.RoadLayer);
-                nRoadCell.Directions = newDirs;
-                nRoadCell.FlowAxis = ComputeFlowAxis(newDirs);
-                layers.RoadLayer[nCell] = nRoadCell;
-
-                if (nRoadCell.RoadEntity != Entity.Null)
+                var c = origin + new int2(dx, dz);
+                for (int i = 0; i < 4; i++)
                 {
-                    var roadComp = em.GetComponentData<Road>(nRoadCell.RoadEntity);
-                    roadComp.Directions = newDirs;
-                    ecb.SetComponent(nRoadCell.RoadEntity, roadComp);
+                    var nCell = c + RoadDirOps.Offsets[i];
+                    // footprint 내부 셀이면 스킵
+                    bool inside = nCell.x >= origin.x && nCell.x < origin.x + size
+                               && nCell.y >= origin.y && nCell.y < origin.y + size;
+                    if (inside) continue;
+                    if (!visited.Add(nCell)) continue;
+                    if (!layers.RoadLayer.TryGetValue(nCell, out var nRoadCell)) continue;
 
-                    if (!em.HasComponent<DirtyRoadTag>(nRoadCell.RoadEntity))
-                        ecb.AddComponent<DirtyRoadTag>(nRoadCell.RoadEntity);
+                    var newDirs = ComputeDirections(nCell, layers.RoadLayer);
+                    nRoadCell.Directions = newDirs;
+                    nRoadCell.FlowAxis   = ComputeFlowAxis(newDirs);
+                    layers.RoadLayer[nCell] = nRoadCell;
+
+                    if (nRoadCell.RoadEntity != Entity.Null)
+                    {
+                        var roadComp = em.GetComponentData<Road>(nRoadCell.RoadEntity);
+                        roadComp.Directions = newDirs;
+                        ecb.SetComponent(nRoadCell.RoadEntity, roadComp);
+                        if (!em.HasComponent<DirtyRoadTag>(nRoadCell.RoadEntity))
+                            ecb.AddComponent<DirtyRoadTag>(nRoadCell.RoadEntity);
+                    }
                 }
             }
+
+            visited.Dispose();
         }
 
         void FixupRoadLayer(ref SystemState state, ref GridLayers layers)
         {
-            foreach (var (gp, e) in
-                     SystemAPI.Query<RefRO<GridPosition>>()
-                     .WithAll<Road>().WithEntityAccess())
+            foreach (var (gp, road, e) in
+                     SystemAPI.Query<RefRO<GridPosition>, RefRO<Road>>()
+                     .WithEntityAccess())
             {
-                var cell = gp.ValueRO.Value;
-                if (!layers.RoadLayer.TryGetValue(cell, out var roadCell)) continue;
+                var origin = gp.ValueRO.Value;
+                var size   = road.ValueRO.Size <= 1 ? (byte)1 : road.ValueRO.Size;
 
-                if (roadCell.RoadEntity == Entity.Null)
+                // footprint 전체 셀에 RoadEntity + Occupant 참조를 채운다
+                for (int dx = 0; dx < size; dx++)
+                for (int dz = 0; dz < size; dz++)
                 {
-                    roadCell.RoadEntity = e;
-                    layers.RoadLayer[cell] = roadCell;
-                }
+                    var c = origin + new int2(dx, dz);
 
-                if (layers.OccupancyLayer.TryGetValue(cell, out var occ) &&
-                    occ.Occupant == Entity.Null)
-                {
-                    occ.Occupant = e;
-                    layers.OccupancyLayer[cell] = occ;
+                    if (layers.RoadLayer.TryGetValue(c, out var roadCell) &&
+                        roadCell.RoadEntity == Entity.Null)
+                    {
+                        roadCell.RoadEntity = e;
+                        layers.RoadLayer[c] = roadCell;
+                    }
+
+                    if (layers.OccupancyLayer.TryGetValue(c, out var occ) &&
+                        occ.Occupant == Entity.Null)
+                    {
+                        occ.Occupant = e;
+                        layers.OccupancyLayer[c] = occ;
+                    }
                 }
             }
         }

@@ -443,14 +443,14 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.CombatInstanceTestAuthoring
   AttackerPrefab: {fileID: 2552510462277219759, guid: 2eb65bd6b700c7046b1bc428e85eb70b, type: 3}
   AttackerPrefabs: []
-  AttackerCount: 200
+  AttackerCount: 1
   AttackerOrigin: {x: 30, y: 0, z: 30}
   AttackerLocalId: 0
   AttackerTeamId: 0
   AttackerNamePrefix: A
   TargetPrefab: {fileID: 4355038132074908174, guid: 5237d7bdd782716478c407d7c0013089, type: 3}
   TargetPrefabs: []
-  TargetCount: 200
+  TargetCount: 1
   TargetOrigin: {x: 100, y: 0, z: 100}
   TargetLocalId: 1
   TargetTeamId: 1
@@ -483,6 +483,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 714397741}
+  - component: {fileID: 714397742}
   m_Layer: 0
   m_Name: RegisterBaker
   m_TagString: Untagged
@@ -505,6 +506,19 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &714397742
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 714397739}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c8757205ea1edbe40a289c2b7331ffb1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.Authoring.GamePrefabRegistryAuthoring
+  Registry: {fileID: 11400000, guid: b0e2806fab8270c4c86b021468e146e8, type: 2}
 --- !u!1001 &785201479
 PrefabInstance:
   m_ObjectHideFlags: 0

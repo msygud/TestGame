@@ -165,7 +165,7 @@ namespace CitySim
             //   도로는 항상 1×1이라 회전 무관.
             int rotSteps = meta.IsRoad ? 0 : EntranceOps.RotationToSteps(req.RotationY);
             int2 size = meta.IsRoad
-                ? new int2(1, 1)
+                ? meta.Size
                 : EntranceOps.RotateSize(meta.Size, rotSteps);
 
             var  fail = ValidateCells(req.Cell, size, meta.BuildableOn,
@@ -201,7 +201,7 @@ namespace CitySim
 
             // ── 3. 스폰 요청 발행 ────────────────────────────────────
             if (meta.IsRoad)
-                EmitRoad(req, ecb);
+                EmitRoad(req, meta, ecb);
             else if (meta.IsMulti)
                 EmitMulti(req, meta, size, settings, ecb);
             else
@@ -353,15 +353,19 @@ namespace CitySim
 
         static void EmitRoad(
             PlaceBuildingRequest req,
+            PrefabMeta           meta,
             EntityCommandBuffer  ecb)
         {
+            // meta.Size는 정사각형 보장 — Size.x를 한 변 길이로 전달
+            byte roadSize = (byte)math.max(1, meta.Size.x);
             var e = ecb.CreateEntity();
             ecb.AddComponent(e, new PlaceRoadCommand
             {
-                Cell      = req.Cell,
+                Cell         = req.Cell,
                 OwnerLocalId = req.OwnerLocalId,
-                LaneCount = 2,
-                FactionId = req.FactionId,   // (FactionId, dirMask)→MainKey 해소용
+                LaneCount    = 2,
+                FactionId    = req.FactionId,
+                Size         = roadSize,
             });
             // Road 점유 및 (FactionId,dirMask)→MainKey→프리팹은 RoadSystem이 처리
         }

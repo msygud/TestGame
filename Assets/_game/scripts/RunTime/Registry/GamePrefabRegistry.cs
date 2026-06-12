@@ -181,10 +181,13 @@ namespace CitySim
         [Header("Supply")]
         [Tooltip("이 건물이 시민 욕구를 해소하는 공급자인지. true면 배치 시 StampSupplier가 부착된다.")]
         public bool    IsSupplier;
-        [Tooltip("해소하는 욕구 비트마스크. IsSupplier=true일 때만 유효.")]
-        public NeedType Relief;
+        [Tooltip("해소하는 욕구 비트마스크(ulong). IsSupplier=true일 때만 유효.")]
+        public ulong   ReliefRaw;
         [Tooltip("stamp BFS 최대 도달 거리(도로 칸 수). 0 이하면 무제한.")]
         public int     SupplyMaxDist;
+
+        // NeedType : ulong 은 Unity 직렬화 미지원 → ulong 백킹 + 프로퍼티로 우회
+        public NeedType Relief { get => (NeedType)ReliefRaw; set => ReliefRaw = (ulong)value; }
 
         [Header("DLC")]
         // 0이면 레지스트리의 dlcId를 따름.

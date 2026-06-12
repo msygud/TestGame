@@ -72,6 +72,12 @@ namespace CitySim.MapEditor
         Material _overlayMat;
         bool _overlayDirty = true;
 
+        // 그리드 라인 캐시 (매 프레임 new[] 방지)
+        Vector3[] _gridPts;
+        Vector3[] _gridBoldPts;
+        int _gridCacheW = -1, _gridCacheH = -1;
+        float _gridCacheCs = -1f;
+
         Dictionary<(int dlcId, PrefabCategory cat), bool> categoryFolds = new();
         Dictionary<int, bool> dlcFolds = new();
 
@@ -986,6 +992,10 @@ namespace CitySim.MapEditor
             _overlayMesh.Clear();
             if (verts.Count == 0) return;
 
+            // 셀 수가 많으면 16비트 인덱스(65535) 초과 → 32비트로 강제
+            _overlayMesh.indexFormat = verts.Count > 65535
+                ? UnityEngine.Rendering.IndexFormat.UInt32
+                : UnityEngine.Rendering.IndexFormat.UInt16;
             _overlayMesh.SetVertices(verts);
             _overlayMesh.SetColors(cols);
             _overlayMesh.SetTriangles(tris, 0);
@@ -1002,32 +1012,42 @@ namespace CitySim.MapEditor
         }
 
         // ── 그리드: Handles.DrawLines 배치 (드로우콜 2개) ───────
+        //  큰 맵에서 셀 단위 선은 너무 빽빽해 의미 없으므로
+        //  셀 크기가 씬뷰에서 3픽셀 미만이면 셀 선 스킵, 5단위 선만 표시.
         void DrawGridHandles(MapSettings s)
         {
             float cs = s.CellSize;
             int w = s.Width;
             int h = s.Height;
 
-            // 일반 셀 선
-            var pts = new Vector3[(w + 1 + h + 1) * 2];
-            int idx = 0;
-            for (int x = 0; x <= w; x++)
-            { pts[idx++] = new Vector3(x * cs, 0f, 0f); pts[idx++] = new Vector3(x * cs, 0f, h * cs); }
-            for (int z = 0; z <= h; z++)
-            { pts[idx++] = new Vector3(0f, 0f, z * cs); pts[idx++] = new Vector3(w * cs, 0f, z * cs); }
-            Handles.color = new Color(1f, 1f, 1f, 0.10f);
-            Handles.DrawLines(pts);
+            // 그리드 라인 캐시: w/h/cs가 바뀔 때만 재계산
+            if (_gridCacheW != w || _gridCacheH != h || _gridCacheCs != cs)
+            {
+                _gridCacheW = w; _gridCacheH = h; _gridCacheCs = cs;
 
-            // 5단위 강조 선
-            int bw = w / 5 + 1, bh = h / 5 + 1;
-            var bpts = new Vector3[(bw + bh) * 2];
-            idx = 0;
-            for (int x = 0; x <= w; x += 5)
-            { bpts[idx++] = new Vector3(x * cs, 0f, 0f); bpts[idx++] = new Vector3(x * cs, 0f, h * cs); }
-            for (int z = 0; z <= h; z += 5)
-            { bpts[idx++] = new Vector3(0f, 0f, z * cs); bpts[idx++] = new Vector3(w * cs, 0f, z * cs); }
+                // 일반 셀 선
+                _gridPts = new Vector3[(w + 1 + h + 1) * 2];
+                int idx = 0;
+                for (int x = 0; x <= w; x++)
+                { _gridPts[idx++] = new Vector3(x * cs, 0f, 0f); _gridPts[idx++] = new Vector3(x * cs, 0f, h * cs); }
+                for (int z = 0; z <= h; z++)
+                { _gridPts[idx++] = new Vector3(0f, 0f, z * cs); _gridPts[idx++] = new Vector3(w * cs, 0f, z * cs); }
+
+                // 5단위 강조 선
+                int bw = w / 5 + 1, bh = h / 5 + 1;
+                _gridBoldPts = new Vector3[(bw + bh) * 2];
+                idx = 0;
+                for (int x = 0; x <= w; x += 5)
+                { _gridBoldPts[idx++] = new Vector3(x * cs, 0f, 0f); _gridBoldPts[idx++] = new Vector3(x * cs, 0f, h * cs); }
+                for (int z = 0; z <= h; z += 5)
+                { _gridBoldPts[idx++] = new Vector3(0f, 0f, z * cs); _gridBoldPts[idx++] = new Vector3(w * cs, 0f, z * cs); }
+            }
+
+            Handles.color = new Color(1f, 1f, 1f, 0.10f);
+            Handles.DrawLines(_gridPts);
+
             Handles.color = new Color(1f, 1f, 1f, 0.28f);
-            Handles.DrawLines(bpts);
+            Handles.DrawLines(_gridBoldPts);
         }
 
         // ── 5단위 눈금 레이블 ────────────────────────────────────
@@ -2036,6 +2056,9 @@ namespace CitySim.MapEditor
             if (verts.Count > 0)
             {
                 var mesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+                mesh.indexFormat = verts.Count > 65535
+                    ? UnityEngine.Rendering.IndexFormat.UInt32
+                    : UnityEngine.Rendering.IndexFormat.UInt16;
                 mesh.SetVertices(verts);
                 mesh.SetColors(cols);
                 mesh.SetTriangles(tris, 0);
