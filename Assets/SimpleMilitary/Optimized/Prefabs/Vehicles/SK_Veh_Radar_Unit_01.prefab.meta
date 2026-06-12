@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 545c11aa51b83fa49a307644ec0ee4b4
+timeCreated: 1495163667
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Vehicles/SK_Veh_Radar_Unit_01.prefab
+  uploadId: 794558

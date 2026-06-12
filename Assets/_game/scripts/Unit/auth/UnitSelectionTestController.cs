@@ -22,11 +22,14 @@ namespace Game.Unit
         public float GroundPlaneY = 0f;
         public float DragThresholdPixels = 8f;
         public float WorldPickDistance = 2f;
+        public float CombatTargetPickDistance = 2.5f;
 
         [Header("Move Order")]
         public float MoveStopDistance = 0.25f;
         public float FormationSpacing = 1.4f;
         public float FormationPadding = 0.35f;
+        public bool PreserveRelativeFormation = true;
+        public bool UseSharedGroupPath = true;
         public bool AvoidOccupiedSlots = true;
         [Range(0, 8)]
         public int SlotSearchRings = 4;
@@ -48,10 +51,38 @@ namespace Game.Unit
         [Header("Debug")]
         public bool ShowDebugHud = true;
         public bool LogSelectionEvents;
+        public bool ShowUnitNames = true;
+        public bool UnitNamesSelectedOnly;
+        public bool ShowMovementDebug;
+        public bool ShowCombatDebug;
+        public bool DebugSelectedOnly = true;
+        public bool CombatDebugSelectedOnly;
+        public Color DebugRadiusColor = new Color(1f, 0.85f, 0.15f, 0.85f);
+        public Color DebugTargetLineColor = new Color(0.3f, 1f, 0.35f, 0.85f);
+        public Color DebugPartialPathColor = new Color(1f, 0.55f, 0.15f, 0.9f);
+        public Color DebugFailedPathColor = new Color(1f, 0.2f, 0.2f, 0.9f);
+        public Color DebugWaypointColor = new Color(0.2f, 0.65f, 1f, 0.85f);
+        public Color DebugObstacleRadiusColor = new Color(1f, 0.25f, 0.95f, 0.65f);
+        public Color DebugCombatRangeColor = new Color(1f, 0.35f, 0.15f, 0.65f);
+        public Color DebugCombatAttackLineColor = new Color(1f, 0.15f, 0.1f, 0.9f);
+        public Color DebugCombatHealthColor = new Color(0.95f, 1f, 0.95f, 0.95f);
+        public Color DebugCombatWeaponReadyColor = new Color(0.25f, 1f, 0.45f, 0.95f);
+        public Color DebugCombatWeaponBlockedColor = new Color(1f, 0.55f, 0.15f, 0.95f);
+        public Color DebugNameColor = new Color(0.65f, 0.95f, 1f, 0.95f);
+        public Color DebugStatusTextColor = Color.white;
+        [Range(16, 96)]
+        public int DebugCircleSegments = 48;
+        [Range(0.01f, 0.12f)]
+        public float DebugLineWidth = 0.035f;
 
         EntityManager _entityManager;
         EntityQuery _unitQuery;
         EntityQuery _selectedQuery;
+        EntityQuery _obstacleQuery;
+        EntityQuery _combatTargetableQuery;
+        EntityQuery _combatDebugQuery;
+        EntityQuery _weaponQuery;
+        EntityQuery _unitNameQuery;
 
         bool _hasWorld;
         bool _isDragging;
@@ -61,13 +92,37 @@ namespace Game.Unit
         Mesh _ringMesh;
         Mesh _cornerRectangleMesh;
         Material _runtimeRingMaterial;
+        Material _debugLineMaterial;
         readonly Dictionary<Entity, GameObject> _rings = new();
+        readonly Dictionary<Entity, GameObject> _debugRadiusObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugTargetLineObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugPathLineObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugStatusLabelObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugObstacleRadiusObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugCombatRangeObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugCombatAttackLineObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugCombatHealthLabelObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugCombatWeaponStateLabelObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugNameLabelObjects = new();
         readonly List<Entity> _removeBuffer = new();
+        readonly List<Entity> _debugActiveBuffer = new();
+        readonly List<Entity> _debugObstacleActiveBuffer = new();
+        readonly List<Entity> _debugCombatActiveBuffer = new();
+        readonly List<Entity> _debugCombatHealthActiveBuffer = new();
+        readonly List<Entity> _debugNameActiveBuffer = new();
         readonly List<MoveSlotReservation> _moveSlotReservations = new();
 
         struct MoveSlotReservation
         {
             public float3 Position;
+            public float Radius;
+        }
+
+        struct FormationSortEntry
+        {
+            public int Index;
+            public float Lateral;
+            public float Forward;
             public float Radius;
         }
 
@@ -80,11 +135,17 @@ namespace Game.Unit
         void OnDisable()
         {
             ClearRingObjects();
+            ClearMovementDebugObjects();
+            ClearCombatDebugObjects();
+            ClearUnitNameObjects();
         }
 
         void OnDestroy()
         {
             ClearRingObjects();
+            ClearMovementDebugObjects();
+            ClearCombatDebugObjects();
+            ClearUnitNameObjects();
 
             if (_ringMesh != null)
                 Destroy(_ringMesh);
@@ -94,6 +155,9 @@ namespace Game.Unit
 
             if (_runtimeRingMaterial != null)
                 Destroy(_runtimeRingMaterial);
+
+            if (_debugLineMaterial != null)
+                Destroy(_debugLineMaterial);
         }
 
         void Update()
@@ -108,6 +172,9 @@ namespace Game.Unit
             if (mouse == null || SelectionCamera == null)
             {
                 UpdateSelectionRings();
+                UpdateUnitNameVisuals();
+                UpdateMovementDebugVisuals();
+                UpdateCombatDebugVisuals();
                 return;
             }
 
@@ -135,10 +202,20 @@ namespace Game.Unit
                     SelectUnitAtScreenPoint(mousePosition, additive);
             }
 
-            if (mouse.rightButton.wasPressedThisFrame && TryGetGroundPoint(mousePosition, out var target))
-                IssueMoveOrders(target);
+            if (mouse.rightButton.wasPressedThisFrame)
+            {
+                bool attackMove = IsAttackMovePressed();
+                Entity attackTarget = FindCombatTargetAtScreenPoint(mousePosition);
+                if (attackTarget != Entity.Null)
+                    IssueAttackOrders(attackTarget);
+                else if (TryGetGroundPoint(mousePosition, out var target))
+                    IssueMoveOrders(target, attackMove ? UnitCommandKind.AttackMove : UnitCommandKind.ForceMove);
+            }
 
             UpdateSelectionRings();
+            UpdateUnitNameVisuals();
+            UpdateMovementDebugVisuals();
+            UpdateCombatDebugVisuals();
         }
 
         void OnGUI()
@@ -149,7 +226,31 @@ namespace Game.Unit
                 GUI.color = Color.white;
                 GUI.Label(
                     new Rect(12f, 12f, 360f, 48f),
-                    $"Units: {_unitQuery.CalculateEntityCount()}  Selected: {_selectedQuery.CalculateEntityCount()}");
+                    $"Units: {_unitQuery.CalculateEntityCount()}  Selected: {_selectedQuery.CalculateEntityCount()}  Obstacles: {_obstacleQuery.CalculateEntityCount()}");
+                ShowUnitNames = GUI.Toggle(
+                    new Rect(12f, 58f, 180f, 22f),
+                    ShowUnitNames,
+                    "Unit Names");
+                UnitNamesSelectedOnly = GUI.Toggle(
+                    new Rect(12f, 82f, 180f, 22f),
+                    UnitNamesSelectedOnly,
+                    "Names Selected");
+                ShowMovementDebug = GUI.Toggle(
+                    new Rect(12f, 106f, 180f, 22f),
+                    ShowMovementDebug,
+                    "Move Debug");
+                DebugSelectedOnly = GUI.Toggle(
+                    new Rect(12f, 130f, 180f, 22f),
+                    DebugSelectedOnly,
+                    "Selected Only");
+                ShowCombatDebug = GUI.Toggle(
+                    new Rect(12f, 154f, 180f, 22f),
+                    ShowCombatDebug,
+                    "Combat Debug");
+                CombatDebugSelectedOnly = GUI.Toggle(
+                    new Rect(12f, 178f, 180f, 22f),
+                    CombatDebugSelectedOnly,
+                    "Combat Selected");
                 GUI.color = oldColor;
             }
 
@@ -195,6 +296,34 @@ namespace Game.Unit
                 ComponentType.ReadOnly<UnitActivityState>(),
                 ComponentType.ReadOnly<UnitSelectionRadius>(),
                 ComponentType.ReadOnly<LocalTransform>());
+            _obstacleQuery = _entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<ObstacleFootprint>(),
+                ComponentType.ReadOnly<LocalTransform>());
+            _combatTargetableQuery = _entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<CombatTargetable>(),
+                ComponentType.ReadOnly<LocalTransform>());
+            _combatDebugQuery = _entityManager.CreateEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<LocalTransform>(),
+                },
+                Any = new[]
+                {
+                    ComponentType.ReadOnly<CombatTargetable>(),
+                    ComponentType.ReadOnly<CombatHealth>(),
+                    ComponentType.ReadOnly<CombatAttackTarget>(),
+                    ComponentType.ReadOnly<CombatWeapon>(),
+                },
+            });
+            _weaponQuery = _entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<CombatWeaponOwner>(),
+                ComponentType.ReadOnly<CombatWeaponEnabled>(),
+                ComponentType.ReadOnly<CombatWeapon>(),
+                ComponentType.ReadOnly<CombatWeaponReadyState>());
+            _unitNameQuery = _entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<UnitDisplayName>(),
+                ComponentType.ReadOnly<LocalTransform>());
 
             _hasWorld = true;
             return true;
@@ -218,12 +347,11 @@ namespace Game.Unit
 
             if (additive)
             {
-                bool selected = _entityManager.IsComponentEnabled<SelectedUnit>(picked);
-                _entityManager.SetComponentEnabled<SelectedUnit>(picked, !selected);
+                SetSelected(picked, !IsSelected(picked));
             }
             else
             {
-                _entityManager.SetComponentEnabled<SelectedUnit>(picked, true);
+                SetSelected(picked, true);
             }
 
             if (LogSelectionEvents)
@@ -298,6 +426,92 @@ namespace Game.Unit
             return best;
         }
 
+        Entity FindCombatTargetAtScreenPoint(Vector2 screenPoint)
+        {
+            Entity picked = FindCombatTargetByScreenRadius(screenPoint);
+            if (picked != Entity.Null)
+                return picked;
+
+            return TryGetGroundPoint(screenPoint, out var worldPoint)
+                ? FindCombatTargetNearWorldPoint(worldPoint)
+                : Entity.Null;
+        }
+
+        Entity FindCombatTargetByScreenRadius(Vector2 screenPoint)
+        {
+            var entities = _combatTargetableQuery.ToEntityArray(Allocator.Temp);
+            var transforms = _combatTargetableQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+
+            Entity best = Entity.Null;
+            float bestDistanceSq = float.MaxValue;
+
+            for (int i = 0; i < entities.Length; i++)
+            {
+                Vector3 screen = SelectionCamera.WorldToScreenPoint(ToVector3(transforms[i].Position));
+                if (screen.z <= 0f)
+                    continue;
+
+                float pickRadius = GetCombatTargetScreenPickRadius(entities[i]);
+                float2 delta = new float2(screen.x - screenPoint.x, screen.y - screenPoint.y);
+                float distanceSq = math.lengthsq(delta);
+
+                if (distanceSq <= pickRadius * pickRadius && distanceSq < bestDistanceSq)
+                {
+                    best = entities[i];
+                    bestDistanceSq = distanceSq;
+                }
+            }
+
+            transforms.Dispose();
+            entities.Dispose();
+            return best;
+        }
+
+        Entity FindCombatTargetNearWorldPoint(float3 worldPoint)
+        {
+            var entities = _combatTargetableQuery.ToEntityArray(Allocator.Temp);
+            var transforms = _combatTargetableQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+
+            Entity best = Entity.Null;
+            float bestDistanceSq = float.MaxValue;
+
+            for (int i = 0; i < entities.Length; i++)
+            {
+                float radius = GetCombatTargetWorldPickRadius(entities[i]);
+                float distanceSq = HorizontalDistanceSq(transforms[i].Position, worldPoint);
+                if (distanceSq <= radius * radius && distanceSq < bestDistanceSq)
+                {
+                    best = entities[i];
+                    bestDistanceSq = distanceSq;
+                }
+            }
+
+            transforms.Dispose();
+            entities.Dispose();
+            return best;
+        }
+
+        float GetCombatTargetScreenPickRadius(Entity entity)
+        {
+            if (_entityManager.HasComponent<UnitSelectionRadius>(entity))
+                return math.max(1f, _entityManager.GetComponentData<UnitSelectionRadius>(entity).ScreenPixels);
+
+            return 28f;
+        }
+
+        float GetCombatTargetWorldPickRadius(Entity entity)
+        {
+            float radius = math.max(0.01f, CombatTargetPickDistance);
+
+            if (_entityManager.HasComponent<UnitFootprint>(entity))
+                radius = math.max(radius, math.max(0.01f, _entityManager.GetComponentData<UnitFootprint>(entity).Radius));
+
+            if (_entityManager.HasComponent<ObstacleFootprint>(entity))
+                radius = math.max(radius, GetEffectiveObstacleRadius(_entityManager.GetComponentData<ObstacleFootprint>(entity)));
+
+            return radius;
+        }
+
         void SelectUnitsInScreenRect(Rect rect, bool additive)
         {
             if (!additive)
@@ -310,7 +524,7 @@ namespace Game.Unit
             {
                 Vector3 screen = SelectionCamera.WorldToScreenPoint(ToVector3(transforms[i].Position));
                 if (screen.z > 0f && rect.Contains(new Vector2(screen.x, screen.y)))
-                    _entityManager.SetComponentEnabled<SelectedUnit>(entities[i], true);
+                    SetSelected(entities[i], true);
             }
 
             entities.Dispose();
@@ -326,14 +540,19 @@ namespace Game.Unit
 
             for (int i = 0; i < entities.Length; i++)
             {
-                if (_entityManager.HasComponent<SelectedUnit>(entities[i]))
-                    _entityManager.SetComponentEnabled<SelectedUnit>(entities[i], false);
+                SetSelected(entities[i], false);
             }
 
             entities.Dispose();
         }
 
-        void IssueMoveOrders(float3 target)
+        static bool IsAttackMovePressed()
+        {
+            var keyboard = Keyboard.current;
+            return keyboard != null && keyboard.aKey.isPressed;
+        }
+
+        void IssueMoveOrders(float3 target, UnitCommandKind commandKind)
         {
             var selected = _selectedQuery.ToEntityArray(Allocator.Temp);
             if (selected.Length == 0)
@@ -348,7 +567,11 @@ namespace Game.Unit
             var allTransforms = _unitQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
             var allFootprints = _unitQuery.ToComponentDataArray<UnitFootprint>(Allocator.Temp);
             var allActivities = _unitQuery.ToComponentDataArray<UnitActivityState>(Allocator.Temp);
+            var obstacleTransforms = _obstacleQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+            var obstacleFootprints = _obstacleQuery.ToComponentDataArray<ObstacleFootprint>(Allocator.Temp);
+            bool hasNavigationGrid = TryGetNavigationGrid(out var navigationGrid);
             float3 selectionCenter = CalculateSelectionCenter(transforms);
+            ClearAttackTargets(selected);
             float3 forward = target - selectionCenter;
             forward.y = 0f;
 
@@ -362,14 +585,26 @@ namespace Game.Unit
             int rows = Mathf.CeilToInt(selected.Length / (float)columns);
             var columnWidths = new NativeArray<float>(columns, Allocator.Temp);
             var rowDepths = new NativeArray<float>(rows, Allocator.Temp);
+            int[] formationOrder = BuildFormationOrder(transforms, footprints, selectionCenter, right, forward, columns);
+            var groupPath = new NativeList<float3>(Allocator.Temp);
+            bool hasSharedGroupPath = TryBuildSharedGroupPath(
+                hasNavigationGrid,
+                navigationGrid,
+                selectionCenter,
+                target,
+                footprints,
+                obstacleTransforms,
+                obstacleFootprints,
+                groupPath);
 
-            CalculateFormationBounds(footprints, columns, columnWidths, rowDepths);
+            CalculateFormationBounds(footprints, formationOrder, columns, columnWidths, rowDepths);
             _moveSlotReservations.Clear();
 
-            for (int i = 0; i < selected.Length; i++)
+            for (int orderIndex = 0; orderIndex < formationOrder.Length; orderIndex++)
             {
-                int x = i % columns;
-                int z = i / columns;
+                int unitIndex = formationOrder[orderIndex];
+                int x = orderIndex % columns;
+                int z = orderIndex / columns;
 
                 float offsetX = GetSlotCenterOffset(columnWidths, x);
                 float offsetZ = GetSlotCenterOffset(rowDepths, z);
@@ -377,30 +612,42 @@ namespace Game.Unit
                 float3 destination = AvoidOccupiedSlots
                     ? FindAvailableMoveSlot(
                         desiredDestination,
-                        footprints[i],
+                        transforms[unitIndex].Position,
+                        footprints[unitIndex],
                         right,
                         forward,
                         allUnits,
                         allTransforms,
                         allFootprints,
-                        allActivities)
+                        allActivities,
+                        obstacleTransforms,
+                        obstacleFootprints,
+                        hasNavigationGrid,
+                        navigationGrid)
                     : desiredDestination;
 
                 _moveSlotReservations.Add(new MoveSlotReservation
                 {
                     Position = destination,
-                    Radius = math.max(0.01f, footprints[i].Radius),
+                    Radius = math.max(0.01f, footprints[unitIndex].Radius),
                 });
 
                 Entity request = _entityManager.CreateEntity(typeof(MoveOrderRequest));
                 _entityManager.SetComponentData(request, new MoveOrderRequest
                 {
-                    Unit = selected[i],
+                    Unit = selected[unitIndex],
                     Target = destination,
                     StopDistance = MoveStopDistance,
+                    CommandKind = commandKind,
                 });
+
+                if (hasSharedGroupPath)
+                    AddSharedGroupPathToRequest(request, transforms[unitIndex].Position, destination, groupPath, right, forward, offsetX, offsetZ);
             }
 
+            groupPath.Dispose();
+            obstacleFootprints.Dispose();
+            obstacleTransforms.Dispose();
             allActivities.Dispose();
             allFootprints.Dispose();
             allTransforms.Dispose();
@@ -409,6 +656,42 @@ namespace Game.Unit
             columnWidths.Dispose();
             footprints.Dispose();
             transforms.Dispose();
+            selected.Dispose();
+        }
+
+        void ClearAttackTargets(NativeArray<Entity> units)
+        {
+            for (int i = 0; i < units.Length; i++)
+            {
+                if (!_entityManager.HasComponent<CombatAttackTarget>(units[i]))
+                    continue;
+
+                _entityManager.SetComponentData(units[i], new CombatAttackTarget
+                {
+                    Target = Entity.Null,
+                    ApproachRefreshTime = 0f,
+                    HasTarget = 0,
+                });
+            }
+        }
+
+        void IssueAttackOrders(Entity target)
+        {
+            var selected = _selectedQuery.ToEntityArray(Allocator.Temp);
+            for (int i = 0; i < selected.Length; i++)
+            {
+                if (!_entityManager.HasComponent<CombatAttackTarget>(selected[i]))
+                    continue;
+
+                Entity request = _entityManager.CreateEntity(typeof(AttackOrderRequest));
+                _entityManager.SetComponentData(request, new AttackOrderRequest
+                {
+                    Attacker = selected[i],
+                    Target = target,
+                    CommandKind = UnitCommandKind.ForceAttack,
+                });
+            }
+
             selected.Dispose();
         }
 
@@ -422,8 +705,127 @@ namespace Game.Unit
             return center / math.max(1, transforms.Length);
         }
 
+        bool TryBuildSharedGroupPath(
+            bool hasNavigationGrid,
+            UnitNavigationGrid navigationGrid,
+            float3 selectionCenter,
+            float3 target,
+            NativeArray<UnitFootprint> footprints,
+            NativeArray<LocalTransform> obstacleTransforms,
+            NativeArray<ObstacleFootprint> obstacleFootprints,
+            NativeList<float3> groupPath)
+        {
+            if (!UseSharedGroupPath || !hasNavigationGrid || footprints.Length <= 1)
+                return false;
+
+            float radius = CalculateRepresentativeGroupRadius(footprints);
+            bool pathFound = UnitPathfinding.TryBuildPath(
+                navigationGrid,
+                selectionCenter,
+                target,
+                radius,
+                obstacleTransforms,
+                obstacleFootprints,
+                groupPath,
+                out bool reachedTarget);
+
+            return pathFound && reachedTarget && groupPath.Length >= 2;
+        }
+
+        static float CalculateRepresentativeGroupRadius(NativeArray<UnitFootprint> footprints)
+        {
+            float radius = 0.01f;
+
+            for (int i = 0; i < footprints.Length; i++)
+                radius = math.max(radius, math.max(0.01f, footprints[i].Radius));
+
+            return radius;
+        }
+
+        void AddSharedGroupPathToRequest(
+            Entity request,
+            float3 unitStart,
+            float3 destination,
+            NativeList<float3> groupPath,
+            float3 right,
+            float3 forward,
+            float offsetX,
+            float offsetZ)
+        {
+            var requestPath = _entityManager.AddBuffer<MoveOrderPathWaypoint>(request);
+            requestPath.Add(new MoveOrderPathWaypoint
+            {
+                Position = unitStart,
+            });
+
+            for (int i = 1; i < groupPath.Length - 1; i++)
+            {
+                requestPath.Add(new MoveOrderPathWaypoint
+                {
+                    Position = groupPath[i] + right * offsetX + forward * offsetZ,
+                });
+            }
+
+            requestPath.Add(new MoveOrderPathWaypoint
+            {
+                Position = destination,
+            });
+        }
+
+        int[] BuildFormationOrder(
+            NativeArray<LocalTransform> transforms,
+            NativeArray<UnitFootprint> footprints,
+            float3 selectionCenter,
+            float3 right,
+            float3 forward,
+            int columns)
+        {
+            int count = transforms.Length;
+            var order = new int[count];
+            for (int i = 0; i < count; i++)
+                order[i] = i;
+
+            if (!PreserveRelativeFormation || count <= 1)
+                return order;
+
+            var entries = new FormationSortEntry[count];
+            for (int i = 0; i < count; i++)
+            {
+                float3 local = transforms[i].Position - selectionCenter;
+                local.y = 0f;
+                entries[i] = new FormationSortEntry
+                {
+                    Index = i,
+                    Lateral = math.dot(local, right),
+                    Forward = math.dot(local, forward),
+                    Radius = math.max(0.01f, footprints[i].Radius),
+                };
+            }
+
+            System.Array.Sort(entries, CompareFormationEntries);
+
+            for (int i = 0; i < count; i++)
+                order[i] = entries[i].Index;
+
+            return order;
+        }
+
+        static int CompareFormationEntries(FormationSortEntry a, FormationSortEntry b)
+        {
+            int forwardCompare = b.Forward.CompareTo(a.Forward);
+            if (forwardCompare != 0)
+                return forwardCompare;
+
+            int lateralCompare = a.Lateral.CompareTo(b.Lateral);
+            if (lateralCompare != 0)
+                return lateralCompare;
+
+            return b.Radius.CompareTo(a.Radius);
+        }
+
         void CalculateFormationBounds(
             NativeArray<UnitFootprint> footprints,
+            int[] formationOrder,
             int columns,
             NativeArray<float> columnWidths,
             NativeArray<float> rowDepths)
@@ -431,11 +833,12 @@ namespace Game.Unit
             float fallback = math.max(0.1f, FormationSpacing);
             float padding = math.max(0f, FormationPadding);
 
-            for (int i = 0; i < footprints.Length; i++)
+            for (int orderIndex = 0; orderIndex < formationOrder.Length; orderIndex++)
             {
-                int x = i % columns;
-                int z = i / columns;
-                UnitFootprint footprint = footprints[i];
+                int unitIndex = formationOrder[orderIndex];
+                int x = orderIndex % columns;
+                int z = orderIndex / columns;
+                UnitFootprint footprint = footprints[unitIndex];
 
                 float2 size = math.max(footprint.Size, new float2(footprint.Radius * 2f));
                 float width = math.max(fallback, size.x + padding);
@@ -461,18 +864,34 @@ namespace Game.Unit
 
         float3 FindAvailableMoveSlot(
             float3 desiredDestination,
+            float3 startPosition,
             UnitFootprint footprint,
             float3 right,
             float3 forward,
             NativeArray<Entity> allUnits,
             NativeArray<LocalTransform> allTransforms,
             NativeArray<UnitFootprint> allFootprints,
-            NativeArray<UnitActivityState> allActivities)
+            NativeArray<UnitActivityState> allActivities,
+            NativeArray<LocalTransform> obstacleTransforms,
+            NativeArray<ObstacleFootprint> obstacleFootprints,
+            bool hasNavigationGrid,
+            UnitNavigationGrid navigationGrid)
         {
             float radius = math.max(0.01f, footprint.Radius);
             float searchStep = math.max(FormationSpacing, radius * 2f + math.max(0f, FormationPadding));
 
-            if (IsMoveSlotAvailable(desiredDestination, radius, allUnits, allTransforms, allFootprints, allActivities))
+            if (IsMoveSlotAvailable(
+                    desiredDestination,
+                    startPosition,
+                    radius,
+                    allUnits,
+                    allTransforms,
+                    allFootprints,
+                    allActivities,
+                    obstacleTransforms,
+                    obstacleFootprints,
+                    hasNavigationGrid,
+                    navigationGrid))
                 return desiredDestination;
 
             for (int ring = 1; ring <= SlotSearchRings; ring++)
@@ -485,7 +904,18 @@ namespace Game.Unit
                             continue;
 
                         float3 candidate = desiredDestination + right * (x * searchStep) + forward * (z * searchStep);
-                        if (IsMoveSlotAvailable(candidate, radius, allUnits, allTransforms, allFootprints, allActivities))
+                        if (IsMoveSlotAvailable(
+                                candidate,
+                                startPosition,
+                                radius,
+                                allUnits,
+                                allTransforms,
+                                allFootprints,
+                                allActivities,
+                                obstacleTransforms,
+                                obstacleFootprints,
+                                hasNavigationGrid,
+                                navigationGrid))
                             return candidate;
                     }
                 }
@@ -496,11 +926,16 @@ namespace Game.Unit
 
         bool IsMoveSlotAvailable(
             float3 destination,
+            float3 startPosition,
             float radius,
             NativeArray<Entity> allUnits,
             NativeArray<LocalTransform> allTransforms,
             NativeArray<UnitFootprint> allFootprints,
-            NativeArray<UnitActivityState> allActivities)
+            NativeArray<UnitActivityState> allActivities,
+            NativeArray<LocalTransform> obstacleTransforms,
+            NativeArray<ObstacleFootprint> obstacleFootprints,
+            bool hasNavigationGrid,
+            UnitNavigationGrid navigationGrid)
         {
             for (int i = 0; i < _moveSlotReservations.Count; i++)
             {
@@ -511,7 +946,7 @@ namespace Game.Unit
 
             for (int i = 0; i < allUnits.Length; i++)
             {
-                if (_entityManager.IsComponentEnabled<SelectedUnit>(allUnits[i]))
+                if (IsSelected(allUnits[i]))
                     continue;
 
                 float otherRadius = math.max(0.01f, allFootprints[i].Radius);
@@ -520,7 +955,69 @@ namespace Game.Unit
                     return false;
             }
 
+            for (int i = 0; i < obstacleFootprints.Length; i++)
+            {
+                float obstacleRadius = GetEffectiveObstacleRadius(obstacleFootprints[i]);
+                float minDistance = radius + obstacleRadius + GetObstaclePadding(obstacleFootprints[i]);
+                if (HorizontalDistanceSq(destination, obstacleTransforms[i].Position) < minDistance * minDistance)
+                    return false;
+            }
+
+            if (hasNavigationGrid &&
+                !IsMoveSlotReachable(
+                    navigationGrid,
+                    startPosition,
+                    destination,
+                    radius,
+                    obstacleTransforms,
+                    obstacleFootprints))
+                return false;
+
             return true;
+        }
+
+        bool TryGetNavigationGrid(out UnitNavigationGrid grid)
+        {
+            grid = default;
+            using var query = _entityManager.CreateEntityQuery(ComponentType.ReadOnly<UnitNavigationGrid>());
+            if (query.CalculateEntityCount() != 1)
+                return false;
+
+            grid = query.GetSingleton<UnitNavigationGrid>();
+            return true;
+        }
+
+        static bool IsMoveSlotReachable(
+            UnitNavigationGrid grid,
+            float3 startPosition,
+            float3 destination,
+            float radius,
+            NativeArray<LocalTransform> obstacleTransforms,
+            NativeArray<ObstacleFootprint> obstacleFootprints)
+        {
+            var path = new NativeList<float3>(Allocator.Temp);
+            bool reachable = UnitPathfinding.TryBuildPath(
+                grid,
+                startPosition,
+                destination,
+                radius,
+                obstacleTransforms,
+                obstacleFootprints,
+                path,
+                out bool reachedTarget) && reachedTarget;
+            path.Dispose();
+            return reachable;
+        }
+
+        static float GetEffectiveObstacleRadius(ObstacleFootprint obstacle)
+        {
+            float sizeRadius = math.length(math.max(obstacle.Size, new float2(0.01f))) * 0.5f;
+            return math.max(math.max(0.01f, obstacle.Radius), sizeRadius);
+        }
+
+        float GetObstaclePadding(ObstacleFootprint obstacle)
+        {
+            return math.max(0f, FormationPadding) + math.max(0f, obstacle.ExtraPadding);
         }
 
         float GetOccupiedSlotPadding(UnitActivityState activity)
@@ -584,7 +1081,7 @@ namespace Game.Unit
                 bool stillSelected = false;
                 for (int i = 0; i < entities.Length; i++)
                 {
-                    if (pair.Key == entities[i] && _entityManager.IsComponentEnabled<SelectedUnit>(entities[i]))
+                    if (pair.Key == entities[i] && IsSelected(entities[i]))
                     {
                         stillSelected = true;
                         break;
@@ -605,7 +1102,7 @@ namespace Game.Unit
 
             for (int i = 0; i < entities.Length; i++)
             {
-                if (!_entityManager.IsComponentEnabled<SelectedUnit>(entities[i]))
+                if (!IsSelected(entities[i]))
                     continue;
 
                 if (!_rings.TryGetValue(entities[i], out var ring))
@@ -637,6 +1134,869 @@ namespace Game.Unit
             transforms.Dispose();
             radii.Dispose();
             footprints.Dispose();
+        }
+
+        void UpdateUnitNameVisuals()
+        {
+            if (!_hasWorld || !ShowUnitNames)
+            {
+                ClearUnitNameObjects();
+                return;
+            }
+
+            var entities = _unitNameQuery.ToEntityArray(Allocator.Temp);
+            var transforms = _unitNameQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+            var names = _unitNameQuery.ToComponentDataArray<UnitDisplayName>(Allocator.Temp);
+
+            _debugNameActiveBuffer.Clear();
+
+            for (int i = 0; i < entities.Length; i++)
+            {
+                Entity entity = entities[i];
+                if (UnitNamesSelectedOnly && !IsSelected(entity))
+                    continue;
+
+                _debugNameActiveBuffer.Add(entity);
+                UpdateDebugNameLabel(entity, transforms[i].Position, names[i]);
+            }
+
+            RemoveInactiveNameObjects();
+
+            names.Dispose();
+            transforms.Dispose();
+            entities.Dispose();
+        }
+
+        void UpdateDebugNameLabel(Entity entity, float3 position, UnitDisplayName displayName)
+        {
+            if (!_debugNameLabelObjects.TryGetValue(entity, out var labelObject))
+            {
+                labelObject = CreateNameLabelObject();
+                _debugNameLabelObjects.Add(entity, labelObject);
+            }
+
+            labelObject.transform.position = new Vector3(
+                position.x,
+                position.y + math.max(1.35f, RingHeightOffset * 28f),
+                position.z);
+
+            if (SelectionCamera != null)
+                labelObject.transform.rotation = SelectionCamera.transform.rotation;
+
+            var text = labelObject.GetComponent<TextMesh>();
+            text.color = DebugNameColor;
+            text.text = FormatDisplayName(entity, displayName);
+        }
+
+        GameObject CreateNameLabelObject()
+        {
+            var labelObject = new GameObject("Unit Name Debug");
+            labelObject.transform.SetParent(transform, false);
+
+            var text = labelObject.AddComponent<TextMesh>();
+            text.anchor = TextAnchor.MiddleCenter;
+            text.alignment = TextAlignment.Center;
+            text.characterSize = 0.16f;
+            text.fontSize = 30;
+            text.color = DebugNameColor;
+
+            return labelObject;
+        }
+
+        string FormatDisplayName(Entity entity, UnitDisplayName displayName)
+        {
+            if (!_entityManager.HasComponent<UnitCommandState>(entity))
+                return displayName.Value.ToString();
+
+            UnitCommandState command = _entityManager.GetComponentData<UnitCommandState>(entity);
+            if (command.Kind == UnitCommandKind.None)
+                return displayName.Value.ToString();
+
+            return $"{displayName.Value} [{command.Kind}]";
+        }
+
+        void UpdateMovementDebugVisuals()
+        {
+            if (!_hasWorld || !ShowMovementDebug)
+            {
+                ClearMovementDebugObjects();
+                return;
+            }
+
+            EnsureDebugLineMaterial();
+
+            var entities = _unitQuery.ToEntityArray(Allocator.Temp);
+            var transforms = _unitQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+            var footprints = _unitQuery.ToComponentDataArray<UnitFootprint>(Allocator.Temp);
+
+            _debugActiveBuffer.Clear();
+
+            for (int i = 0; i < entities.Length; i++)
+            {
+                if (DebugSelectedOnly && !IsSelected(entities[i]))
+                    continue;
+
+                _debugActiveBuffer.Add(entities[i]);
+
+                float3 position = transforms[i].Position;
+                float radius = math.max(0.01f, footprints[i].Radius);
+                UpdateDebugRadius(entities[i], position, radius);
+
+                UnitMoveTarget target = UnitMoveTarget.None;
+                bool hasMoveTargetComponent = _entityManager.HasComponent<UnitMoveTarget>(entities[i]);
+                if (hasMoveTargetComponent)
+                    target = _entityManager.GetComponentData<UnitMoveTarget>(entities[i]);
+
+                UpdateDebugStatusLabel(entities[i], position, target, hasMoveTargetComponent);
+
+                if (_entityManager.HasComponent<UnitMoveTarget>(entities[i]))
+                {
+                    if (target.HasTarget != 0)
+                    {
+                        UpdateDebugTargetLine(entities[i], position, target.Position, GetDebugPathStatusColor(target.PathStatus));
+                        UpdateDebugPathLine(entities[i], position, target.Position);
+                        continue;
+                    }
+                }
+
+                RemoveDebugTargetLine(entities[i]);
+                RemoveDebugPathLine(entities[i]);
+            }
+
+            UpdateObstacleDebugVisuals();
+            RemoveInactiveDebugObjects();
+
+            footprints.Dispose();
+            transforms.Dispose();
+            entities.Dispose();
+        }
+
+        void UpdateDebugRadius(Entity entity, float3 position, float radius)
+        {
+            if (!_debugRadiusObjects.TryGetValue(entity, out var radiusObject))
+            {
+                radiusObject = CreateLineObject("Unit Radius Debug", true);
+                _debugRadiusObjects.Add(entity, radiusObject);
+            }
+
+            var line = radiusObject.GetComponent<LineRenderer>();
+            int segments = math.max(16, DebugCircleSegments);
+            line.positionCount = segments;
+            line.loop = true;
+            line.startColor = DebugRadiusColor;
+            line.endColor = DebugRadiusColor;
+            line.startWidth = DebugLineWidth;
+            line.endWidth = DebugLineWidth;
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = i / (float)segments * math.PI * 2f;
+                line.SetPosition(i, new Vector3(
+                    position.x + math.cos(angle) * radius,
+                    position.y + RingHeightOffset * 1.5f,
+                    position.z + math.sin(angle) * radius));
+            }
+        }
+
+        void UpdateDebugTargetLine(Entity entity, float3 position, float3 target, Color color)
+        {
+            if (!_debugTargetLineObjects.TryGetValue(entity, out var lineObject))
+            {
+                lineObject = CreateLineObject("Unit Target Debug", false);
+                _debugTargetLineObjects.Add(entity, lineObject);
+            }
+
+            var line = lineObject.GetComponent<LineRenderer>();
+            line.positionCount = 2;
+            line.loop = false;
+            line.startColor = color;
+            line.endColor = color;
+            line.startWidth = DebugLineWidth;
+            line.endWidth = DebugLineWidth;
+            line.SetPosition(0, new Vector3(position.x, position.y + RingHeightOffset * 2f, position.z));
+            line.SetPosition(1, new Vector3(target.x, target.y + RingHeightOffset * 2f, target.z));
+        }
+
+        void UpdateDebugPathLine(Entity entity, float3 position, float3 target)
+        {
+            if (!_entityManager.HasBuffer<UnitPathWaypoint>(entity))
+            {
+                RemoveDebugPathLine(entity);
+                return;
+            }
+
+            DynamicBuffer<UnitPathWaypoint> waypoints = _entityManager.GetBuffer<UnitPathWaypoint>(entity, true);
+            if (waypoints.Length == 0)
+            {
+                RemoveDebugPathLine(entity);
+                return;
+            }
+
+            if (!_debugPathLineObjects.TryGetValue(entity, out var lineObject))
+            {
+                lineObject = CreateLineObject("Unit Path Debug", false);
+                _debugPathLineObjects.Add(entity, lineObject);
+            }
+
+            var line = lineObject.GetComponent<LineRenderer>();
+            line.positionCount = waypoints.Length + 2;
+            line.loop = false;
+            line.startColor = DebugWaypointColor;
+            line.endColor = DebugWaypointColor;
+            line.startWidth = DebugLineWidth * 0.75f;
+            line.endWidth = DebugLineWidth * 0.75f;
+            line.SetPosition(0, new Vector3(position.x, position.y + RingHeightOffset * 3f, position.z));
+
+            for (int i = 0; i < waypoints.Length; i++)
+            {
+                float3 waypoint = waypoints[i].Position;
+                line.SetPosition(i + 1, new Vector3(
+                    waypoint.x,
+                    waypoint.y + RingHeightOffset * 3f,
+                    waypoint.z));
+            }
+
+            line.SetPosition(waypoints.Length + 1, new Vector3(
+                target.x,
+                target.y + RingHeightOffset * 3f,
+                target.z));
+        }
+
+        void UpdateDebugStatusLabel(Entity entity, float3 position, UnitMoveTarget target, bool hasMoveTarget)
+        {
+            if (!_debugStatusLabelObjects.TryGetValue(entity, out var labelObject))
+            {
+                labelObject = CreateStatusLabelObject();
+                _debugStatusLabelObjects.Add(entity, labelObject);
+            }
+
+            labelObject.transform.position = new Vector3(
+                position.x,
+                position.y + math.max(0.8f, RingHeightOffset * 16f),
+                position.z);
+
+            if (SelectionCamera != null)
+                labelObject.transform.rotation = SelectionCamera.transform.rotation;
+
+            var text = labelObject.GetComponent<TextMesh>();
+            text.color = GetDebugPathStatusColor(target.PathStatus);
+            text.text = hasMoveTarget
+                ? FormatPathStatus(target)
+                : "No Target";
+        }
+
+        GameObject CreateStatusLabelObject()
+        {
+            var labelObject = new GameObject("Unit Path Status Debug");
+            labelObject.transform.SetParent(transform, false);
+
+            var text = labelObject.AddComponent<TextMesh>();
+            text.anchor = TextAnchor.MiddleCenter;
+            text.alignment = TextAlignment.Center;
+            text.characterSize = 0.18f;
+            text.fontSize = 32;
+            text.color = DebugStatusTextColor;
+
+            return labelObject;
+        }
+
+        static string FormatPathStatus(UnitMoveTarget target)
+        {
+            if (target.HasTarget == 0)
+                return target.PathStatus == UnitPathStatus.PathFailed ? "Failed" : "Idle";
+
+            switch (target.PathStatus)
+            {
+                case UnitPathStatus.PathReady:
+                    return "Ready";
+                case UnitPathStatus.PathPartial:
+                    return "Partial";
+                case UnitPathStatus.PathFailed:
+                    return "Failed";
+                default:
+                    return "Direct";
+            }
+        }
+
+        Color GetDebugPathStatusColor(UnitPathStatus status)
+        {
+            switch (status)
+            {
+                case UnitPathStatus.PathPartial:
+                    return DebugPartialPathColor;
+                case UnitPathStatus.PathFailed:
+                    return DebugFailedPathColor;
+                case UnitPathStatus.Direct:
+                    return DebugTargetLineColor;
+                default:
+                    return DebugTargetLineColor;
+            }
+        }
+
+        void UpdateCombatDebugVisuals()
+        {
+            if (!_hasWorld || !ShowCombatDebug)
+            {
+                ClearCombatDebugObjects();
+                return;
+            }
+
+            EnsureDebugLineMaterial();
+
+            var entities = _unitQuery.ToEntityArray(Allocator.Temp);
+            var transforms = _unitQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+            var weaponOwners = _weaponQuery.ToComponentDataArray<CombatWeaponOwner>(Allocator.Temp);
+            var weapons = _weaponQuery.ToComponentDataArray<CombatWeapon>(Allocator.Temp);
+            var weaponReadyStates = _weaponQuery.ToComponentDataArray<CombatWeaponReadyState>(Allocator.Temp);
+
+            _debugCombatActiveBuffer.Clear();
+            _debugCombatHealthActiveBuffer.Clear();
+
+            for (int i = 0; i < entities.Length; i++)
+            {
+                Entity entity = entities[i];
+                if (CombatDebugSelectedOnly && !IsSelected(entity))
+                    continue;
+
+                _debugCombatActiveBuffer.Add(entity);
+
+                float3 position = transforms[i].Position;
+                float range = GetMaxWeaponRange(entity, weaponOwners, weapons);
+                if (range > 0f)
+                    UpdateDebugCombatRange(entity, position, range);
+                else
+                    RemoveDebugCombatRange(entity);
+
+                if (_entityManager.HasComponent<CombatHealth>(entity))
+                    UpdateDebugCombatHealthLabel(entity, position, _entityManager.GetComponentData<CombatHealth>(entity));
+
+                UpdateDebugCombatWeaponStateLabel(entity, position, weaponOwners, weaponReadyStates);
+
+                if (TryGetAttackTargetPosition(entity, out Entity target, out float3 targetPosition))
+                {
+                    UpdateDebugCombatAttackLine(entity, position, targetPosition);
+
+                    if (_entityManager.HasComponent<CombatHealth>(target))
+                        UpdateDebugCombatHealthLabel(target, targetPosition, _entityManager.GetComponentData<CombatHealth>(target));
+                }
+                else
+                {
+                    RemoveDebugCombatAttackLine(entity);
+                }
+            }
+
+            RemoveInactiveCombatDebugObjects();
+
+            weaponReadyStates.Dispose();
+            weapons.Dispose();
+            weaponOwners.Dispose();
+            transforms.Dispose();
+            entities.Dispose();
+        }
+
+        bool IsSelected(Entity entity)
+        {
+            return _entityManager.HasComponent<SelectedUnit>(entity) &&
+                   _entityManager.IsComponentEnabled<SelectedUnit>(entity);
+        }
+
+        void SetSelected(Entity entity, bool selected)
+        {
+            if (!_entityManager.Exists(entity))
+                return;
+
+            if (!_entityManager.HasComponent<SelectedUnit>(entity))
+                _entityManager.AddComponent<SelectedUnit>(entity);
+
+            _entityManager.SetComponentEnabled<SelectedUnit>(entity, selected);
+        }
+
+        bool TryGetAttackTargetPosition(Entity entity, out Entity target, out float3 targetPosition)
+        {
+            target = Entity.Null;
+            targetPosition = float3.zero;
+
+            if (!_entityManager.HasComponent<CombatAttackTarget>(entity))
+                return false;
+
+            CombatAttackTarget attackTarget = _entityManager.GetComponentData<CombatAttackTarget>(entity);
+            target = attackTarget.Target;
+            if (attackTarget.HasTarget == 0 ||
+                target == Entity.Null ||
+                !_entityManager.Exists(target) ||
+                !_entityManager.HasComponent<LocalTransform>(target))
+                return false;
+
+            targetPosition = _entityManager.GetComponentData<LocalTransform>(target).Position;
+            return true;
+        }
+
+        void UpdateDebugCombatRange(Entity entity, float3 position, float range)
+        {
+            if (!_debugCombatRangeObjects.TryGetValue(entity, out var rangeObject))
+            {
+                rangeObject = CreateLineObject("Combat Range Debug", true);
+                _debugCombatRangeObjects.Add(entity, rangeObject);
+            }
+
+            var line = rangeObject.GetComponent<LineRenderer>();
+            int segments = math.max(16, DebugCircleSegments);
+            line.positionCount = segments;
+            line.loop = true;
+            line.startColor = DebugCombatRangeColor;
+            line.endColor = DebugCombatRangeColor;
+            line.startWidth = DebugLineWidth;
+            line.endWidth = DebugLineWidth;
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = i / (float)segments * math.PI * 2f;
+                line.SetPosition(i, new Vector3(
+                    position.x + math.cos(angle) * range,
+                    position.y + RingHeightOffset * 2.5f,
+                    position.z + math.sin(angle) * range));
+            }
+        }
+
+        void UpdateDebugCombatAttackLine(Entity entity, float3 position, float3 target)
+        {
+            if (!_debugCombatAttackLineObjects.TryGetValue(entity, out var lineObject))
+            {
+                lineObject = CreateLineObject("Combat Attack Debug", false);
+                _debugCombatAttackLineObjects.Add(entity, lineObject);
+            }
+
+            var line = lineObject.GetComponent<LineRenderer>();
+            line.positionCount = 2;
+            line.loop = false;
+            line.startColor = DebugCombatAttackLineColor;
+            line.endColor = DebugCombatAttackLineColor;
+            line.startWidth = DebugLineWidth * 1.25f;
+            line.endWidth = DebugLineWidth * 1.25f;
+            line.SetPosition(0, new Vector3(position.x, position.y + RingHeightOffset * 4f, position.z));
+            line.SetPosition(1, new Vector3(target.x, target.y + RingHeightOffset * 4f, target.z));
+        }
+
+        void UpdateDebugCombatHealthLabel(Entity entity, float3 position, CombatHealth healthData)
+        {
+            if (!_entityManager.Exists(entity))
+                return;
+
+            if (!_debugCombatHealthActiveBuffer.Contains(entity))
+                _debugCombatHealthActiveBuffer.Add(entity);
+
+            if (!_debugCombatHealthLabelObjects.TryGetValue(entity, out var labelObject))
+            {
+                labelObject = CreateCombatHealthLabelObject();
+                _debugCombatHealthLabelObjects.Add(entity, labelObject);
+            }
+
+            labelObject.transform.position = new Vector3(
+                position.x,
+                position.y + math.max(1.1f, RingHeightOffset * 22f),
+                position.z);
+
+            if (SelectionCamera != null)
+                labelObject.transform.rotation = SelectionCamera.transform.rotation;
+
+            float maxHealth = math.max(0.01f, healthData.MaxHealth);
+            float health = math.max(0f, healthData.Health);
+            float ratio = math.saturate(health / maxHealth);
+
+            var text = labelObject.GetComponent<TextMesh>();
+            text.color = Color.Lerp(DebugFailedPathColor, DebugCombatHealthColor, ratio);
+            text.text = $"HP {health:0}/{maxHealth:0}";
+        }
+
+        GameObject CreateCombatHealthLabelObject()
+        {
+            var labelObject = new GameObject("Combat Health Debug");
+            labelObject.transform.SetParent(transform, false);
+
+            var text = labelObject.AddComponent<TextMesh>();
+            text.anchor = TextAnchor.MiddleCenter;
+            text.alignment = TextAlignment.Center;
+            text.characterSize = 0.16f;
+            text.fontSize = 30;
+            text.color = DebugCombatHealthColor;
+
+            return labelObject;
+        }
+
+        void UpdateDebugCombatWeaponStateLabel(
+            Entity entity,
+            float3 position,
+            NativeArray<CombatWeaponOwner> weaponOwners,
+            NativeArray<CombatWeaponReadyState> weaponReadyStates)
+        {
+            string status = FormatWeaponReadyStates(entity, weaponOwners, weaponReadyStates, out bool allReady);
+            if (string.IsNullOrEmpty(status))
+            {
+                RemoveDebugCombatWeaponStateLabel(entity);
+                return;
+            }
+
+            if (!_debugCombatWeaponStateLabelObjects.TryGetValue(entity, out var labelObject))
+            {
+                labelObject = CreateCombatWeaponStateLabelObject();
+                _debugCombatWeaponStateLabelObjects.Add(entity, labelObject);
+            }
+
+            labelObject.transform.position = new Vector3(
+                position.x,
+                position.y + math.max(1.45f, RingHeightOffset * 30f),
+                position.z);
+
+            if (SelectionCamera != null)
+                labelObject.transform.rotation = SelectionCamera.transform.rotation;
+
+            var text = labelObject.GetComponent<TextMesh>();
+            text.color = allReady ? DebugCombatWeaponReadyColor : DebugCombatWeaponBlockedColor;
+            text.text = status;
+        }
+
+        GameObject CreateCombatWeaponStateLabelObject()
+        {
+            var labelObject = new GameObject("Combat Weapon State Debug");
+            labelObject.transform.SetParent(transform, false);
+
+            var text = labelObject.AddComponent<TextMesh>();
+            text.anchor = TextAnchor.MiddleCenter;
+            text.alignment = TextAlignment.Center;
+            text.characterSize = 0.14f;
+            text.fontSize = 28;
+            text.color = DebugCombatWeaponBlockedColor;
+
+            return labelObject;
+        }
+
+        static string FormatWeaponReadyStates(
+            Entity owner,
+            NativeArray<CombatWeaponOwner> weaponOwners,
+            NativeArray<CombatWeaponReadyState> weaponReadyStates,
+            out bool allReady)
+        {
+            allReady = true;
+            string status = string.Empty;
+
+            for (int i = 0; i < weaponOwners.Length; i++)
+            {
+                if (weaponOwners[i].Owner != owner)
+                    continue;
+
+                CombatWeaponReadyState readyState = weaponReadyStates[i];
+                if (readyState.CanFire == 0)
+                    allReady = false;
+
+                string line = readyState.CanFire != 0
+                    ? $"W{weaponOwners[i].WeaponIndex} FIRE"
+                    : $"W{weaponOwners[i].WeaponIndex} {FormatBlockReasons(readyState.BlockedReasons)}";
+                status = string.IsNullOrEmpty(status)
+                    ? line
+                    : $"{status}\n{line}";
+            }
+
+            if (string.IsNullOrEmpty(status))
+                allReady = false;
+
+            return status;
+        }
+
+        static string FormatBlockReasons(CombatWeaponBlockReason reasons)
+        {
+            if (reasons == CombatWeaponBlockReason.None)
+                return "Ready";
+
+            string text = string.Empty;
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.NoOwner, "NoOwner");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.NoTarget, "NoTarget");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.InvalidTarget, "Invalid");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.UnsupportedTargetType, "Type");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.OutOfRange, "Range");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.NeedStop, "Stop");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.NeedBodyAim, "BodyAim");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.NeedTurretAim, "TurretAim");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.NeedSetup, "Setup");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.Cooldown, "Cooldown");
+            AppendReason(ref text, reasons, CombatWeaponBlockReason.BlockedLineOfSight, "LOS");
+            return text;
+        }
+
+        static void AppendReason(
+            ref string text,
+            CombatWeaponBlockReason reasons,
+            CombatWeaponBlockReason reason,
+            string label)
+        {
+            if ((reasons & reason) == 0)
+                return;
+
+            text = string.IsNullOrEmpty(text)
+                ? label
+                : $"{text}|{label}";
+        }
+
+        static float GetMaxWeaponRange(
+            Entity owner,
+            NativeArray<CombatWeaponOwner> weaponOwners,
+            NativeArray<CombatWeapon> weapons)
+        {
+            float range = 0f;
+            for (int i = 0; i < weapons.Length; i++)
+            {
+                if (weaponOwners[i].Owner != owner)
+                    continue;
+
+                range = math.max(range, math.max(0f, weapons[i].Range));
+            }
+
+            return range;
+        }
+
+        void UpdateObstacleDebugVisuals()
+        {
+            var entities = _obstacleQuery.ToEntityArray(Allocator.Temp);
+            var transforms = _obstacleQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+            var footprints = _obstacleQuery.ToComponentDataArray<ObstacleFootprint>(Allocator.Temp);
+
+            _debugObstacleActiveBuffer.Clear();
+
+            for (int i = 0; i < entities.Length; i++)
+            {
+                _debugObstacleActiveBuffer.Add(entities[i]);
+                float radius = GetEffectiveObstacleRadius(footprints[i]) + math.max(0f, footprints[i].ExtraPadding);
+                UpdateDebugObstacleRadius(entities[i], transforms[i].Position, radius);
+            }
+
+            footprints.Dispose();
+            transforms.Dispose();
+            entities.Dispose();
+        }
+
+        void UpdateDebugObstacleRadius(Entity entity, float3 position, float radius)
+        {
+            if (!_debugObstacleRadiusObjects.TryGetValue(entity, out var radiusObject))
+            {
+                radiusObject = CreateLineObject("Obstacle Radius Debug", true);
+                _debugObstacleRadiusObjects.Add(entity, radiusObject);
+            }
+
+            var line = radiusObject.GetComponent<LineRenderer>();
+            int segments = math.max(16, DebugCircleSegments);
+            line.positionCount = segments;
+            line.loop = true;
+            line.startColor = DebugObstacleRadiusColor;
+            line.endColor = DebugObstacleRadiusColor;
+            line.startWidth = DebugLineWidth;
+            line.endWidth = DebugLineWidth;
+
+            for (int i = 0; i < segments; i++)
+            {
+                float angle = i / (float)segments * math.PI * 2f;
+                line.SetPosition(i, new Vector3(
+                    position.x + math.cos(angle) * radius,
+                    position.y + RingHeightOffset * 1.25f,
+                    position.z + math.sin(angle) * radius));
+            }
+        }
+
+        GameObject CreateLineObject(string objectName, bool loop)
+        {
+            var lineObject = new GameObject(objectName);
+            lineObject.transform.SetParent(transform, false);
+
+            var line = lineObject.AddComponent<LineRenderer>();
+            line.sharedMaterial = _debugLineMaterial;
+            line.useWorldSpace = true;
+            line.loop = loop;
+            line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            line.receiveShadows = false;
+            line.textureMode = LineTextureMode.Stretch;
+
+            return lineObject;
+        }
+
+        void RemoveInactiveDebugObjects()
+        {
+            _removeBuffer.Clear();
+            foreach (var pair in _debugRadiusObjects)
+            {
+                if (!_debugActiveBuffer.Contains(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+            {
+                if (_debugRadiusObjects.TryGetValue(_removeBuffer[i], out var radiusObject))
+                    Destroy(radiusObject);
+
+                _debugRadiusObjects.Remove(_removeBuffer[i]);
+            }
+
+            _removeBuffer.Clear();
+            foreach (var pair in _debugTargetLineObjects)
+            {
+                if (!_debugActiveBuffer.Contains(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+                RemoveDebugTargetLine(_removeBuffer[i]);
+
+            _removeBuffer.Clear();
+            foreach (var pair in _debugPathLineObjects)
+            {
+                if (!_debugActiveBuffer.Contains(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+                RemoveDebugPathLine(_removeBuffer[i]);
+
+            _removeBuffer.Clear();
+            foreach (var pair in _debugStatusLabelObjects)
+            {
+                if (!_debugActiveBuffer.Contains(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+            {
+                if (_debugStatusLabelObjects.TryGetValue(_removeBuffer[i], out var labelObject))
+                    Destroy(labelObject);
+
+                _debugStatusLabelObjects.Remove(_removeBuffer[i]);
+            }
+
+            _removeBuffer.Clear();
+            foreach (var pair in _debugObstacleRadiusObjects)
+            {
+                if (!_debugObstacleActiveBuffer.Contains(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+            {
+                if (_debugObstacleRadiusObjects.TryGetValue(_removeBuffer[i], out var radiusObject))
+                    Destroy(radiusObject);
+
+                _debugObstacleRadiusObjects.Remove(_removeBuffer[i]);
+            }
+        }
+
+        void RemoveInactiveNameObjects()
+        {
+            _removeBuffer.Clear();
+            foreach (var pair in _debugNameLabelObjects)
+            {
+                if (!_debugNameActiveBuffer.Contains(pair.Key) ||
+                    !_entityManager.Exists(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+                RemoveDebugNameLabel(_removeBuffer[i]);
+        }
+
+        void RemoveInactiveCombatDebugObjects()
+        {
+            _removeBuffer.Clear();
+            foreach (var pair in _debugCombatRangeObjects)
+            {
+                if (!_debugCombatActiveBuffer.Contains(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+                RemoveDebugCombatRange(_removeBuffer[i]);
+
+            _removeBuffer.Clear();
+            foreach (var pair in _debugCombatAttackLineObjects)
+            {
+                if (!_debugCombatActiveBuffer.Contains(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+                RemoveDebugCombatAttackLine(_removeBuffer[i]);
+
+            _removeBuffer.Clear();
+            foreach (var pair in _debugCombatHealthLabelObjects)
+            {
+                if (!_debugCombatHealthActiveBuffer.Contains(pair.Key) ||
+                    !_entityManager.Exists(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+                RemoveDebugCombatHealthLabel(_removeBuffer[i]);
+
+            _removeBuffer.Clear();
+            foreach (var pair in _debugCombatWeaponStateLabelObjects)
+            {
+                if (!_debugCombatActiveBuffer.Contains(pair.Key) ||
+                    !_entityManager.Exists(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+                RemoveDebugCombatWeaponStateLabel(_removeBuffer[i]);
+        }
+
+        void RemoveDebugTargetLine(Entity entity)
+        {
+            if (_debugTargetLineObjects.TryGetValue(entity, out var lineObject))
+                Destroy(lineObject);
+
+            _debugTargetLineObjects.Remove(entity);
+        }
+
+        void RemoveDebugPathLine(Entity entity)
+        {
+            if (_debugPathLineObjects.TryGetValue(entity, out var lineObject))
+                Destroy(lineObject);
+
+            _debugPathLineObjects.Remove(entity);
+        }
+
+        void RemoveDebugNameLabel(Entity entity)
+        {
+            if (_debugNameLabelObjects.TryGetValue(entity, out var labelObject))
+                Destroy(labelObject);
+
+            _debugNameLabelObjects.Remove(entity);
+        }
+
+        void RemoveDebugCombatRange(Entity entity)
+        {
+            if (_debugCombatRangeObjects.TryGetValue(entity, out var rangeObject))
+                Destroy(rangeObject);
+
+            _debugCombatRangeObjects.Remove(entity);
+        }
+
+        void RemoveDebugCombatAttackLine(Entity entity)
+        {
+            if (_debugCombatAttackLineObjects.TryGetValue(entity, out var lineObject))
+                Destroy(lineObject);
+
+            _debugCombatAttackLineObjects.Remove(entity);
+        }
+
+        void RemoveDebugCombatHealthLabel(Entity entity)
+        {
+            if (_debugCombatHealthLabelObjects.TryGetValue(entity, out var labelObject))
+                Destroy(labelObject);
+
+            _debugCombatHealthLabelObjects.Remove(entity);
+        }
+
+        void RemoveDebugCombatWeaponStateLabel(Entity entity)
+        {
+            if (_debugCombatWeaponStateLabelObjects.TryGetValue(entity, out var labelObject))
+                Destroy(labelObject);
+
+            _debugCombatWeaponStateLabelObjects.Remove(entity);
         }
 
         GameObject CreateRingObject()
@@ -685,6 +2045,21 @@ namespace Game.Unit
             _runtimeRingMaterial = new Material(shader);
             _runtimeRingMaterial.name = "Runtime Selection Ring";
             ApplyRingMaterialSettings(_runtimeRingMaterial, RingColor);
+        }
+
+        void EnsureDebugLineMaterial()
+        {
+            if (_debugLineMaterial != null)
+                return;
+
+            Shader shader = Shader.Find("Sprites/Default");
+            if (shader == null)
+                shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null)
+                shader = Shader.Find("Unlit/Color");
+
+            _debugLineMaterial = new Material(shader);
+            _debugLineMaterial.name = "Runtime Unit Movement Debug";
         }
 
         static Mesh BuildRingMesh(int segments, float widthRatio)
@@ -827,6 +2202,93 @@ namespace Game.Unit
             }
 
             _rings.Clear();
+        }
+
+        void ClearMovementDebugObjects()
+        {
+            foreach (var pair in _debugRadiusObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            foreach (var pair in _debugTargetLineObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            foreach (var pair in _debugPathLineObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            foreach (var pair in _debugStatusLabelObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            foreach (var pair in _debugObstacleRadiusObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            _debugRadiusObjects.Clear();
+            _debugTargetLineObjects.Clear();
+            _debugPathLineObjects.Clear();
+            _debugStatusLabelObjects.Clear();
+            _debugObstacleRadiusObjects.Clear();
+            _debugActiveBuffer.Clear();
+            _debugObstacleActiveBuffer.Clear();
+        }
+
+        void ClearUnitNameObjects()
+        {
+            foreach (var pair in _debugNameLabelObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            _debugNameLabelObjects.Clear();
+            _debugNameActiveBuffer.Clear();
+        }
+
+        void ClearCombatDebugObjects()
+        {
+            foreach (var pair in _debugCombatRangeObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            foreach (var pair in _debugCombatAttackLineObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            foreach (var pair in _debugCombatHealthLabelObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            foreach (var pair in _debugCombatWeaponStateLabelObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
+            _debugCombatRangeObjects.Clear();
+            _debugCombatAttackLineObjects.Clear();
+            _debugCombatHealthLabelObjects.Clear();
+            _debugCombatWeaponStateLabelObjects.Clear();
+            _debugCombatActiveBuffer.Clear();
+            _debugCombatHealthActiveBuffer.Clear();
         }
 
         static bool IsAdditiveSelectionPressed()

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: f46c5bc5c5107434c8848b21881d4cf2
+timeCreated: 1495163808
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Weapons/SK_Wep_SniperRifle_01.prefab
+  uploadId: 794558

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 6bc44a445920cb94cb277a688e7d6ebc
+timeCreated: 1495164396
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Environments/SM_Env_Heli_Pad_01.prefab
+  uploadId: 794558

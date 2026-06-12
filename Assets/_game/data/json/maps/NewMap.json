@@ -1,0 +1,860 @@
+﻿{
+    "MapName": "NewMap",
+    "Settings": {
+        "CellSize": 1.0,
+        "Width": 512,
+        "Height": 256
+    },
+    "StartPoints": [
+        {
+            "TeamIndex": 0,
+            "Cell": {
+                "x": 0,
+                "y": 0
+            }
+        }
+    ],
+    "TerrainCells": [
+        {
+            "X": 60,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 61,
+            "Y": 46,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 62,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 63,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 64,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 65,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 66,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 67,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 68,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 69,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 70,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 71,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 72,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 73,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 74,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 75,
+            "Y": 47,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 76,
+            "Y": 46,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 77,
+            "Y": 46,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 78,
+            "Y": 46,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 79,
+            "Y": 46,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 80,
+            "Y": 46,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 81,
+            "Y": 46,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 82,
+            "Y": 45,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 83,
+            "Y": 45,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 84,
+            "Y": 45,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 85,
+            "Y": 45,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 86,
+            "Y": 45,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 87,
+            "Y": 44,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 88,
+            "Y": 44,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 89,
+            "Y": 44,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 90,
+            "Y": 44,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 70,
+            "Y": 40,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 70,
+            "Y": 41,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 70,
+            "Y": 42,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 70,
+            "Y": 43,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 70,
+            "Y": 44,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 71,
+            "Y": 44,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 72,
+            "Y": 44,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 72,
+            "Y": 43,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 73,
+            "Y": 43,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 74,
+            "Y": 43,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 74,
+            "Y": 44,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 73,
+            "Y": 44,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 72,
+            "Y": 42,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 71,
+            "Y": 42,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 71,
+            "Y": 41,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 71,
+            "Y": 40,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 72,
+            "Y": 40,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 73,
+            "Y": 40,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 74,
+            "Y": 39,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 75,
+            "Y": 39,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 75,
+            "Y": 40,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 74,
+            "Y": 40,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 74,
+            "Y": 41,
+            "TypeId": 0,
+            "Height": 0
+        },
+        {
+            "X": 70,
+            "Y": 34,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 71,
+            "Y": 34,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 72,
+            "Y": 34,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 73,
+            "Y": 34,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 74,
+            "Y": 34,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 74,
+            "Y": 33,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 74,
+            "Y": 32,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 74,
+            "Y": 31,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 74,
+            "Y": 30,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 73,
+            "Y": 30,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 72,
+            "Y": 30,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 71,
+            "Y": 30,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 70,
+            "Y": 30,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 70,
+            "Y": 31,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 70,
+            "Y": 32,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 70,
+            "Y": 33,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 71,
+            "Y": 33,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 72,
+            "Y": 33,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 73,
+            "Y": 33,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 73,
+            "Y": 32,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 73,
+            "Y": 31,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 72,
+            "Y": 31,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 71,
+            "Y": 31,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 71,
+            "Y": 32,
+            "TypeId": 0,
+            "Height": 1
+        },
+        {
+            "X": 72,
+            "Y": 32,
+            "TypeId": 0,
+            "Height": 1
+        }
+    ],
+    "ResourceCells": [
+        {
+            "X": 20,
+            "Y": 44,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 21,
+            "Y": 44,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 22,
+            "Y": 44,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 22,
+            "Y": 43,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 23,
+            "Y": 43,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 23,
+            "Y": 42,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 24,
+            "Y": 42,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 24,
+            "Y": 41,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 23,
+            "Y": 41,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 23,
+            "Y": 40,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 22,
+            "Y": 40,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 22,
+            "Y": 41,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 21,
+            "Y": 41,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 21,
+            "Y": 42,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 21,
+            "Y": 43,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 22,
+            "Y": 42,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 20,
+            "Y": 41,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 20,
+            "Y": 42,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 20,
+            "Y": 43,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 23,
+            "Y": 44,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 24,
+            "Y": 43,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 25,
+            "Y": 42,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 25,
+            "Y": 41,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 24,
+            "Y": 40,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 21,
+            "Y": 40,
+            "TypeId": 10,
+            "Amount": 300
+        },
+        {
+            "X": 15,
+            "Y": 35,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 15,
+            "Y": 36,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 15,
+            "Y": 37,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 15,
+            "Y": 38,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 16,
+            "Y": 38,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 16,
+            "Y": 39,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 17,
+            "Y": 39,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 17,
+            "Y": 38,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 18,
+            "Y": 38,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 18,
+            "Y": 37,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 19,
+            "Y": 37,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 19,
+            "Y": 36,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 19,
+            "Y": 35,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 18,
+            "Y": 35,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 17,
+            "Y": 35,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 17,
+            "Y": 36,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 16,
+            "Y": 36,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 16,
+            "Y": 37,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 17,
+            "Y": 37,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 18,
+            "Y": 36,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 17,
+            "Y": 34,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 16,
+            "Y": 34,
+            "TypeId": 12,
+            "Amount": 300
+        },
+        {
+            "X": 16,
+            "Y": 35,
+            "TypeId": 12,
+            "Amount": 300
+        }
+    ],
+    "Singles": [
+        {
+            "MainKey": 10000,
+            "VariantKey": 0,
+            "CellX": 2,
+            "CellZ": 2,
+            "PositionY": 1.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 10001,
+            "VariantKey": 0,
+            "CellX": 15,
+            "CellZ": 11,
+            "PositionY": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 10001,
+            "VariantKey": 0,
+            "CellX": 19,
+            "CellZ": 15,
+            "PositionY": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 10002,
+            "VariantKey": 0,
+            "CellX": 17,
+            "CellZ": 7,
+            "PositionY": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 10002,
+            "VariantKey": 0,
+            "CellX": 22,
+            "CellZ": 7,
+            "PositionY": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 10002,
+            "VariantKey": 0,
+            "CellX": 22,
+            "CellZ": 12,
+            "PositionY": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 10000,
+            "VariantKey": 0,
+            "CellX": 17,
+            "CellZ": 12,
+            "PositionY": 1.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 10000,
+            "VariantKey": 0,
+            "CellX": 27,
+            "CellZ": 12,
+            "PositionY": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        }
+    ],
+    "Multis": [],
+    "Roads": [],
+    "RequiredDlcs": []
+}

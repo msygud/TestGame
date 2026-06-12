@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: c26e74b74637dac46a9fce6e87280d61
+timeCreated: 1495164377
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Environments/SM_Env_Tile_Asphalt_01.prefab
+  uploadId: 794558

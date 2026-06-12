@@ -136,7 +136,10 @@ MonoBehaviour:
   FootprintSize: {x: 2, y: 1}
   FootprintRadius: 0.5
   SeparationWeight: 1
-  SettledPushScale: 0.03
+  SettledPushScale: 0.08
+  WorkingPushScale: 0.02
+  AnchoredPushScale: 0
+  InitialActivity: 1
   SelectionWorldRadius: 0.6
   SelectionScreenPixels: 28
   SelectionRingRadius: 0.8

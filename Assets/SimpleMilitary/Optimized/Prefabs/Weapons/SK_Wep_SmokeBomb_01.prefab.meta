@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 0c5dab6ba96bb8649ae8f047f36bf087
+timeCreated: 1495163775
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Weapons/SK_Wep_SmokeBomb_01.prefab
+  uploadId: 794558

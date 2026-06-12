@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 219027f13badf4d48a36a17d2cec4ea2
+timeCreated: 1495164176
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Props/SM_Prop_Missile_launcher_01.prefab
+  uploadId: 794558

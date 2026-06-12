@@ -61,10 +61,10 @@ PrefabInstance:
       addedObject: {fileID: 2815678929975591822}
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 3b885ae0c7fd26a4f89c9c61aa1ac27e, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 8643910671208930113}
+      addedObject: {fileID: 3678903012891905499}
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 3b885ae0c7fd26a4f89c9c61aa1ac27e, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 3678903012891905499}
+      addedObject: {fileID: -3236748258594515541}
   m_SourcePrefab: {fileID: 100100000, guid: 3b885ae0c7fd26a4f89c9c61aa1ac27e, type: 3}
 --- !u!1 &23981438083356665 stripped
 GameObject:
@@ -93,18 +93,6 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 4280997107250533771, guid: 3b885ae0c7fd26a4f89c9c61aa1ac27e, type: 3}
---- !u!114 &8643910671208930113
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 23981438083356665}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3c8b4d4fca662124ab30e1854b582e63, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.UnitBaseAuth
 --- !u!114 &3678903012891905499
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -118,3 +106,18 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.NameAuth
   Name: super
+--- !u!114 &-3236748258594515541
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 23981438083356665}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1638d91c787904d498924eca75a1e671, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.ObstacleFootprintAuthoring
+  FootprintSize: {x: 2, y: 2}
+  FootprintRadius: 1
+  ExtraPadding: 0.25

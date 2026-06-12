@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: e2747da4d23f91740ac3d61a1ab55904
+timeCreated: 1495163776
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Weapons/SK_Wep_MiniGun_01.prefab
+  uploadId: 794558

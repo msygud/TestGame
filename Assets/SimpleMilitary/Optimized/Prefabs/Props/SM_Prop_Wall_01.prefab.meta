@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: f9b90a7693fe4bc4489b5a6239b6b8db
+timeCreated: 1495164158
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Props/SM_Prop_Wall_01.prefab
+  uploadId: 794558

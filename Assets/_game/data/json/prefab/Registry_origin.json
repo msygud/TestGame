@@ -1,0 +1,12 @@
+﻿{
+  "dlcId": 0,
+  "dlcName": "0",
+  "displayName": "origin",
+  "items": [
+    {"mainKey":1,"variantKey":0,"name":"Road_E","category":0},
+    {"mainKey":2,"variantKey":0,"name":"Road_EW","category":0},
+    {"mainKey":10000,"variantKey":0,"name":"","category":99},
+    {"mainKey":10001,"variantKey":0,"name":"","category":99},
+    {"mainKey":10002,"variantKey":0,"name":"","category":99}
+  ]
+}

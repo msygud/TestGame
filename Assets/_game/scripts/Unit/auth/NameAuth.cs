@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace Game.Unit
 {
-    class NameAuth : MonoBehaviour
+    public sealed class NameAuth : MonoBehaviour
     {
         public string Name;
     }
@@ -12,10 +12,8 @@ namespace Game.Unit
     {
         public override void Bake(NameAuth authoring)
         {
-#if UNITY_EDITOR
-            var entity = GetEntity(TransformUsageFlags.Dynamic);
-            //AddComponent(entity, new UnitName { Name = authoring.Name });
-#endif
+            // UnitAuthoring/CombatTargetableAuthoring now own UnitDisplayName baking.
+            // Keep this legacy authoring inert so old prefabs do not add duplicate components.
         }
     }
 }

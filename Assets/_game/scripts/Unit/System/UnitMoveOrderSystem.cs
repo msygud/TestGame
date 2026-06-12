@@ -1,11 +1,16 @@
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Transforms;
 
 namespace Game.Unit
 {
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct UnitMoveOrderSystem : ISystem
     {
+        const int MaxPathBuildsPerFrame = 12;
+        const float PathCacheRadiusStep = 0.25f;
+
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<MoveOrderRequest>();
@@ -14,7 +19,29 @@ namespace Game.Unit
         public void OnUpdate(ref SystemState state)
         {
             var targets = SystemAPI.GetComponentLookup<UnitMoveTarget>(false);
+            var motions = SystemAPI.GetComponentLookup<UnitMotionState>(false);
+            var transforms = SystemAPI.GetComponentLookup<LocalTransform>(true);
+            var footprints = SystemAPI.GetComponentLookup<UnitFootprint>(true);
+            var commandStates = SystemAPI.GetComponentLookup<UnitCommandState>(false);
+            var attackTargets = SystemAPI.GetComponentLookup<CombatAttackTarget>(false);
+            var engagementDecisions = SystemAPI.GetComponentLookup<CombatEngagementDecision>(false);
+            var waypointBuffers = SystemAPI.GetBufferLookup<UnitPathWaypoint>(false);
+            var requestPathBuffers = SystemAPI.GetBufferLookup<MoveOrderPathWaypoint>(true);
             var ecb = new EntityCommandBuffer(Allocator.Temp);
+            bool hasGrid = SystemAPI.TryGetSingleton<UnitNavigationGrid>(out var grid);
+            var obstacleQuery = SystemAPI.QueryBuilder()
+                .WithAll<ObstacleFootprint, LocalTransform>()
+                .Build();
+            int obstacleCount = obstacleQuery.CalculateEntityCount();
+            var obstacleTransforms = obstacleCount > 0
+                ? obstacleQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp)
+                : default;
+            var obstacleFootprints = obstacleCount > 0
+                ? obstacleQuery.ToComponentDataArray<ObstacleFootprint>(Allocator.Temp)
+                : default;
+            var pathCache = new NativeList<PathCacheEntry>(Allocator.Temp);
+            var pathCachePoints = new NativeList<float3>(Allocator.Temp);
+            int pathBuildsThisFrame = 0;
 
             foreach (var (request, requestEntity) in
                      SystemAPI.Query<RefRO<MoveOrderRequest>>()
@@ -23,24 +50,666 @@ namespace Game.Unit
                 var unit = request.ValueRO.Unit;
                 if (SystemAPI.Exists(unit))
                 {
+                    bool pathFound = false;
+                    bool reachedTarget = false;
+                    bool pathAttempted = false;
+                    var path = new NativeList<float3>(Allocator.Temp);
+
+                    if (TryCopyRequestPath(requestEntity, requestPathBuffers, path))
+                    {
+                        pathAttempted = true;
+                        pathFound = true;
+                        reachedTarget = true;
+                    }
+                    else if (hasGrid &&
+                        transforms.HasComponent(unit) &&
+                        footprints.HasComponent(unit))
+                    {
+                        float unitRadius = math.max(0.01f, footprints[unit].Radius);
+                        var cacheKey = BuildPathCacheKey(
+                            grid,
+                            transforms[unit].Position,
+                            request.ValueRO.Target,
+                            unitRadius);
+                        pathAttempted = true;
+                        if (TryCopyCachedPath(cacheKey, pathCache, pathCachePoints, path, out pathFound, out reachedTarget))
+                        {
+                        }
+                        else
+                        {
+                            if (pathBuildsThisFrame >= MaxPathBuildsPerFrame)
+                            {
+                                path.Dispose();
+                                continue;
+                            }
+
+                            pathBuildsThisFrame++;
+                            pathFound = UnitPathfinding.TryBuildPath(
+                                grid,
+                                transforms[unit].Position,
+                                request.ValueRO.Target,
+                                unitRadius,
+                                obstacleTransforms,
+                                obstacleFootprints,
+                                path,
+                                out reachedTarget);
+                            AddCachedPath(cacheKey, pathFound, reachedTarget, path, pathCache, pathCachePoints);
+                        }
+                    }
+
+                    float3 resolvedTarget = pathFound && !reachedTarget && path.Length > 0
+                        ? path[path.Length - 1]
+                        : request.ValueRO.Target;
                     var target = new UnitMoveTarget
                     {
-                        Position = request.ValueRO.Target,
+                        Position = resolvedTarget,
                         StopDistance = request.ValueRO.StopDistance,
-                        HasTarget = 1,
+                        RepathCount = request.ValueRO.RepathCount,
+                        PathStatus = ResolvePathStatus(pathAttempted, pathFound, reachedTarget),
+                        HasTarget = pathAttempted && !pathFound ? (byte)0 : (byte)1,
+                        RepathRequested = 0,
                     };
 
                     if (targets.HasComponent(unit))
                         targets[unit] = target;
                     else
                         ecb.AddComponent(unit, target);
+
+                    if (motions.HasComponent(unit))
+                    {
+                        var motion = motions[unit];
+                        motion.LastTargetDistance = float.MaxValue;
+                        motion.StuckTime = 0f;
+                        motions[unit] = motion;
+                    }
+
+                    if (request.ValueRO.CommandKind != UnitCommandKind.None)
+                    {
+                        var commandState = new UnitCommandState
+                        {
+                            Kind = request.ValueRO.CommandKind,
+                            TargetEntity = Entity.Null,
+                            TargetPosition = request.ValueRO.Target,
+                            HasTargetEntity = 0,
+                        };
+
+                        if (commandStates.HasComponent(unit))
+                            commandStates[unit] = commandState;
+                        else
+                            ecb.AddComponent(unit, commandState);
+                    }
+
+                    if (request.ValueRO.CommandKind == UnitCommandKind.ForceMove)
+                    {
+                        if (attackTargets.HasComponent(unit))
+                        {
+                            var attackTarget = attackTargets[unit];
+                            attackTarget.Target = Entity.Null;
+                            attackTarget.ApproachRefreshTime = 0f;
+                            attackTarget.HasTarget = 0;
+                            attackTargets[unit] = attackTarget;
+                        }
+
+                        if (engagementDecisions.HasComponent(unit))
+                        {
+                            engagementDecisions[unit] = new CombatEngagementDecision
+                            {
+                                PreferredRange = 0f,
+                                TargetPosition = float3.zero,
+                                ShouldApproach = 0,
+                                HasUsableWeapon = 0,
+                            };
+                        }
+                    }
+
+                    if (waypointBuffers.HasBuffer(unit))
+                    {
+                        var waypoints = waypointBuffers[unit];
+                        waypoints.Clear();
+
+                        if (pathFound)
+                        {
+                            for (int i = 1; i < path.Length - 1; i++)
+                            {
+                                waypoints.Add(new UnitPathWaypoint
+                                {
+                                    Position = path[i],
+                                });
+                            }
+                        }
+                    }
+
+                    path.Dispose();
                 }
 
                 ecb.DestroyEntity(requestEntity);
             }
 
+            pathCachePoints.Dispose();
+            pathCache.Dispose();
+
+            if (obstacleCount > 0)
+            {
+                obstacleFootprints.Dispose();
+                obstacleTransforms.Dispose();
+            }
+
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
+        }
+
+        static UnitPathStatus ResolvePathStatus(bool pathAttempted, bool pathFound, bool reachedTarget)
+        {
+            if (!pathAttempted)
+                return UnitPathStatus.Direct;
+
+            if (!pathFound)
+                return UnitPathStatus.PathFailed;
+
+            return reachedTarget ? UnitPathStatus.PathReady : UnitPathStatus.PathPartial;
+        }
+
+        struct PathCacheKey
+        {
+            public int2 StartCell;
+            public int2 TargetCell;
+            public int RadiusStep;
+        }
+
+        struct PathCacheEntry
+        {
+            public PathCacheKey Key;
+            public int PointStart;
+            public int PointCount;
+            public byte Found;
+            public byte ReachedTarget;
+        }
+
+        static PathCacheKey BuildPathCacheKey(UnitNavigationGrid grid, float3 start, float3 target, float radius)
+        {
+            return new PathCacheKey
+            {
+                StartCell = UnitPathfinding.WorldToCell(grid, start),
+                TargetCell = UnitPathfinding.WorldToCell(grid, target),
+                RadiusStep = (int)math.ceil(radius / PathCacheRadiusStep),
+            };
+        }
+
+        static bool TryCopyCachedPath(
+            PathCacheKey key,
+            NativeList<PathCacheEntry> cache,
+            NativeList<float3> cachePoints,
+            NativeList<float3> path,
+            out bool pathFound,
+            out bool reachedTarget)
+        {
+            pathFound = false;
+            reachedTarget = false;
+
+            for (int i = 0; i < cache.Length; i++)
+            {
+                PathCacheEntry entry = cache[i];
+                if (!PathCacheKeyEquals(entry.Key, key))
+                    continue;
+
+                pathFound = entry.Found != 0;
+                reachedTarget = entry.ReachedTarget != 0;
+
+                for (int pointIndex = 0; pointIndex < entry.PointCount; pointIndex++)
+                    path.Add(cachePoints[entry.PointStart + pointIndex]);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        static void AddCachedPath(
+            PathCacheKey key,
+            bool pathFound,
+            bool reachedTarget,
+            NativeList<float3> path,
+            NativeList<PathCacheEntry> cache,
+            NativeList<float3> cachePoints)
+        {
+            int pointStart = cachePoints.Length;
+            for (int i = 0; i < path.Length; i++)
+                cachePoints.Add(path[i]);
+
+            cache.Add(new PathCacheEntry
+            {
+                Key = key,
+                PointStart = pointStart,
+                PointCount = path.Length,
+                Found = pathFound ? (byte)1 : (byte)0,
+                ReachedTarget = reachedTarget ? (byte)1 : (byte)0,
+            });
+        }
+
+        static bool PathCacheKeyEquals(PathCacheKey a, PathCacheKey b)
+        {
+            return a.StartCell.x == b.StartCell.x &&
+                   a.StartCell.y == b.StartCell.y &&
+                   a.TargetCell.x == b.TargetCell.x &&
+                   a.TargetCell.y == b.TargetCell.y &&
+                   a.RadiusStep == b.RadiusStep;
+        }
+
+        static bool TryCopyRequestPath(
+            Entity requestEntity,
+            BufferLookup<MoveOrderPathWaypoint> requestPathBuffers,
+            NativeList<float3> path)
+        {
+            if (!requestPathBuffers.HasBuffer(requestEntity))
+                return false;
+
+            var requestPath = requestPathBuffers[requestEntity];
+            if (requestPath.Length < 2)
+                return false;
+
+            for (int i = 0; i < requestPath.Length; i++)
+                path.Add(requestPath[i].Position);
+
+            return true;
+        }
+
+    }
+
+    public static class UnitPathfinding
+    {
+        public static bool TryBuildPath(
+            UnitNavigationGrid grid,
+            float3 startPosition,
+            float3 targetPosition,
+            float unitRadius,
+            NativeArray<LocalTransform> obstacleTransforms,
+            NativeArray<ObstacleFootprint> obstacleFootprints,
+            NativeList<float3> path,
+            out bool reachedTarget)
+        {
+            reachedTarget = false;
+            int cellCount = grid.Size.x * grid.Size.y;
+            if (cellCount <= 0)
+                return false;
+
+            var blocked = new NativeArray<byte>(cellCount, Allocator.Temp);
+            BuildBlockedGrid(grid, unitRadius, obstacleTransforms, obstacleFootprints, blocked);
+
+            int2 startCell = WorldToCell(grid, startPosition);
+            int2 targetCell = WorldToCell(grid, targetPosition);
+            if (!IsInside(grid, startCell) || !IsInside(grid, targetCell))
+            {
+                blocked.Dispose();
+                return false;
+            }
+
+            int startIndex = ToIndex(grid, startCell);
+            int requestedTargetIndex = ToIndex(grid, targetCell);
+            int targetIndex = FindNearestWalkableIndex(grid, targetCell, blocked);
+            if (targetIndex < 0)
+            {
+                blocked.Dispose();
+                return false;
+            }
+
+            blocked[startIndex] = 0;
+
+            bool targetCellWasWalkable = targetIndex == requestedTargetIndex;
+            if (targetCellWasWalkable &&
+                HasGridLineOfSight(grid, startPosition, targetPosition, blocked))
+            {
+                path.Add(startPosition);
+                path.Add(targetPosition);
+                blocked.Dispose();
+                reachedTarget = true;
+                return true;
+            }
+
+            var cameFrom = new NativeArray<int>(cellCount, Allocator.Temp);
+            var gScore = new NativeArray<float>(cellCount, Allocator.Temp);
+            var closed = new NativeArray<byte>(cellCount, Allocator.Temp);
+            var open = new NativeList<int>(Allocator.Temp);
+
+            for (int i = 0; i < cellCount; i++)
+            {
+                cameFrom[i] = -1;
+                gScore[i] = float.MaxValue;
+            }
+
+            gScore[startIndex] = 0f;
+            open.Add(startIndex);
+
+            bool found = false;
+            int bestReachable = startIndex;
+            float bestReachableScore = Heuristic(startCell, ToCell(grid, targetIndex));
+            int searched = 0;
+
+            while (open.Length > 0 && searched < grid.MaxSearchNodes)
+            {
+                int currentOpenIndex = FindBestOpenIndex(grid, open, gScore, targetIndex);
+                int current = open[currentOpenIndex];
+                open.RemoveAtSwapBack(currentOpenIndex);
+
+                if (closed[current] != 0)
+                    continue;
+
+                if (current == targetIndex)
+                {
+                    found = true;
+                    break;
+                }
+
+                closed[current] = 1;
+                searched++;
+
+                int2 cell = ToCell(grid, current);
+                float reachableScore = Heuristic(cell, ToCell(grid, targetIndex));
+                if (reachableScore < bestReachableScore)
+                {
+                    bestReachableScore = reachableScore;
+                    bestReachable = current;
+                }
+
+                TryVisitNeighbor(grid, cell, new int2(1, 0), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, new int2(-1, 0), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, new int2(0, 1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, new int2(0, -1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, new int2(1, 1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, new int2(1, -1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, new int2(-1, 1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, new int2(-1, -1), current, blocked, closed, cameFrom, gScore, open);
+            }
+
+            int resolvedTargetIndex = found ? targetIndex : bestReachable;
+            bool hasPath = found || resolvedTargetIndex != startIndex;
+            if (hasPath)
+            {
+                var rawPath = new NativeList<float3>(Allocator.Temp);
+                ReconstructPath(grid, resolvedTargetIndex, cameFrom, rawPath);
+                SmoothPath(grid, rawPath, blocked, path);
+                rawPath.Dispose();
+            }
+
+            open.Dispose();
+            closed.Dispose();
+            gScore.Dispose();
+            cameFrom.Dispose();
+            blocked.Dispose();
+
+            reachedTarget = found && targetCellWasWalkable;
+            return hasPath && path.Length > 1;
+        }
+
+        public static int2 WorldToCell(UnitNavigationGrid grid, float3 position)
+        {
+            float inverseCellSize = 1f / math.max(0.01f, grid.CellSize);
+            float3 local = position - grid.Origin;
+            return new int2(
+                (int)math.floor(local.x * inverseCellSize),
+                (int)math.floor(local.z * inverseCellSize));
+        }
+
+        public static void BuildBlockedGrid(
+            UnitNavigationGrid grid,
+            float unitRadius,
+            NativeArray<LocalTransform> obstacleTransforms,
+            NativeArray<ObstacleFootprint> obstacleFootprints,
+            NativeArray<byte> blocked)
+        {
+            for (int i = 0; i < obstacleFootprints.Length; i++)
+            {
+                float radius = unitRadius + GetEffectiveObstacleRadius(obstacleFootprints[i]) +
+                               math.max(0f, obstacleFootprints[i].ExtraPadding);
+                int2 center = WorldToCell(grid, obstacleTransforms[i].Position);
+                int cellRadius = (int)math.ceil(radius / grid.CellSize);
+
+                for (int z = center.y - cellRadius; z <= center.y + cellRadius; z++)
+                {
+                    for (int x = center.x - cellRadius; x <= center.x + cellRadius; x++)
+                    {
+                        var cell = new int2(x, z);
+                        if (!IsInside(grid, cell))
+                            continue;
+
+                        float3 cellCenter = CellToWorld(grid, cell);
+                        if (HorizontalDistanceSq(cellCenter, obstacleTransforms[i].Position) <= radius * radius)
+                            blocked[ToIndex(grid, cell)] = 1;
+                    }
+                }
+            }
+        }
+
+        static int FindNearestWalkableIndex(UnitNavigationGrid grid, int2 targetCell, NativeArray<byte> blocked)
+        {
+            if (!IsInside(grid, targetCell))
+                return -1;
+
+            int targetIndex = ToIndex(grid, targetCell);
+            if (blocked[targetIndex] == 0)
+                return targetIndex;
+
+            int maxRing = math.max(grid.Size.x, grid.Size.y);
+            for (int ring = 1; ring <= maxRing; ring++)
+            {
+                int bestIndex = -1;
+                int bestDistanceSq = int.MaxValue;
+
+                for (int z = -ring; z <= ring; z++)
+                {
+                    for (int x = -ring; x <= ring; x++)
+                    {
+                        if (math.max(math.abs(x), math.abs(z)) != ring)
+                            continue;
+
+                        var cell = targetCell + new int2(x, z);
+                        if (!IsInside(grid, cell))
+                            continue;
+
+                        int index = ToIndex(grid, cell);
+                        if (blocked[index] == 0)
+                        {
+                            int distanceSq = x * x + z * z;
+                            if (distanceSq < bestDistanceSq)
+                            {
+                                bestDistanceSq = distanceSq;
+                                bestIndex = index;
+                            }
+                        }
+                    }
+                }
+
+                if (bestIndex >= 0)
+                    return bestIndex;
+            }
+
+            return -1;
+        }
+
+        static int FindBestOpenIndex(UnitNavigationGrid grid, NativeList<int> open, NativeArray<float> gScore, int targetIndex)
+        {
+            int bestOpenIndex = 0;
+            float bestScore = float.MaxValue;
+            int2 targetCell = ToCell(grid, targetIndex);
+
+            for (int i = 0; i < open.Length; i++)
+            {
+                int node = open[i];
+                float score = gScore[node] + Heuristic(ToCell(grid, node), targetCell);
+                if (score >= bestScore)
+                    continue;
+
+                bestScore = score;
+                bestOpenIndex = i;
+            }
+
+            return bestOpenIndex;
+        }
+
+        static void TryVisitNeighbor(
+            UnitNavigationGrid grid,
+            int2 cell,
+            int2 offset,
+            int current,
+            NativeArray<byte> blocked,
+            NativeArray<byte> closed,
+            NativeArray<int> cameFrom,
+            NativeArray<float> gScore,
+            NativeList<int> open)
+        {
+            int2 nextCell = cell + offset;
+            if (!IsInside(grid, nextCell))
+                return;
+
+            int next = ToIndex(grid, nextCell);
+            if (blocked[next] != 0 || closed[next] != 0)
+                return;
+
+            if (math.abs(offset.x) + math.abs(offset.y) == 2)
+            {
+                int sideA = ToIndex(grid, cell + new int2(offset.x, 0));
+                int sideB = ToIndex(grid, cell + new int2(0, offset.y));
+                if (blocked[sideA] != 0 || blocked[sideB] != 0)
+                    return;
+            }
+
+            float stepCost = math.abs(offset.x) + math.abs(offset.y) == 2 ? 1.4142135f : 1f;
+            float tentativeScore = gScore[current] + stepCost;
+            if (tentativeScore >= gScore[next])
+                return;
+
+            cameFrom[next] = current;
+            gScore[next] = tentativeScore;
+            open.Add(next);
+        }
+
+        static void ReconstructPath(UnitNavigationGrid grid, int targetIndex, NativeArray<int> cameFrom, NativeList<float3> path)
+        {
+            var reversed = new NativeList<int>(Allocator.Temp);
+            int current = targetIndex;
+
+            while (current >= 0)
+            {
+                reversed.Add(current);
+                current = cameFrom[current];
+            }
+
+            for (int i = reversed.Length - 1; i >= 0; i--)
+                path.Add(CellToWorld(grid, ToCell(grid, reversed[i])));
+
+            reversed.Dispose();
+        }
+
+        static void SmoothPath(
+            UnitNavigationGrid grid,
+            NativeList<float3> rawPath,
+            NativeArray<byte> blocked,
+            NativeList<float3> path)
+        {
+            if (rawPath.Length <= 2)
+            {
+                for (int i = 0; i < rawPath.Length; i++)
+                    path.Add(rawPath[i]);
+
+                return;
+            }
+
+            int anchor = 0;
+            path.Add(rawPath[anchor]);
+
+            while (anchor < rawPath.Length - 1)
+            {
+                int farthest = rawPath.Length - 1;
+                while (farthest > anchor + 1)
+                {
+                    if (HasGridLineOfSight(grid, rawPath[anchor], rawPath[farthest], blocked))
+                        break;
+
+                    farthest--;
+                }
+
+                path.Add(rawPath[farthest]);
+                anchor = farthest;
+            }
+        }
+
+        public static bool HasGridLineOfSight(UnitNavigationGrid grid, float3 start, float3 end, NativeArray<byte> blocked)
+        {
+            return HasGridLineOfSight(grid, start, end, blocked, false);
+        }
+
+        public static bool HasGridLineOfSight(
+            UnitNavigationGrid grid,
+            float3 start,
+            float3 end,
+            NativeArray<byte> blocked,
+            bool allowBlockedEndCell)
+        {
+            int2 a = WorldToCell(grid, start);
+            int2 b = WorldToCell(grid, end);
+            int dx = math.abs(b.x - a.x);
+            int dz = math.abs(b.y - a.y);
+            int steps = math.max(dx, dz);
+            if (steps == 0)
+                return IsInside(grid, a) &&
+                       (blocked[ToIndex(grid, a)] == 0 || allowBlockedEndCell);
+
+            for (int i = 0; i <= steps; i++)
+            {
+                float t = i / (float)steps;
+                int x = (int)math.round(math.lerp(a.x, b.x, t));
+                int z = (int)math.round(math.lerp(a.y, b.y, t));
+                var cell = new int2(x, z);
+                bool isEndCell = cell.x == b.x && cell.y == b.y;
+                if (!IsInside(grid, cell) ||
+                    blocked[ToIndex(grid, cell)] != 0 && !(allowBlockedEndCell && isEndCell))
+                    return false;
+            }
+
+            return true;
+        }
+
+        static float Heuristic(int2 a, int2 b)
+        {
+            int2 delta = math.abs(a - b);
+            int diagonal = math.min(delta.x, delta.y);
+            int straight = math.max(delta.x, delta.y) - diagonal;
+            return diagonal * 1.4142135f + straight;
+        }
+
+        static float3 CellToWorld(UnitNavigationGrid grid, int2 cell)
+        {
+            return grid.Origin + new float3(
+                (cell.x + 0.5f) * grid.CellSize,
+                0f,
+                (cell.y + 0.5f) * grid.CellSize);
+        }
+
+        static int ToIndex(UnitNavigationGrid grid, int2 cell)
+        {
+            return cell.y * grid.Size.x + cell.x;
+        }
+
+        static int2 ToCell(UnitNavigationGrid grid, int index)
+        {
+            return new int2(index % grid.Size.x, index / grid.Size.x);
+        }
+
+        static bool IsInside(UnitNavigationGrid grid, int2 cell)
+        {
+            return cell.x >= 0 && cell.y >= 0 && cell.x < grid.Size.x && cell.y < grid.Size.y;
+        }
+
+        static float GetEffectiveObstacleRadius(ObstacleFootprint obstacle)
+        {
+            float sizeRadius = math.length(math.max(obstacle.Size, new float2(0.01f))) * 0.5f;
+            return math.max(math.max(0.01f, obstacle.Radius), sizeRadius);
+        }
+
+        static float HorizontalDistanceSq(float3 a, float3 b)
+        {
+            float3 delta = a - b;
+            delta.y = 0f;
+            return math.lengthsq(delta);
         }
     }
 }

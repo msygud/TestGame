@@ -63,8 +63,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1422379666498589156}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: de9883f334175e7499d5f60657d34200, type: 3}
+  m_Script: {fileID: 11500000, guid: c8757205ea1edbe40a289c2b7331ffb1, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::CitySim.PrefabRegistryAuthoring
-  Source: {fileID: 11400000, guid: 6738e144173666743ad947f7670ccefc, type: 2}
-  Sources: []
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.Authoring.GamePrefabRegistryAuthoring
+  Registry: {fileID: 11400000, guid: b0e2806fab8270c4c86b021468e146e8, type: 2}

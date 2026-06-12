@@ -370,16 +370,33 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.UnitAuthoring
   MoveSpeed: 6
+  DisplayName: Unit
   TurnSpeedDegrees: 720
   StopDistance: 0.15
   FootprintSize: {x: 1, y: 1}
   FootprintRadius: 0.5
   SeparationWeight: 1
-  SettledPushScale: 0.05
+  SettledPushScale: 0.08
+  WorkingPushScale: 0.02
+  AnchoredPushScale: 0
+  InitialActivity: 1
+  AvoidancePriority: 1
+  YieldStrength: 1
+  SoftAvoidanceDistance: 0.75
   SelectionWorldRadius: 0.6
   SelectionScreenPixels: 28
   SelectionRingRadius: 0.8
   SelectionFootprintSize: {x: 1, y: 1}
+  TeamId: -1
+  LocalId: 0
+  EnemyTeams: 0
+  AllyTeams: 0
+  NeutralTeams: 0
+  IsPlayerTeam: 0
+  IsPlayer: 0
+  TargetType: 1
+  MaxHealth: 100
+  DestroyOnDeath: 1
 --- !u!4 &8704608762684933999 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 8eecf8c103555484abbb1c09db57c557, type: 3}

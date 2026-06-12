@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 179f98de9f307824aaabfb066e9c69a5
+timeCreated: 1495163799
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Weapons/SK_Wep_ShotGun_01.prefab
+  uploadId: 794558

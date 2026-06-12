@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 63402f7d51a307e49ba8ad8e2a872641
+timeCreated: 1495163682
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 34497
+  packageName: Simple Military - Cartoon War
+  packageVersion: 1.3.8
+  assetPath: Assets/SimpleMilitary/Optimized/Prefabs/Vehicles/SK_Veh_Truck_Fuel_01.prefab
+  uploadId: 794558

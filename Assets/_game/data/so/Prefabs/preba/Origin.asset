@@ -1,0 +1,133 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5ad8e657ea563d841badd1eda06cd799, type: 3}
+  m_Name: Origin
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.GamePrefabRegistry
+  dlcId: 0
+  dlcName: 0
+  displayName: origin
+  jsonExportPath: D:/Unity/TestGame/Assets/_game/data/json/prefab/Registry_origin.json
+  items:
+  - MainKey: 1
+    VariantKey: 0
+    Name: Road_E
+    Category: 0
+    Usage: 0
+    Prefab: {fileID: 8063682502518335741, guid: 11260831155d36d47a02b2ce8e454377, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0.1, z: 0}
+    BuildableOn: 1
+    RoadMask: 2
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 2
+    VariantKey: 0
+    Name: Road_EW
+    Category: 0
+    Usage: 0
+    Prefab: {fileID: 8799440274343547266, guid: 481b70de499510243945fb102c9baea0, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0.1, z: 0}
+    BuildableOn: 1
+    RoadMask: 10
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 3
+    VariantKey: 0
+    Name: 
+    Category: 0
+    Usage: 0
+    Prefab: {fileID: 0}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 0
+    VariantKey: 0
+    Name: 
+    Category: 1
+    Usage: 0
+    Prefab: {fileID: 0}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 10000
+    VariantKey: 0
+    Name: 
+    Category: 99
+    Usage: 1
+    Prefab: {fileID: 7324531294256472883, guid: 827d9ee7012434144b5cb59c01e5a971, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 10001
+    VariantKey: 0
+    Name: 
+    Category: 99
+    Usage: 1
+    Prefab: {fileID: 7468476946143455334, guid: a9d2b3a7d98b8ad4897fc0552e011a48, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 10002
+    VariantKey: 0
+    Name: 
+    Category: 99
+    Usage: 1
+    Prefab: {fileID: 3128638269541699198, guid: 40ea3e0f4b0c45746a4e8cd828a2d650, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 2
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  NeedMaps: []
+  Entrances: []
