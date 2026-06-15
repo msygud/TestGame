@@ -1,13 +1,16 @@
 # 프로젝트 컨텍스트
 
 ## 기술 스택
-- Unity 6 + URP
-- ECS / DOTS (Entities 1.x)
-- 솔로 개발
+- Unity 6 + URP 17.3 (Universal Render Pipeline)
+- ECS / DOTS — `com.unity.entities` 1.4.5, `com.unity.entities.graphics` 1.4.19
+- `com.unity.physics` 1.4.6, `com.unity.ai.navigation` 2.0.10
+- `com.unity.inputsystem` 1.18.0, `com.unity.addressables` 2.8.1
+- `com.unity.visualeffectgraph` 17.3.0
+- 솔로 개발 / 네임스페이스: `CitySim`
 
 ## 게임 개요
 도시 건설 메커니즘과 실시간 전략 전투를 결합한 전략 게임.
-시민 시뮬레이션이 군사 효율성으로 직접 연결되는 구조.
+시민 시뮬레이션(욕구·직업·물류)이 군사 효율성으로 직접 연결되는 구조.
 
 ---
 
@@ -22,23 +25,322 @@
 - `PROGRESS.md`의 해당 섹션을 갱신할 것: 완료한 것, 미결정 사항, 다음 단계.
 
 ## 작업 범위
-- `Assets/Scripts/` 하위만 수정.
+- **`Assets/_game/scripts/`** 하위만 수정. (`Assets/Scripts/`가 아님)
 - `Library/`, `Temp/`, `obj/`, `Logs/` 는 절대 건드리지 말 것.
+- 셰이더: `Assets/_game/Shader_Graph/`, `Assets/_game/Weather/`
+- 컴퓨트: `MinimapCompute.compute`, `SnowAccumulation.compute`
+
+---
+
+# 디렉토리 구조
+
+```
+Assets/_game/scripts/
+├── Editor/                      # Unity Editor 전용 (UNITY_EDITOR 가드)
+│   ├── MapEditor/               # MapEditorWindow — 지형/자원 레이어 편집
+│   ├── PrefabRegister/          # GamePrefabRegistryEditor, PrefabRegistryWindow
+│   ├── AddressableGroupUtility.cs
+│   ├── LogisticsTestBootstrap.cs
+│   ├── ProductionTestBootstrap.cs
+│   ├── StampTestBootstrap.cs
+│   ├── MapBoundaryGizmo.cs
+│   └── VariantSelectionWindow.cs
+│
+├── RunTime/
+│   ├── Authoring/               # Baker 전용 MonoBehaviour
+│   │   ├── BuildingAuthoring.cs
+│   │   ├── GameClockAuthoring.cs
+│   │   ├── GamePrefabRegistryAuthoring.cs
+│   │   ├── NeedMappingAuthoring.cs
+│   │   └── TeamStartPoint.cs
+│   │
+│   ├── Components/              # IComponentData / IBufferElementData 정의
+│   │   ├── BuildingOccupancy.cs   — 건물 정원·예약, 건물 분류 태그
+│   │   ├── CitizenComponents.cs   — 시민 엔티티 전체 골격
+│   │   ├── GameClock.cs           — 게임 시간 싱글톤
+│   │   ├── GridLayers.cs          — 5종 레이어 싱글톤 + 셀 구조체
+│   │   ├── GridMap.cs             — 정적 건물 점유 싱글톤
+│   │   ├── LogisticsComponents.cs — Commodity, StockEntry, WarehouseTag
+│   │   ├── LookupComponents.cs    — PrefabLookup, NeedLookup 조회 구조
+│   │   ├── MapLoadComponents.cs   — MapLoadState, SpawnRequest 변형들
+│   │   ├── PrefabLookup.cs        — (MainKey,VariantKey)→Entity 싱글톤
+│   │   ├── ProductionComponents.cs — RecipeDef, RecipeDefs, ProductionJob
+│   │   ├── RoadComponents.cs      — Road, RoadCell, PlaceRoadCommand 등
+│   │   ├── SpawnComponents.cs     — SpawnRequest, BuildingFootprint, BuildingEntrance
+│   │   ├── StampComponents.cs     — StampLayers, SupplierRef, StampDirtyEvent
+│   │   └── TeamData.cs
+│   │
+│   ├── Registry/
+│   │   ├── GamePrefabRegistry.cs  — SO: RegistryItem, PrefabCategory, MainKeyRange
+│   │   └── RoadPrefabRegistry.cs
+│   │
+│   ├── Services/
+│   │   ├── DlcBootstrap.cs / DlcOwnershipService.cs
+│   │   ├── FactionBaseConfig.cs
+│   │   ├── LookupHelper.cs
+│   │   └── SkirmishLobby.cs       — 플레이어 슬롯 모델 (최대 8)
+│   │
+│   └── Systems/                 # ISystem (partial struct) 전용
+│       ├── AiCityGrowthSystem.cs  — 자율 도시 확장 AI
+│       ├── BlockOps.cs            — 구획 연산
+│       ├── BuildingPlacement.cs   — 건물 배치 시스템
+│       ├── CellTypeSystem.cs
+│       ├── CitizenAssignment.cs   — 집·직장 배정
+│       ├── CitizenMovementSystem.cs
+│       ├── CitizenSpawn.cs
+│       ├── CivilianBFS.cs         — 도로망 BFS (시민 경로)
+│       ├── ConditionUpdateSystem.cs
+│       ├── EntranceOps.cs         — 건물 입구 계산 유틸
+│       ├── FactionBaseSpawnSystem.cs
+│       ├── GameClockSystem.cs     — TotalSeconds 누적 + 경계 플래그
+│       ├── GridInitSystem.cs      — GridLayers/GridMap 생성·해제
+│       ├── HungerSystem.cs
+│       ├── LayerPainters.cs
+│       ├── LogisticsPullSystem.cs — 재고 pull (par-level 유지)
+│       ├── LogisticsPushSystem.cs — 재고 push (창고 이동)
+│       ├── LookupBuildSystem.cs
+│       ├── MapLoadSystem.cs / MapLoaderSystem.cs
+│       ├── NeedDecisionSystem.cs
+│       ├── PrefabLookupBuildSystem.cs
+│       ├── ProductionSystem.cs    — 레시피 기반 생산 사이클
+│       ├── RoadBuildController.cs / RoadBuildPreview.cs / RoadKeyBuild.cs
+│       ├── RoadSystem.cs          — 도로 배치·철거·비트마스크 갱신
+│       ├── ServiceSearchSystem.cs — stamp BFS + 욕구 공급자 매칭
+│       ├── SpawnSystem.cs         — SpawnRequest → 실 엔티티 생성
+│       └── StampRebuildSystem.cs  — dirty 플레이어 stamp 재BFS
+│
+├── Shared/                      # Editor + Runtime 공유 (순수 데이터/열거형)
+│   ├── DlcAddressConfig.cs / DlcSubSceneManifest.cs
+│   ├── FactionConfig.cs
+│   ├── MapData.cs / MapMeta.cs
+│   ├── NeedType.cs              — NeedType(ulong flags), NeedTypeOps
+│   ├── RoadDirection.cs         — RoadDir(4bit), RoadDirOps
+│   └── VariantSettings.cs
+│
+├── Unit/
+│   ├── auth/                    — 유닛 Baker (CombatWeaponAuthoring 등)
+│   ├── Components/              — UnitMovementComponents
+│   ├── System/                  — 전투·이동·렌더러 시스템
+│   └── Tests/                   — UnitPathfindingTests
+│
+├── camctrl/
+│   └── CamCtrl.cs
+│
+└── test/                        (현재 비어 있음)
+```
+
+---
+
+# 핵심 데이터 모델
+
+## 그리드 레이어 (`GridLayers` 싱글톤)
+`GridInitSystem`이 `OnCreate`에서 할당, `OnDestroy`에서 해제.
+
+| 레이어 | 타입 | 목적 | 변경 주기 |
+|---|---|---|---|
+| `TerrainLayer` | `NativeHashMap<int2, TerrainCell>` | 지형 타입·높이 | 맵 로드 시 고정 |
+| `ResourceLayer` | `NativeHashMap<int2, ResourceCell>` | 채취 자원 | 채취 시 |
+| `OccupancyLayer` | `NativeHashMap<int2, OccupancyCell>` | 건설 가능 여부 | 배치·철거 시 |
+| `RoadLayer` | `NativeHashMap<int2, RoadCell>` | BFS용 도로망 | 도로 배치·철거 시 |
+| `TerritoryLayer` | `NativeHashMap<int2, int>` | 플레이어 영역(LocalId) | 전투·점령 시 |
+| `BlockLayer` | `NativeHashMap<int2, BlockCell>` | 저해상도 구획 메타 | 구획 등록 시 |
+
+`GridMap` (`BuildingCells: NativeHashMap<int2, Entity>`) — 정적 건물 점유. `GridLayers`와 별개.
+
+## Stamp 인프라 (`StampLayers` 싱글톤)
+- 슬롯 0~7 (`StampLayers.MaxPlayers = 8`) = LocalId별 독립 `NativeParallelMultiHashMap<int2, SupplierRef>`.
+- 중첩 네이티브 컨테이너 금지 우회: 슬롯을 `_0.._7` 개별 필드로 펼치고 인덱서로 접근.
+- `DirtyMask` (byte 비트) → `StampDirtyEvent` 수집 → `StampRebuildSystem` 라운드로빈 재BFS.
+- 무효화 회피: 낡은 stamp를 패치하지 않고 `Clear()` 후 전체 재BFS.
+- `StampKind`: `Supplier`(욕구 공급자), `Warehouse`(물류 창고).
+
+## GameClock 싱글톤
+- 진실의 원천: `TotalSeconds (double)` 하나. 시/일/주/월은 모두 파생.
+- `GameClockSystem`이 경계 플래그(`HourChanged`, `DayChanged`, …) 한 곳에서 계산 → 다른 시스템이 중복 계산 불필요.
+- 기본값: `SecondsPerDay = 1200f` (현실 20분 = 게임 하루).
+- `StampRebuildSystem` 등 저빈도 시스템은 `HourChanged` 게이트로 호출 횟수 제한.
+
+## 물류 3티어
+```
+원재료(Raw)  →  중간재(Intermediate)  →  완성품(Final)
+   Grain              Flour                  Meal
+```
+- `StockEntry` (`DynamicBuffer<StockEntry>`): 품목·현재량·용량·역할(`Input/Output/Store/LocalFinal`).
+- 임계(`Reorder/Target/Discharge`)는 `Capacity × Pct/100` 정수 나눗셈 — 결정적, float artifact 없음.
+- `LogisticsPullSystem`: 입력 재고가 Reorder 이하 → Target까지 pull.
+- `LogisticsPushSystem`: 출력 재고가 Discharge 초과 → 창고로 push.
+- 완성품은 물류 이동 없음 (`StockRole.LocalFinal`), 생산 입력 불가.
+
+## 생산 시스템
+- `RecipeDefs.Get(Commodity output)` — Burst-safe 정적 스위치.
+- `ProductionJob`: `Progress < 0` = 대기, `≥ 0` = 진행, `BaseDuration` 도달 시 완료.
+- 출력 포화 시 `Progress`를 `BaseDuration`에 클램프(공간 생길 때 완료).
+- `ProductionSystem`은 메인스레드: 버퍼 alias 회피 + 저빈도.
+
+## 프리팹 레지스트리
+- `GamePrefabRegistry` (ScriptableObject, DLC 1개당 1 SO):
+  - `items[]: RegistryItem` — `(MainKey, VariantKey)` → 프리팹.
+  - `Entrances[]` — Building MainKey → 입구 정의.
+  - `NeedMaps[]` — NeedMask → MainKey.
+- `MainKeyRange` 구역: Road(1~999), Building(1000~4999), Environment(5000~6999), CombatUnit(7000~8999), Projectile(9000~9499), Effect(9500~9999).
+- 도로: `VariantKey = RoadDir` 비트마스크(1~15).
+- `NeedType : ulong`은 Unity 직렬화 미지원 → `ulong ReliefRaw` 백킹 필드 + `NeedType Relief` 프로퍼티.
+
+## 시민 컴포넌트 설계
+| 분류 | 컴포넌트 | 특징 |
+|---|---|---|
+| 핫 | `CitizenConditions`, `Hunger`, `CitizenNeeds`, `CitizenState` | 매 틱 변경 |
+| 콜드 | `CitizenAttributes`, `JobData` | 불변 또는 희소 변경 |
+| 소속 | `CitizenResidence` (집·직장) | 잘 안 바뀜 |
+| 동적 | `CitizenOwner` (SharedComponent, LocalId) | 청크 분리 → 플레이어별 일괄 처리 |
+
+- 욕구: 개별 `IComponentData` 모델. 해소 = Level 감소 (구조 변경 0).
+- 건물은 거주자 명단 없음 — `BuildingOccupancy.Current` 카운트만 보유.
+- `UnassignedTag` → 미배정 시민만 쿼리 (매 프레임 전체 스캔 회피).
+
+## 멀티셀 도로 (N×N 정사각형)
+- `Road.Size`, `Road.FootprintOrigin`, `RoadCell.Size`, `RoadCell.FootprintOrigin` 추가.
+- 배치 시 N×N 전체 셀 등록 → 내부 방향 재계산 → 외곽 이웃 갱신.
+- 철거 시 `FootprintOrigin + Size`로 전체 footprint 제거.
+- 시각 메시 스케일링은 미구현 (❓ 오픈 이슈).
 
 ---
 
 # 코딩 원칙
 
-- **Idiomatic ECS 우선.** GameObject 하이브리드 접근은 지양.
-- **성능 우선 아키텍처**: Burst, Jobs, 캐시 효율, GPU 파이프라인을 항상 염두.
-- **명확한 관심사 분리**: 시스템 간 책임을 깨끗하게 나눌 것.
+## 일반
+- **Idiomatic ECS 우선.** GameObject 하이브리드 접근 지양.
+- **성능 우선**: Burst, Jobs, 캐시 효율, GPU 파이프라인 항상 염두.
+- **명확한 관심사 분리**: helper = 사실(계산), system = 결정(로직).
 - 수학적으로 우아하고 구조적으로 깔끔한 해법을 ad-hoc 방식보다 선호.
 
 ## ECS 세부 관례 (확립된 패턴)
-- `state.Dependency` 할당은 선택이 아닌 필수.
-- 청크 마이그레이션을 피하려면 `IEnableableComponent` 사용 (구조적 변경 대신 토글).
-- ECB `ParallelWriter` sort key는 버퍼 슬롯이 아니라 정렬용 태그.
-- 의도적 Write access 선언으로 시스템 간 의존성 강제 가능 (확립된 기법).
+- `state.Dependency` 할당은 선택이 아닌 **필수**.
+- 청크 마이그레이션을 피하려면 `IEnableableComponent` 사용 (구조 변경 대신 토글).
+  - 사례: `IncomingHitEvent`, `AttackerNotification`, `TargetNotification` 버퍼.
+- ECB `ParallelWriter` sort key는 버퍼 슬롯이 아니라 **정렬용 태그**.
+- 의도적 Write access 선언으로 시스템 간 의존성 강제 (확립된 기법).
 - ECS→UI 통신: `GameDataStore` + C# 이벤트 + `NativeQueue` 브리지.
 - "눈에만 안 보이게": `MaterialMeshInfo.Mesh` 조작 (비구조적, Burst 병렬).
 - 비균일 스케일: `PostTransformMatrix` (SDF 셰이더에서 X/Z 다를 때 UV 보정 필요).
+- 중첩 네이티브 컨테이너 금지 → 개별 필드 펼치기 + 인덱서 패턴 (예: `StampLayers._0.._7`).
+
+## 시스템 작성 템플릿
+```csharp
+[UpdateInGroup(typeof(SimulationSystemGroup))]
+[UpdateAfter(typeof(SomePrecedingSystem))]
+public partial struct MySystem : ISystem
+{
+    public void OnCreate(ref SystemState state)
+    {
+        state.RequireForUpdate<GameClock>();   // 필요한 싱글톤 가드
+    }
+
+    public void OnUpdate(ref SystemState state)
+    {
+        // 항상 state.Dependency 처리
+        var job = new MyJob { ... };
+        state.Dependency = job.Schedule(state.Dependency);
+    }
+}
+```
+
+## 싱글톤 수명주기 패턴 (`GridInitSystem`, `StampInitSystem` 등)
+```csharp
+public void OnCreate(ref SystemState state)
+{
+    if (SystemAPI.HasSingleton<MySingleton>()) return;
+    var s = new MySingleton { ... /* Allocator.Persistent */ };
+    var e = state.EntityManager.CreateEntity(typeof(MySingleton));
+    state.EntityManager.SetComponentData(e, s);
+}
+
+public void OnDestroy(ref SystemState state)
+{
+    if (!SystemAPI.HasSingleton<MySingleton>()) return;
+    var s = SystemAPI.GetSingleton<MySingleton>();
+    // s.SomeMap.Dispose();
+}
+```
+
+## 값 타입 싱글톤 수정
+구조체 싱글톤은 값 복사이므로 수정 후 반드시 다시 써야 함:
+```csharp
+var stamp = SystemAPI.GetSingleton<StampLayers>();
+stamp.MarkDirty(localId);
+SystemAPI.SetSingleton(stamp);   // 필수 — 안 하면 변경 소실
+```
+
+## 단발성 이벤트 패턴
+```csharp
+// 발행: 이벤트 엔티티 생성
+ecb.CreateEntity(); ecb.AddComponent(e, new StampDirtyEvent { OwnerLocalId = id });
+
+// 수집: 읽고 파괴
+foreach (var (evt, e) in SystemAPI.Query<RefRO<StampDirtyEvent>>().WithEntityAccess())
+{
+    // 처리
+    ecb.DestroyEntity(e);
+}
+```
+
+---
+
+# 확립된 아키텍처 결정
+
+## GPU 파이프라인
+- Burst 수집 잡 + 논-Burst 매니지드 GPU 호출 분리.
+- 매니지드 컴포넌트 싱글톤이 `GraphicsBuffer`/`ComputeShader` 참조 보유 (`SystemAPI.ManagedAPI` 접근).
+- `AsyncGPUReadback` 논-스톨 결과 → `RenderMeshIndirect`로 직접 파이핑.
+
+## 미니맵
+- 베이크된 지형 `RenderTexture` 베이스 + compute shader 동적 오버레이.
+- 주의: compute shader 전역 변수 초기화는 무시됨 → C#에서 전부 설정.
+- `.compute` 한글 주석 → `INVALID_UTF8_STRING` 유발 (영문 주석 사용).
+- `enableRandomWrite`는 `Create()` 전에 설정.
+
+## 날씨
+- 파티클당 엔티티 방식 폐기(성능 한계).
+- VFX Graph(비주얼) + ECS(`SnowAccumulationSystem`, 디포머, 젖은 바닥 셰이더 파라미터).
+
+## 렌더링
+- "눈에만" 투명: `MaterialMeshInfo.Mesh` 조작 (비구조적·Burst·수천 유닛 가능).
+- 엔진 생성 자식 렌더링 토글: 루트의 `LinkedEntityGroup` 순회.
+- 베이킹 패턴: Baker는 최소 변환, `PostBakingSystemGroup`에서 복합 조립.
+
+## 셰이더
+- URP 물: Gerstner 파도, depth texture 교차 해안 포말, Fresnel 반사, 코스틱.
+- URP 선택 마커: `sdRoundedBox` SDF, 비균일 스케일 UV 보정 (`PostTransformMatrix`).
+
+## 투사체 / 데미지
+- 3종: 호밍 / 저장 위치 직격 / 범위.
+- 명중/회피 판정 포함.
+
+## 저장 / 로드
+- 순차 `uint` 인스턴스 ID는 저장/로드 경계에서만 사용.
+- 로드 중 임시 `NativeHashMap<uint, Entity>` 구축.
+- JSON + GZip, 2패스 로드 시퀀스.
+
+## Input System
+- Action Asset 계층 구조.
+- 런타임 리바인딩: 전체 에셋 순회로 중복 감지.
+- Common Map 패턴 (항상 활성화된 공유 액션).
+
+## City Expansion AI
+- `NativeHashMap<int2, CellData>` 싱글톤 셀.
+- 팀 단위 `DynamicBuffer<BuildRequest/Response>`.
+- 불변식: 도로는 항상 닫힌 사각형 / 볼록 정점만 확장 후보 (사분면 압축) / `ClaimedTeam` = 영구 영토 / 유효 정점 쌍 없을 때 U자 폴백.
+
+---
+
+# 자주 발생하는 실수 방지
+
+| 상황 | 잘못된 접근 | 올바른 접근 |
+|---|---|---|
+| 구조체 싱글톤 수정 | 그냥 수정 후 무시 | `SetSingleton()` 호출 필수 |
+| `NeedType` 직렬화 | `NeedType` 필드 직접 사용 | `ulong ReliefRaw` + 프로퍼티 우회 |
+| 멀티셀 도로 철거 | 단일 셀만 제거 | `FootprintOrigin + Size` 전체 footprint 제거 |
+| 중첩 네이티브 컨테이너 | `NativeHashMap<int2, NativeList<...>>` | 필드 펼치기 + 인덱서 패턴 |
+| compute shader 한글 주석 | `// 한글` | 영문 주석 사용 |
+| `enableRandomWrite` 타이밍 | `Create()` 후 설정 | `Create()` 전에 설정 |
+| 시민 명단 보관 | 건물에 List<Entity> | `BuildingOccupancy.Current` 카운트만 |
