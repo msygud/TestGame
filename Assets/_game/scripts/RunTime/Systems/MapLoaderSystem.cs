@@ -139,7 +139,7 @@ namespace CitySim
             // Singles
             if (mapData.Singles != null)
                 foreach (var p in mapData.Singles)
-                    EmitSingleSpawn(ecb, p, cs);
+                    EmitSingleSpawn(ecb, p, cs, metaLookup);
 
             // Multis
             if (mapData.Multis != null)
@@ -160,12 +160,21 @@ namespace CitySim
 
         // ── 요청 발행 헬퍼 ────────────────────────────────────────
 
-        static void EmitSingleSpawn(EntityCommandBuffer ecb, SinglePlacement p, float cs)
+        static void EmitSingleSpawn(EntityCommandBuffer ecb, SinglePlacement p, float cs,
+            PrefabMetaLookup metaLookup)
         {
+            // Size > 1×1 항목은 footprint 중심으로 보정 (에디터와 동일한 계산)
+            float sizeX = 1f, sizeZ = 1f;
+            if (metaLookup.TryGetMeta(p.MainKey, p.VariantKey, out var meta))
+            {
+                sizeX = math.max(1, meta.Size.x);
+                sizeZ = math.max(1, meta.Size.y);
+            }
+
             var position = new float3(
-                p.CellX * cs + cs * 0.5f,
+                p.CellX * cs + sizeX * cs * 0.5f + p.OffsetX,
                 p.PositionY,
-                p.CellZ * cs + cs * 0.5f);
+                p.CellZ * cs + sizeZ * cs * 0.5f + p.OffsetZ);
 
             var e = ecb.CreateEntity();
             ecb.AddComponent(e, new SpawnRequest

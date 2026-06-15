@@ -15,6 +15,16 @@
 
 ---
 
+## 물류 운반자 비주얼 (Carrier Visual)
+- ✅ `LogisticsCarrierRequest` — 재고 이전 직후 LogisticsPullSystem이 발행 (창고셀→건물셀 + OwnerLocalId)
+- ✅ `CarrierPrefabSingleton` + `CarrierPrefabAuthoring` — SubScene에 운반자 프리팹 연결
+- ✅ `CarrierSpawnSystem` — CivilianBFS 경로 계산 후 운반자 엔티티 스폰 (비주얼 전용, 재고 무관)
+- ✅ `CarrierMoveSystem` — 도로 경로 선형 보간 이동 (Speed=3 셀/초), 목적지 도착 후 자동 소멸
+- ⬜ Unity 에디터 설정 필요: SubScene에 `CarrierPrefabAuthoring` 추가 + 운반자 프리팹(소형 큐브/구) 할당
+- ❓ LogisticsPushSystem도 운반자 비주얼 추가할지 여부 미결정
+
+---
+
 ## City-builder (그리드 기반)
 - ✅ `RoadDir` 4비트 비트마스크
 - ✅ `NativeHashMap<int2, Entity>` 싱글톤 `GridMap`

@@ -1,0 +1,76 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c5d4771df7719fb42a888e18ba552b2b, type: 3}
+  m_Name: Human
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.RoadPrefabRegistry
+  Entries:
+  - FactionId: 0
+    Dir: 2
+    MainKey: 1
+    Note: human
+  - FactionId: 0
+    Dir: 1
+    MainKey: 2
+    Note: human
+  - FactionId: 0
+    Dir: 4
+    MainKey: 3
+    Note: human
+  - FactionId: 0
+    Dir: 8
+    MainKey: 4
+    Note: human
+  - FactionId: 0
+    Dir: 3
+    MainKey: 5
+    Note: human
+  - FactionId: 0
+    Dir: 9
+    MainKey: 6
+    Note: human
+  - FactionId: 0
+    Dir: 6
+    MainKey: 7
+    Note: human
+  - FactionId: 0
+    Dir: 12
+    MainKey: 8
+    Note: human
+  - FactionId: 0
+    Dir: 10
+    MainKey: 9
+    Note: human
+  - FactionId: 0
+    Dir: 5
+    MainKey: 10
+    Note: human
+  - FactionId: 0
+    Dir: 11
+    MainKey: 11
+    Note: human
+  - FactionId: 0
+    Dir: 7
+    MainKey: 12
+    Note: human
+  - FactionId: 0
+    Dir: 13
+    MainKey: 13
+    Note: human
+  - FactionId: 0
+    Dir: 14
+    MainKey: 14
+    Note: human
+  - FactionId: 0
+    Dir: 255
+    MainKey: 15
+    Note: human
+  DefaultSize: 4
