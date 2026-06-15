@@ -169,7 +169,9 @@ Assets/_game/scripts/
 - 임계(`Reorder/Target/Discharge`)는 `Capacity × Pct/100` 정수 나눗셈 — 결정적, float artifact 없음.
 - `LogisticsPullSystem`: 입력 재고가 Reorder 이하 → Target까지 pull.
 - `LogisticsPushSystem`: 출력 재고가 Discharge 초과 → 창고로 push.
-- 완성품은 물류 이동 없음 (`StockRole.LocalFinal`), 생산 입력 불가.
+- 완성품은 물류 이동 없음 (`StockRole.LocalFinal`).
+  ※ 현재 stub 설계 제약: 완성품은 시민 직접 소비 전용이므로 생산 입력 불가.
+    레시피가 복잡해져 Final이 재료로 필요해지면 `DrawInput` 탐색 대상 확장 필요.
 
 ## 생산 시스템
 - `RecipeDefs.Get(Commodity output)` — Burst-safe 정적 스위치.
@@ -224,8 +226,9 @@ Assets/_game/scripts/
   별도 컴포넌트로 나눈다 — 청크 캐시 효율 + 쿼리 필터 단순화.
 
 ## Job / Burst 설계 원칙
-- **Job에서 `Complete()` 지양**: Job 내부에서 다른 Job을 `Complete()` 하지 않는다.
-  의존성은 `state.Dependency` 체인으로 표현하고, 메인스레드는 프레임 끝에서만 동기화.
+- **의존성 중심 병렬 설계**: 메인스레드에서 프레임 중간에 `JobHandle.Complete()`를
+  조기 호출하지 않는다. 시스템 간 실행 순서는 `state.Dependency` 체인과
+  `[UpdateAfter/Before]` 어트리뷰트로 표현하고, 동기화는 프레임 끝에서만 일어난다.
 - **Burst 적극 활용**: 수치 연산이 있는 Job은 `[BurstCompile]` 기본 적용. 관리형
   타입(string, List, class)이 섞이는 경우에만 Burst 제외 후 별도 Job으로 분리.
 - **Job 설계 단위**: 하나의 Job이 하나의 데이터 변환만 담당하도록 좁게 설계한다.
@@ -246,8 +249,10 @@ Assets/_game/scripts/
   구조 변경이 필요하면 ECB를 사용해 프레임 끝에 일괄 적용.
 - **참조로 접근한 엔티티 값 변경 회피**: Job 안에서 `ComponentLookup`·`BufferLookup`
   등 참조(랜덤 액세스)로 얻은 엔티티의 데이터를 쓰는 행위는 alias 위험과 Job 스케줄링
-  제약을 유발한다. 가능하면 읽기(`ReadOnly`)만 하고, 쓰기가 필요하면 결과를 별도
-  NativeArray/NativeQueue에 모아 후속 Job 또는 메인스레드에서 적용한다.
+  제약을 유발한다. **대량 엔티티를 주기적으로 처리하는 병렬 Job**에서는 가능하면
+  읽기(`ReadOnly`)만 하고, 쓰기가 필요하면 결과를 별도 NativeArray/NativeQueue에
+  모아 후속 Job 또는 메인스레드에서 적용한다.
+  (소수 엔티티 갱신이나 비주기 이벤트는 ECB 단일 패스로 충분.)
 
 ## ECS 세부 관례 (확립된 패턴)
 - `state.Dependency` 할당은 선택이 아닌 **필수**.
@@ -380,6 +385,6 @@ foreach (var (evt, e) in SystemAPI.Query<RefRO<StampDirtyEvent>>().WithEntityAcc
 | `enableRandomWrite` 타이밍 | `Create()` 후 설정 | `Create()` 전에 설정 |
 | 시민 명단 보관 | 건물에 List<Entity> | `BuildingOccupancy.Current` 카운트만 |
 | 핫패스에서 구조 변경 | 순회 중 `AddComponent` 직접 호출 | ECB로 모아 프레임 끝 일괄 적용 |
-| Job 내부 강제 동기화 | Job 안에서 `Complete()` 호출 | `state.Dependency` 체인으로 연결 |
+| 조기 동기화 | 프레임 중간 메인스레드에서 `Complete()` 강제 | `state.Dependency` 체인 + `[UpdateAfter]`로 순서 선언 |
 | 시민·물류 즉각 재계산 | 매 틱 전체 재계산 + 메인스레드 동기화 | `HourChanged` 게이트 + 라운드로빈 분산 |
-| 랜덤 액세스 쓰기 | Job 내 `ComponentLookup` 쓰기 | 결과를 NativeArray에 수집 → 후속 패스에서 적용 |
+| 랜덤 액세스 쓰기 (대량 병렬) | 병렬 Job 내 `ComponentLookup` 직접 쓰기 | 결과를 NativeArray에 수집 → 후속 패스에서 적용 |
