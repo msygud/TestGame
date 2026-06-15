@@ -132,9 +132,9 @@ namespace CitySim.MapEditor
 
             DrawDlcHeader();
             EditorGUILayout.Space(5);
-            DrawValidation();
-            EditorGUILayout.Space(5);
             DrawToolbar();
+            EditorGUILayout.Space(5);
+            DrawValidation();
             EditorGUILayout.Space(10);
             DrawItemGroups();
 
