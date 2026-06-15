@@ -45,8 +45,25 @@ namespace CitySim
         [Tooltip("FactionDefinition의 FactionId와 반드시 일치해야 한다.")]
         public int FactionId;
 
+        [Tooltip("초기 베이스캠프 영역 크기 (N×N 셀). 스타트포인트를 좌하단 기준으로 N×N 외곽 도로를 생성한다.")]
+        [Min(3)]
+        public int BaseCampSize = 8;
+
         [Tooltip("게임 시작 시 팀 스타트포인트 기준으로 배치될 건물·유닛 목록.")]
         public List<BaseSpawnEntry> BaseEntries = new();
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  BakedFactionMeta  (IBufferElementData)
+    //
+    //  팩션당 1항목. 베이스캠프 크기 등 항목 단위가 아닌 팩션 단위 메타.
+    //  BakedFactionBase와 동일 엔티티에 두 버퍼로 공존한다.
+    // ══════════════════════════════════════════════════════════════
+    [InternalBufferCapacity(8)]
+    public struct BakedFactionMeta : IBufferElementData
+    {
+        public int FactionId;
+        public int BaseCampSize;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -90,12 +107,19 @@ namespace CitySim
         {
             public override void Bake(FactionBaseAuthoring a)
             {
-                var e   = GetEntity(TransformUsageFlags.None);
-                var buf = AddBuffer<BakedFactionBase>(e);
+                var e    = GetEntity(TransformUsageFlags.None);
+                var buf  = AddBuffer<BakedFactionBase>(e);
+                var meta = AddBuffer<BakedFactionMeta>(e);
 
                 foreach (var def in a.Definitions)
                 {
                     if (def == null) continue;
+
+                    meta.Add(new BakedFactionMeta
+                    {
+                        FactionId    = def.FactionId,
+                        BaseCampSize = math.max(3, def.BaseCampSize),
+                    });
 
                     foreach (var entry in def.BaseEntries)
                     {
