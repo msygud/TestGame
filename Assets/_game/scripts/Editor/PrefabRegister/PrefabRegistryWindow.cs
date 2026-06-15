@@ -268,6 +268,28 @@ namespace CitySim.MapEditor
                         Debug.LogWarning($"[{reg.dlcName}] {issue.Message}");
             }
 
+            if (GUILayout.Button("Clean Entrances", GUILayout.Height(26), GUILayout.Width(120)))
+            {
+                serializedReg.ApplyModifiedProperties();
+                var buildingKeys = new HashSet<int>();
+                foreach (var item in reg.items)
+                    if (!item.IsDeleted && item.IsBuilding)
+                        buildingKeys.Add(item.MainKey);
+
+                int removed = reg.Entrances.RemoveAll(
+                    e => e.MainKey == 0 || !buildingKeys.Contains(e.MainKey));
+
+                if (removed > 0)
+                {
+                    EditorUtility.SetDirty(reg);
+                    Debug.Log($"[{reg.dlcName}] 고아 EntranceEntry {removed}개 제거 완료.");
+                }
+                else
+                    Debug.Log($"[{reg.dlcName}] 정리할 고아 Entrance 없음.");
+
+                validationDirty = true;
+            }
+
             if (GUILayout.Button("Export JSON", GUILayout.Height(26), GUILayout.Width(110)))
             {
                 serializedReg.ApplyModifiedProperties();
@@ -458,7 +480,11 @@ namespace CitySim.MapEditor
                     "Mark Deleted", "Cancel"))
                 {
                     Undo.RecordObject(reg, "Mark Deleted");
+                    int deletedMainKey = mainKeyProp.intValue;
                     reg.items[index].IsDeleted = true;
+                    // Building 삭제 시 고아 EntranceEntry도 함께 제거
+                    if (isBuilding)
+                        reg.Entrances.RemoveAll(e => e.MainKey == deletedMainKey);
                     EditorUtility.SetDirty(reg);
                 }
             }
@@ -575,79 +601,69 @@ namespace CitySim.MapEditor
         // ══════════════════════════════════════════════════════════
         void DrawEntranceEditor(GamePrefabRegistry reg, int mainKey)
         {
-            // ══════════════════════════════════════════════════════════
-            //  입구 편집 (Building MainKey 단위, 단일 입구 + 방향)
-            //
-            //  GamePrefabRegistry.Entrances에서 해당 MainKey 항목을 찾아
-            //  Offset(footprint 원점=좌하단 기준 셀) + Dir(입구 방향)을 편집한다.
-            //  단일 입구 규약: MainKey당 입구 1개.
-            // ══════════════════════════════════════════════════════════
-            void DrawEntranceEditor(GamePrefabRegistry reg, int mainKey)
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.LabelField("입구 (Entrance)", EditorStyles.miniBoldLabel);
+
+            if (mainKey == 0)
             {
-                var ent = reg.GetEntrance(mainKey);
-
-                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-                EditorGUILayout.LabelField("입구 (Entrance)", EditorStyles.miniBoldLabel);
-                EditorGUILayout.LabelField(
-                    "footprint 원점(좌하단) 기준 셀 + 바라보는 방향. 회전 0° 기준.",
-                    EditorStyles.miniLabel);
-
-                if (ent == null)
-                {
-                    // 입구 미정의 → 추가 버튼만
-                    if (GUILayout.Button("+ 입구 설정", GUILayout.Width(100)))
-                    {
-                        Undo.RecordObject(reg, "Add Entrance");
-                        reg.Entrances.Add(new EntranceEntry
-                        {
-                            MainKey = mainKey,
-                            Offset = Vector2Int.zero,
-                            Dir = RoadDir.S,
-                        });
-                        EditorUtility.SetDirty(reg);
-                    }
-                }
-                else
-                {
-                    // Offset 편집
-                    EditorGUI.BeginChangeCheck();
-                    var off = EditorGUILayout.Vector2IntField(
-                        new GUIContent("Offset (cell)"), ent.Offset);
-
-                    // Dir 편집 — 단일 비트 강제 (EnumPopup, Flags 아님)
-                    var dir = (RoadDir)EditorGUILayout.EnumPopup(
-                        new GUIContent("Dir", "입구가 바라보는 방향 (단일: N/E/S/W)"),
-                        ent.Dir);
-
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        Undo.RecordObject(reg, "Edit Entrance");
-                        ent.Offset = off;
-                        ent.Dir = dir;
-                        EditorUtility.SetDirty(reg);
-                    }
-
-                    // 방향이 단일 비트가 아니면 경고 (None이나 복합 선택 방지)
-                    if (RoadDirOps.PopCount(ent.Dir) != 1)
-                    {
-                        EditorGUILayout.HelpBox(
-                            "Dir은 N/E/S/W 중 하나여야 합니다.", MessageType.Error);
-                    }
-
-                    // 제거
-                    var prevBg = GUI.backgroundColor;
-                    GUI.backgroundColor = new Color(1f, 0.5f, 0.5f);
-                    if (GUILayout.Button("입구 제거", GUILayout.Width(100)))
-                    {
-                        Undo.RecordObject(reg, "Remove Entrance");
-                        reg.Entrances.Remove(ent);
-                        EditorUtility.SetDirty(reg);
-                    }
-                    GUI.backgroundColor = prevBg;
-                }
-
+                EditorGUILayout.HelpBox(
+                    "MainKey=0(null 키)에는 입구를 설정할 수 없습니다. MainKey를 먼저 지정하세요.",
+                    MessageType.Warning);
                 EditorGUILayout.EndVertical();
+                return;
             }
+
+            EditorGUILayout.LabelField(
+                "footprint 원점(좌하단) 기준 셀 + 바라보는 방향. 회전 0° 기준.",
+                EditorStyles.miniLabel);
+
+            var ent = reg.GetEntrance(mainKey);
+
+            if (ent == null)
+            {
+                if (GUILayout.Button("+ 입구 설정", GUILayout.Width(100)))
+                {
+                    Undo.RecordObject(reg, "Add Entrance");
+                    reg.Entrances.Add(new EntranceEntry
+                    {
+                        MainKey = mainKey,
+                        Offset  = Vector2Int.zero,
+                        Dir     = RoadDir.S,
+                    });
+                    EditorUtility.SetDirty(reg);
+                }
+            }
+            else
+            {
+                EditorGUI.BeginChangeCheck();
+                var off = EditorGUILayout.Vector2IntField(
+                    new GUIContent("Offset (cell)"), ent.Offset);
+                var dir = (RoadDir)EditorGUILayout.EnumPopup(
+                    new GUIContent("Dir", "입구가 바라보는 방향 (단일: N/E/S/W)"),
+                    ent.Dir);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    Undo.RecordObject(reg, "Edit Entrance");
+                    ent.Offset = off;
+                    ent.Dir    = dir;
+                    EditorUtility.SetDirty(reg);
+                }
+
+                if (RoadDirOps.PopCount(ent.Dir) != 1)
+                    EditorGUILayout.HelpBox("Dir은 N/E/S/W 중 하나여야 합니다.", MessageType.Error);
+
+                var prevBg = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(1f, 0.5f, 0.5f);
+                if (GUILayout.Button("입구 제거", GUILayout.Width(100)))
+                {
+                    Undo.RecordObject(reg, "Remove Entrance");
+                    reg.Entrances.Remove(ent);
+                    EditorUtility.SetDirty(reg);
+                }
+                GUI.backgroundColor = prevBg;
+            }
+
+            EditorGUILayout.EndVertical();
         }
 
         // ══════════════════════════════════════════════════════════
