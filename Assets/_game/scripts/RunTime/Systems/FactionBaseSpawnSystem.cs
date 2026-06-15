@@ -76,6 +76,14 @@ namespace CitySim
                 return;
             }
 
+            // ── BakedFactionMeta 버퍼 가져오기 ──────────────────────
+            DynamicBuffer<BakedFactionMeta> metaBuf = default;
+            foreach (var buf in SystemAPI.Query<DynamicBuffer<BakedFactionMeta>>())
+            {
+                metaBuf = buf;
+                break;
+            }
+
             // ── 팀 엔티티 순회 ────────────────────────────────────
             int requestCount = 0;
 
@@ -84,11 +92,10 @@ namespace CitySim
                          RefRO<TeamInfoData>,
                          RefRO<TeamStartPoint>>())
             {
-                int teamIndex = startPoint.ValueRO.TeamIndex;   // 포지션 번호 (FactionConfig 키)
-                int ownerLocalId = teamInfo.ValueRO.LocalID;     // 소유는 LocalId 단위
-                int2 originCell = startPoint.ValueRO.Cell;
+                int teamIndex    = startPoint.ValueRO.TeamIndex;
+                int ownerLocalId = teamInfo.ValueRO.LocalID;
+                int2 originCell  = startPoint.ValueRO.Cell;
 
-                // FactionConfig에서 FactionId 조회
                 if (!factionConfig.Slots.TryGetValue(teamIndex, out var slot))
                 {
                     Debug.LogWarning(
@@ -104,38 +111,48 @@ namespace CitySim
                     continue;
                 }
 
-                // User / AI 구분 → VariantProfile 조회 키
                 var who = teamInfo.ValueRO.IsPlayer()
                     ? SlotController.User
                     : SlotController.AI;
 
-                // 해당 팩션의 BakedFactionBase 항목 처리
+                // ── 베이스캠프 외곽 도로 발행 ─────────────────────────
+                int campSize = 8;
+                if (metaBuf.IsCreated)
+                {
+                    for (int m = 0; m < metaBuf.Length; m++)
+                    {
+                        if (metaBuf[m].FactionId == slot.FactionId)
+                        {
+                            campSize = metaBuf[m].BaseCampSize;
+                            break;
+                        }
+                    }
+                }
+
+                EmitPerimeterRoads(ref ecb, originCell, campSize, ownerLocalId, slot.FactionId);
+                requestCount += campSize * 4 - 4;
+
+                // ── 건물·유닛 배치 요청 발행 ──────────────────────────
                 for (int i = 0; i < bakedBuf.Length; i++)
                 {
                     var b = bakedBuf[i];
                     if (b.FactionId != slot.FactionId) continue;
 
-                    // VariantKey 결정
                     int vk = b.VariantKeyOverride > 0
-                        ? b.VariantKeyOverride               // 강제 고정
-                        : variantProfile.Resolve(b.MainKey, who); // 프로파일 해결
+                        ? b.VariantKeyOverride
+                        : variantProfile.Resolve(b.MainKey, who);
 
                     int2 cell = originCell + b.CellOffset;
 
-                    // PlaceBuildingRequest 발행
                     var reqEntity = ecb.CreateEntity();
                     ecb.AddComponent(reqEntity, new PlaceBuildingRequest
                     {
-                        MainKey    = b.MainKey,
-                        VariantKey = vk,
-                        Cell       = cell,
-                        RotationY  = b.RotationY,
-                        OwnerLocalId = ownerLocalId,
-                        FactionId  = slot.FactionId,   // 도로 분기용 팩션 전달
-                        // 베이스 건물도 입구-도로 정렬 검증 대상. 회전은 SO(RotationY)에
-                        // 디자이너가 맞춘 값을 그대로 쓰되, 그 회전이 실제로 도로에 닿는지
-                        // BuildingPlacementSystem이 검증한다(디자이너 실수·도로 미설치 방어).
-                        // 입구 정의가 없는 베이스 구조물은 EntranceOps가 제약 없이 통과시킨다.
+                        MainKey           = b.MainKey,
+                        VariantKey        = vk,
+                        Cell              = cell,
+                        RotationY         = b.RotationY,
+                        OwnerLocalId      = ownerLocalId,
+                        FactionId         = slot.FactionId,
                         RequireRoadAccess = true,
                     });
 
@@ -145,12 +162,37 @@ namespace CitySim
 
             Debug.Log(
                 $"[FactionBaseSpawnSystem] 완료. " +
-                $"PlaceBuildingRequest {requestCount}개 발행.");
+                $"커맨드 {requestCount}개 발행.");
 
             Finish(ref ecb, requestCount);
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
             state.Enabled = false;
+        }
+
+        // ── 베이스캠프 외곽 도로 발행 ─────────────────────────────
+        // origin = 좌하단 셀, size = N×N 한 변 셀 수
+        static void EmitPerimeterRoads(
+            ref EntityCommandBuffer ecb,
+            int2 origin, int size,
+            int ownerLocalId, int factionId)
+        {
+            for (int x = 0; x < size; x++)
+            for (int z = 0; z < size; z++)
+            {
+                if (x != 0 && x != size - 1 && z != 0 && z != size - 1)
+                    continue;
+
+                var e = ecb.CreateEntity();
+                ecb.AddComponent(e, new PlaceRoadCommand
+                {
+                    Cell         = origin + new int2(x, z),
+                    OwnerLocalId = ownerLocalId,
+                    LaneCount    = 2,
+                    FactionId    = factionId,
+                    Size         = 1,
+                });
+            }
         }
 
         // ── 완료 마커 생성 ────────────────────────────────────────

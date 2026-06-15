@@ -365,6 +365,16 @@ namespace CitySim
             // 입구는 Building MainKey에만 의미가 있음
             foreach (var ent in Entrances)
             {
+                if (ent.MainKey == MainKeyRange.NullKey)
+                {
+                    issues.Add(new ValidationIssue
+                    {
+                        Level   = ValidationLevel.Warning,
+                        Message = "Entrance에 MainKey=0(null 키) 항목이 있습니다. 제거하세요.",
+                    });
+                    continue;
+                }
+
                 RegistryItem building = null;
                 foreach (var item in items)
                 {
