@@ -255,6 +255,7 @@ namespace CitySim.MapEditor
             var reg = registries[selectedRegistryIdx];
             if (reg == null) return;
 
+            // ── 1행 ──────────────────────────────────────────────────
             EditorGUILayout.BeginHorizontal();
 
             if (GUILayout.Button("Refresh (Validate)", GUILayout.Height(26)))
@@ -268,7 +269,24 @@ namespace CitySim.MapEditor
                         Debug.LogWarning($"[{reg.dlcName}] {issue.Message}");
             }
 
-            if (GUILayout.Button("Clean Entrances", GUILayout.Height(26), GUILayout.Width(120)))
+            if (GUILayout.Button("Export JSON", GUILayout.Height(26), GUILayout.Width(110)))
+            {
+                serializedReg.ApplyModifiedProperties();
+                if (reg.ExportJson(out string err))
+                    Debug.Log($"[{reg.dlcName}] Exported: {reg.jsonExportPath}");
+                else
+                    Debug.LogError($"[{reg.dlcName}] Export failed: {err}");
+            }
+
+            showThumbs = GUILayout.Toggle(showThumbs, "Thumbs", "Button",
+                GUILayout.Width(60), GUILayout.Height(26));
+
+            EditorGUILayout.EndHorizontal();
+
+            // ── 2행 ──────────────────────────────────────────────────
+            EditorGUILayout.BeginHorizontal();
+
+            if (GUILayout.Button("Clean Entrances (고아 입구 정리)", GUILayout.Height(24)))
             {
                 serializedReg.ApplyModifiedProperties();
                 var buildingKeys = new HashSet<int>();
@@ -289,18 +307,6 @@ namespace CitySim.MapEditor
 
                 validationDirty = true;
             }
-
-            if (GUILayout.Button("Export JSON", GUILayout.Height(26), GUILayout.Width(110)))
-            {
-                serializedReg.ApplyModifiedProperties();
-                if (reg.ExportJson(out string err))
-                    Debug.Log($"[{reg.dlcName}] Exported: {reg.jsonExportPath}");
-                else
-                    Debug.LogError($"[{reg.dlcName}] Export failed: {err}");
-            }
-
-            showThumbs = GUILayout.Toggle(showThumbs, "Thumbs", "Button",
-                GUILayout.Width(60), GUILayout.Height(26));
 
             EditorGUILayout.EndHorizontal();
         }
