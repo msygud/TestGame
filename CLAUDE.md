@@ -169,9 +169,11 @@ Assets/_game/scripts/
 - 임계(`Reorder/Target/Discharge`)는 `Capacity × Pct/100` 정수 나눗셈 — 결정적, float artifact 없음.
 - `LogisticsPullSystem`: 입력 재고가 Reorder 이하 → Target까지 pull.
 - `LogisticsPushSystem`: 출력 재고가 Discharge 초과 → 창고로 push.
-- 완성품은 물류 이동 없음 (`StockRole.LocalFinal`).
-  ※ 현재 stub 설계 제약: 완성품은 시민 직접 소비 전용이므로 생산 입력 불가.
-    레시피가 복잡해져 Final이 재료로 필요해지면 `DrawInput` 탐색 대상 확장 필요.
+- 완성품은 물류 이동 없음 (`StockRole.LocalFinal`), **생산 입력 불가 (설계 원칙)**.
+  모든 레시피의 재료는 창고를 경유하는 Raw·Intermediate만 사용한다.
+  고품질 완성품이 필요하면 Final을 재활용하는 것이 아니라,
+  더 좋은/많은 Raw·Intermediate 조합으로 레시피를 설계한다.
+  (순환 의존 방지 + 물류망 단순화 — 영구 원칙)
 
 ## 생산 시스템
 - `RecipeDefs.Get(Commodity output)` — Burst-safe 정적 스위치.
