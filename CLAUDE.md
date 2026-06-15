@@ -214,6 +214,41 @@ Assets/_game/scripts/
 - **명확한 관심사 분리**: helper = 사실(계산), system = 결정(로직).
 - 수학적으로 우아하고 구조적으로 깔끔한 해법을 ad-hoc 방식보다 선호.
 
+## 컴포넌트 설계 원칙
+- **컴포넌트는 가볍게**: 하나의 컴포넌트에 모든 것을 담지 않는다. 작고 단일 책임인
+  컴포넌트 여러 개의 조합이 시스템과 쿼리의 재사용성을 높인다.
+- **읽기/쓰기 분리 설계**: 컴포넌트를 정의할 때 설계 범위 안에서 어느 시스템이 쓰고
+  어느 시스템이 읽는지를 먼저 파악한다. 쓰기 시스템과 읽기 시스템이 겹치지 않도록
+  컴포넌트를 분리하면 Job 병렬화와 의존성 선언이 자연스러워진다.
+- **핫/콜드 분리**: 매 틱 변하는 데이터(핫)와 거의 변하지 않는 데이터(콜드)를
+  별도 컴포넌트로 나눈다 — 청크 캐시 효율 + 쿼리 필터 단순화.
+
+## Job / Burst 설계 원칙
+- **Job에서 `Complete()` 지양**: Job 내부에서 다른 Job을 `Complete()` 하지 않는다.
+  의존성은 `state.Dependency` 체인으로 표현하고, 메인스레드는 프레임 끝에서만 동기화.
+- **Burst 적극 활용**: 수치 연산이 있는 Job은 `[BurstCompile]` 기본 적용. 관리형
+  타입(string, List, class)이 섞이는 경우에만 Burst 제외 후 별도 Job으로 분리.
+- **Job 설계 단위**: 하나의 Job이 하나의 데이터 변환만 담당하도록 좁게 설계한다.
+  복합 처리가 필요하면 Job 체인(Schedule → Schedule)으로 연결.
+
+## 시민·물류 시스템 접근 방식
+- **즉각적 갱신 불필요**: 시민 욕구·물류 재고는 매 틱 정밀 동기화 대상이 아니다.
+  게임 시간 경계(`HourChanged` 등) 또는 주기적 게이트로 처리 빈도를 제한한다.
+- **통계적·점진적 접근**: 개별 시민/건물의 상태는 틱마다 소량씩 변화하는 모델.
+  한 프레임에 전체를 재계산하지 않고, 분산(라운드로빈·dirty 플래그)시켜 처리한다.
+- **결과 지연 허용**: 시민 이동 완료, 재고 보충 등은 1~수 틱 후 반영되어도 무방.
+  즉각 반영을 위한 `Complete()` 강제나 메인스레드 동기화는 금지.
+
+## 대량 데이터 핫패스 구조 변경 금지
+- **핫패스에서 구조 변경 없음**: 대량 엔티티를 주기적으로 순회하는 시스템(시민 이동,
+  물류 pull/push, stamp BFS 등)에서는 `AddComponent` / `RemoveComponent` /
+  `CreateEntity` / `DestroyEntity` 같은 구조 변경을 직접 호출하지 않는다.
+  구조 변경이 필요하면 ECB를 사용해 프레임 끝에 일괄 적용.
+- **참조로 접근한 엔티티 값 변경 회피**: Job 안에서 `ComponentLookup`·`BufferLookup`
+  등 참조(랜덤 액세스)로 얻은 엔티티의 데이터를 쓰는 행위는 alias 위험과 Job 스케줄링
+  제약을 유발한다. 가능하면 읽기(`ReadOnly`)만 하고, 쓰기가 필요하면 결과를 별도
+  NativeArray/NativeQueue에 모아 후속 Job 또는 메인스레드에서 적용한다.
+
 ## ECS 세부 관례 (확립된 패턴)
 - `state.Dependency` 할당은 선택이 아닌 **필수**.
 - 청크 마이그레이션을 피하려면 `IEnableableComponent` 사용 (구조 변경 대신 토글).
@@ -344,3 +379,7 @@ foreach (var (evt, e) in SystemAPI.Query<RefRO<StampDirtyEvent>>().WithEntityAcc
 | compute shader 한글 주석 | `// 한글` | 영문 주석 사용 |
 | `enableRandomWrite` 타이밍 | `Create()` 후 설정 | `Create()` 전에 설정 |
 | 시민 명단 보관 | 건물에 List<Entity> | `BuildingOccupancy.Current` 카운트만 |
+| 핫패스에서 구조 변경 | 순회 중 `AddComponent` 직접 호출 | ECB로 모아 프레임 끝 일괄 적용 |
+| Job 내부 강제 동기화 | Job 안에서 `Complete()` 호출 | `state.Dependency` 체인으로 연결 |
+| 시민·물류 즉각 재계산 | 매 틱 전체 재계산 + 메인스레드 동기화 | `HourChanged` 게이트 + 라운드로빈 분산 |
+| 랜덤 액세스 쓰기 | Job 내 `ComponentLookup` 쓰기 | 결과를 NativeArray에 수집 → 후속 패스에서 적용 |
