@@ -45,6 +45,11 @@ namespace CitySim.MapEditor
         int selectedVariantKey = 0;
         float instanceScale = 1f;
 
+        // ── 랜덤 배치 옵션 ─────────────────────────────────────────
+        bool  randomRotation   = false;
+        bool  randomOffset     = false;
+        float randomOffsetRange = 0.3f;  // 셀 크기 비율 (0~0.5)
+
         // ── 스타트 포인트 편집 상태 ────────────────────────────────
         bool isPlacingStartPoint = false;
         int editingTeamIndex = -1;
@@ -82,12 +87,17 @@ namespace CitySim.MapEditor
         Dictionary<int, bool> dlcFolds = new();
 
         // ── 배치 점유 캐시 (에디터 전용, 저장 안 함) ───────────────
-        enum PlacementKind { Single, Multi, Road }
-        Dictionary<Vector2Int, PlacementKind> _occupancy = new();
+        // Other 카테고리는 _otherCells로 별도 추적.
+        // 나머지(Single non-Other, Road)는 _occupancy로 추적.
+        // 비-Other 항목은 _otherCells를 무시하고 배치 가능.
+        enum PlacementKind { Single, Road, Other }
+        Dictionary<Vector2Int, PlacementKind> _occupancy  = new();
+        HashSet<Vector2Int>                   _otherCells = new();
 
         // ── 에디터 씬 배치 GameObjects ────────────────────────────
         //  셀 원점 → 인스턴스화된 GO. 삭제 / 로드 시 함께 관리.
-        Dictionary<Vector2Int, GameObject> _placedObjects = new();
+        Dictionary<Vector2Int, GameObject> _placedObjects      = new();
+        Dictionary<Vector2Int, GameObject> _otherPlacedObjects = new();
 
         // ── 배치 프리뷰 GO ────────────────────────────────────────
         GameObject _previewGo;
@@ -607,6 +617,8 @@ namespace CitySim.MapEditor
             if (!foldInstance) return;
 
             EditorGUI.indentLevel++;
+
+            // 스케일
             EditorGUILayout.BeginHorizontal();
             instanceScale = EditorGUILayout.FloatField("Scale (uniform)", instanceScale);
             if (GUILayout.Button("Reset", GUILayout.Width(60))) instanceScale = 1f;
@@ -615,6 +627,25 @@ namespace CitySim.MapEditor
             EditorGUILayout.LabelField(
                 "Shortcuts in Scene: + / - / 0 (with mouse over Scene View)",
                 EditorStyles.miniLabel);
+
+            EditorGUILayout.Space(4);
+
+            // 랜덤 회전
+            randomRotation = EditorGUILayout.Toggle(
+                new GUIContent("Random Rotation", "배치 시 Y축 0~360° 완전 무작위 회전"),
+                randomRotation);
+
+            // 랜덤 XZ 오프셋
+            EditorGUILayout.BeginHorizontal();
+            randomOffset = EditorGUILayout.Toggle(
+                new GUIContent("Random XZ Offset", "배치 시 셀 중심에서 무작위 XZ 이동"),
+                randomOffset);
+            EditorGUI.BeginDisabledGroup(!randomOffset);
+            randomOffsetRange = EditorGUILayout.Slider(randomOffsetRange, 0f, 0.5f);
+            EditorGUILayout.LabelField("× CellSize", EditorStyles.miniLabel, GUILayout.Width(64));
+            EditorGUI.EndDisabledGroup();
+            EditorGUILayout.EndHorizontal();
+
             EditorGUI.indentLevel--;
         }
 
@@ -739,25 +770,7 @@ namespace CitySim.MapEditor
                 categoryFolds[key] = open;
                 if (!open) continue;
 
-                var singles = new List<(RegistryItem, GamePrefabRegistry)>();
-                var multis = new List<(RegistryItem, GamePrefabRegistry)>();
-                foreach (var pair in kv.Value)
-                {
-                    // Environment(셀 내 랜덤 다중)만 Multi, 나머지는 Single 취급
-                    if (pair.item.IsMulti) multis.Add(pair);
-                    else                   singles.Add(pair);
-                }
-
-                if (singles.Count > 0)
-                {
-                    EditorGUILayout.LabelField("  Single", EditorStyles.miniBoldLabel);
-                    DrawPrefabRow(singles);
-                }
-                if (multis.Count > 0)
-                {
-                    EditorGUILayout.LabelField("  Multi", EditorStyles.miniBoldLabel);
-                    DrawPrefabRow(multis);
-                }
+                DrawPrefabRow(kv.Value);
             }
         }
 
@@ -1511,25 +1524,6 @@ namespace CitySim.MapEditor
                         break;
                     }
                 }
-                if (!changed)
-                {
-                    foreach (var p in currentMap.Multis)
-                    {
-                        if (p.CellX == cell.Value.x && p.CellZ == cell.Value.y)
-                        {
-                            p.Height += delta;
-                            var origin = new Vector2Int(p.CellX, p.CellZ);
-                            if (_placedObjects.TryGetValue(origin, out var go) && go != null)
-                            {
-                                var t = go.transform;
-                                t.position = new Vector3(t.position.x, p.Height, t.position.z);
-                            }
-                            changed = true;
-                            break;
-                        }
-                    }
-                }
-
                 if (changed) { sceneView.Repaint(); Repaint(); }
                 e.Use();
                 return;
@@ -1560,7 +1554,8 @@ namespace CitySim.MapEditor
                     TryPlace(cell.Value);
                 }
                 else
-                    _selectedCell = _occupancy.ContainsKey(cell.Value) ? cell.Value : (Vector2Int?)null;
+                    _selectedCell = (_occupancy.ContainsKey(cell.Value) || _otherCells.Contains(cell.Value))
+                        ? cell.Value : (Vector2Int?)null;
 
                 e.Use();
                 sceneView.Repaint();
@@ -1587,24 +1582,42 @@ namespace CitySim.MapEditor
                 _occupancy[cell] = PlacementKind.Road;
                 _placedObjects[cell] = InstantiateRoad(p, item, cs);
             }
-            else if (item.IsMulti)
+            else if (item.Category == PrefabCategory.Other)
             {
-                if (_occupancy.ContainsKey(cell)) return;
-                var p = new MultiPlacement
+                // Other 항목: _otherCells에서만 충돌 확인 (비-Other 위에 배치 가능)
+                var size = ValidSize(item);
+                for (int dx = 0; dx < size.x; dx++)
+                    for (int dz = 0; dz < size.y; dz++)
+                    {
+                        var c = new Vector2Int(cell.x + dx, cell.y + dz);
+                        if (c.x >= s.Width || c.y >= s.Height) return;
+                        if (_otherCells.Contains(c)) return;
+                    }
+
+                var (rRot, rOx, rOz) = SampleRandom(cs);
+                var p = new SinglePlacement
                 {
-                    MainKey = selectedMainKey,
+                    MainKey    = selectedMainKey,
                     VariantKey = selectedVariantKey,
-                    CellX = cell.x,
-                    CellZ = cell.y,
-                    Height = 0f,
-                    RandomSeed = 0,
+                    CellX      = cell.x,
+                    CellZ      = cell.y,
+                    PositionY  = 0f,
+                    OffsetX    = rOx,
+                    OffsetZ    = rOz,
+                    RotationY  = rRot,
+                    Scale      = instanceScale,
                 };
-                currentMap.Multis.Add(p);
-                _occupancy[cell] = PlacementKind.Multi;
-                _placedObjects[cell] = InstantiateMulti(p, item, cs);
+                currentMap.Singles.Add(p);
+
+                for (int dx = 0; dx < size.x; dx++)
+                    for (int dz = 0; dz < size.y; dz++)
+                        _otherCells.Add(new Vector2Int(cell.x + dx, cell.y + dz));
+
+                _otherPlacedObjects[cell] = InstantiateSingle(p, item, cs);
             }
-            else // Single
+            else // Single (non-Other)
             {
+                // 비-Other: _occupancy에서만 충돌 확인 (_otherCells 무시 → Other 위에 배치 가능)
                 var size = ValidSize(item);
                 for (int dx = 0; dx < size.x; dx++)
                     for (int dz = 0; dz < size.y; dz++)
@@ -1614,15 +1627,21 @@ namespace CitySim.MapEditor
                         if (_occupancy.ContainsKey(c)) return;
                     }
 
+                // footprint 원점 셀에 Other가 있으면 그 PositionY 위에 배치
+                float baseY = GetOtherHeightAt(cell);
+
+                var (rRot, rOx, rOz) = SampleRandom(cs);
                 var p = new SinglePlacement
                 {
-                    MainKey = selectedMainKey,
+                    MainKey    = selectedMainKey,
                     VariantKey = selectedVariantKey,
-                    CellX = cell.x,
-                    CellZ = cell.y,
-                    PositionY = 0f,
-                    RotationY = 0f,
-                    Scale = instanceScale,
+                    CellX      = cell.x,
+                    CellZ      = cell.y,
+                    PositionY  = baseY,
+                    OffsetX    = rOx,
+                    OffsetZ    = rOz,
+                    RotationY  = rRot,
+                    Scale      = instanceScale,
                 };
                 currentMap.Singles.Add(p);
 
@@ -1638,11 +1657,12 @@ namespace CitySim.MapEditor
         //  Size > 1×1 인 Single은 해당 셀을 포함한 원점 항목을 찾아 삭제.
         bool TryDeleteAtCell(Vector2Int cell)
         {
-            if (!_occupancy.TryGetValue(cell, out var kind)) return false;
-
-            switch (kind)
+            // 비-Other(_occupancy) 우선 삭제, 없으면 Other(_otherCells) 삭제
+            if (_occupancy.TryGetValue(cell, out var kind))
             {
-                case PlacementKind.Road:
+                switch (kind)
+                {
+                    case PlacementKind.Road:
                     {
                         int idx = currentMap.Roads.FindIndex(p => p.CellX == cell.x && p.CellZ == cell.y);
                         if (idx < 0) break;
@@ -1650,31 +1670,45 @@ namespace CitySim.MapEditor
                         DestroyPlacedAt(cell);
                         return true;
                     }
-                case PlacementKind.Multi:
-                    {
-                        int idx = currentMap.Multis.FindIndex(p => p.CellX == cell.x && p.CellZ == cell.y);
-                        if (idx < 0) break;
-                        currentMap.Multis.RemoveAt(idx);
-                        DestroyPlacedAt(cell);
-                        return true;
-                    }
-                case PlacementKind.Single:
+                    case PlacementKind.Single:
                     {
                         for (int i = 0; i < currentMap.Singles.Count; i++)
                         {
-                            var p = currentMap.Singles[i];
+                            var p    = currentMap.Singles[i];
                             var item = FindItem(p.MainKey, p.VariantKey);
+                            if (item?.Category == PrefabCategory.Other) continue;
                             var size = ValidSize(item);
-                            bool hit = cell.x >= p.CellX && cell.x < p.CellX + size.x
-                                    && cell.y >= p.CellZ && cell.y < p.CellZ + size.y;
-                            if (!hit) continue;
+                            if (cell.x < p.CellX || cell.x >= p.CellX + size.x) continue;
+                            if (cell.y < p.CellZ || cell.y >= p.CellZ + size.y) continue;
                             currentMap.Singles.RemoveAt(i);
                             DestroyPlacedAt(new Vector2Int(p.CellX, p.CellZ));
                             return true;
                         }
                         break;
                     }
+                }
             }
+
+            // Other 레이어 삭제
+            if (_otherCells.Contains(cell))
+            {
+                for (int i = 0; i < currentMap.Singles.Count; i++)
+                {
+                    var p    = currentMap.Singles[i];
+                    var item = FindItem(p.MainKey, p.VariantKey);
+                    if (item?.Category != PrefabCategory.Other) continue;
+                    var size = ValidSize(item);
+                    if (cell.x < p.CellX || cell.x >= p.CellX + size.x) continue;
+                    if (cell.y < p.CellZ || cell.y >= p.CellZ + size.y) continue;
+                    currentMap.Singles.RemoveAt(i);
+                    var origin = new Vector2Int(p.CellX, p.CellZ);
+                    if (_otherPlacedObjects.TryGetValue(origin, out var go) && go != null)
+                        Object.DestroyImmediate(go);
+                    _otherPlacedObjects.Remove(origin);
+                    return true;
+                }
+            }
+
             return false;
         }
 
@@ -1682,18 +1716,22 @@ namespace CitySim.MapEditor
         void RebuildOccupancy()
         {
             _occupancy.Clear();
+            _otherCells.Clear();
             if (currentMap == null) return;
 
             foreach (var p in currentMap.Singles)
             {
                 var item = FindItem(p.MainKey, p.VariantKey);
                 var size = ValidSize(item);
+                bool isOther = item?.Category == PrefabCategory.Other;
                 for (int dx = 0; dx < size.x; dx++)
                     for (int dz = 0; dz < size.y; dz++)
-                        _occupancy[new Vector2Int(p.CellX + dx, p.CellZ + dz)] = PlacementKind.Single;
+                    {
+                        var c = new Vector2Int(p.CellX + dx, p.CellZ + dz);
+                        if (isOther) _otherCells.Add(c);
+                        else         _occupancy[c] = PlacementKind.Single;
+                    }
             }
-            foreach (var p in currentMap.Multis)
-                _occupancy[new Vector2Int(p.CellX, p.CellZ)] = PlacementKind.Multi;
             foreach (var p in currentMap.Roads)
                 _occupancy[new Vector2Int(p.CellX, p.CellZ)] = PlacementKind.Road;
         }
@@ -1715,16 +1753,49 @@ namespace CitySim.MapEditor
             => (item != null && item.Size.x >= 1 && item.Size.y >= 1)
                 ? item.Size : Vector2Int.one;
 
+        // ── 랜덤 배치 샘플 ──────────────────────────────────────────
+        (float rot, float ox, float oz) SampleRandom(float cs)
+        {
+            float rot = randomRotation ? UnityEngine.Random.Range(0f, 360f) : 0f;
+            float ox  = 0f, oz = 0f;
+            if (randomOffset)
+            {
+                float range = randomOffsetRange * cs;
+                ox = UnityEngine.Random.Range(-range, range);
+                oz = UnityEngine.Random.Range(-range, range);
+            }
+            return (rot, ox, oz);
+        }
+
+        // ── Other 항목 높이 조회 ─────────────────────────────────
+        // 해당 셀에 Other 항목이 있으면 그 PositionY를 반환, 없으면 0.
+        float GetOtherHeightAt(Vector2Int cell)
+        {
+            if (!_otherCells.Contains(cell)) return 0f;
+            foreach (var p in currentMap.Singles)
+            {
+                var item = FindItem(p.MainKey, p.VariantKey);
+                if (item?.Category != PrefabCategory.Other) continue;
+                var size = ValidSize(item);
+                if (cell.x >= p.CellX && cell.x < p.CellX + size.x &&
+                    cell.y >= p.CellZ && cell.y < p.CellZ + size.y)
+                    return p.PositionY;
+            }
+            return 0f;
+        }
+
         // ══════════════════════════════════════════════════════════
         //  씬 GO 관리
         // ══════════════════════════════════════════════════════════
 
-        // 단일 GO 파괴
+        // 단일 GO 파괴 (비-Other)
         void DestroyPlacedAt(Vector2Int origin)
         {
-            if (!_placedObjects.TryGetValue(origin, out var go)) return;
-            _placedObjects.Remove(origin);
-            if (go != null) Object.DestroyImmediate(go);
+            if (_placedObjects.TryGetValue(origin, out var go))
+            {
+                _placedObjects.Remove(origin);
+                if (go != null) Object.DestroyImmediate(go);
+            }
         }
 
         // 전체 GO 파괴 (에디터 종료 / 새 맵 로드 전)
@@ -1733,6 +1804,10 @@ namespace CitySim.MapEditor
             foreach (var kv in _placedObjects)
                 if (kv.Value != null) Object.DestroyImmediate(kv.Value);
             _placedObjects.Clear();
+
+            foreach (var kv in _otherPlacedObjects)
+                if (kv.Value != null) Object.DestroyImmediate(kv.Value);
+            _otherPlacedObjects.Clear();
         }
 
         // MapData → 씬 GO 전체 재생성 (저장 후 로드 시)
@@ -1746,13 +1821,12 @@ namespace CitySim.MapEditor
             {
                 var item = FindItem(p.MainKey, p.VariantKey);
                 if (item == null || item.Prefab == null) continue;
-                _placedObjects[new Vector2Int(p.CellX, p.CellZ)] = InstantiateSingle(p, item, cs);
-            }
-            foreach (var p in currentMap.Multis)
-            {
-                var item = FindItem(p.MainKey, p.VariantKey);
-                if (item == null || item.Prefab == null) continue;
-                _placedObjects[new Vector2Int(p.CellX, p.CellZ)] = InstantiateMulti(p, item, cs);
+                var origin = new Vector2Int(p.CellX, p.CellZ);
+                var go = InstantiateSingle(p, item, cs);
+                if (item.Category == PrefabCategory.Other)
+                    _otherPlacedObjects[origin] = go;
+                else
+                    _placedObjects[origin] = go;
             }
             foreach (var p in currentMap.Roads)
             {
@@ -1768,9 +1842,9 @@ namespace CitySim.MapEditor
         {
             var size = ValidSize(item);
             var pos = new Vector3(
-                (p.CellX + size.x * 0.5f) * cs + item.Offset.x,
+                (p.CellX + size.x * 0.5f) * cs + item.Offset.x + p.OffsetX,
                 p.PositionY + item.Offset.y,
-                (p.CellZ + size.y * 0.5f) * cs + item.Offset.z);
+                (p.CellZ + size.y * 0.5f) * cs + item.Offset.z + p.OffsetZ);
             var go = (GameObject)PrefabUtility.InstantiatePrefab(item.Prefab);
             go.transform.SetPositionAndRotation(pos, Quaternion.Euler(0f, p.RotationY, 0f));
             go.transform.localScale = Vector3.one * (p.Scale > 0f ? p.Scale : 1f);
@@ -1889,7 +1963,10 @@ namespace CitySim.MapEditor
 
             var cell = _selectedCell.Value;
 
-            if (!_occupancy.TryGetValue(cell, out var kind))
+            bool inOccupancy = _occupancy.TryGetValue(cell, out var kind);
+            bool inOther     = _otherCells.Contains(cell);
+
+            if (!inOccupancy && !inOther)
             {
                 _selectedCell = null;
                 EditorGUILayout.LabelField("(없음)", EditorStyles.miniLabel);
@@ -1901,60 +1978,55 @@ namespace CitySim.MapEditor
 
             float cs = currentMap.Settings.CellSize;
 
-            switch (kind)
+            void ShowSingle(SinglePlacement p, string kindLabel)
             {
-                case PlacementKind.Single:
-                    {
-                        var p = currentMap.Singles.Find(x =>
-                        {
-                            var item = FindItem(x.MainKey, x.VariantKey);
-                            var size = ValidSize(item);
-                            return cell.x >= x.CellX && cell.x < x.CellX + size.x
-                                && cell.y >= x.CellZ && cell.y < x.CellZ + size.y;
-                        });
-                        if (p != null)
-                        {
-                            var item = FindItem(p.MainKey, p.VariantKey);
-                            var size = ValidSize(item);
-                            EditorGUILayout.LabelField("종류", "Single");
-                            EditorGUILayout.TextField("이름", item?.Name ?? $"M{p.MainKey}");
-                            EditorGUILayout.Vector3Field("Position",
-                                new Vector3((p.CellX + size.x * 0.5f) * cs, p.PositionY, (p.CellZ + size.y * 0.5f) * cs));
-                            EditorGUILayout.FloatField("Height (Y)", p.PositionY);
-                            EditorGUILayout.FloatField("Scale", p.Scale);
-                            EditorGUILayout.IntField("MainKey", p.MainKey);
-                            EditorGUILayout.IntField("VariantKey", p.VariantKey);
-                        }
-                        break;
-                    }
-                case PlacementKind.Multi:
-                    {
-                        var p = currentMap.Multis.Find(x => x.CellX == cell.x && x.CellZ == cell.y);
-                        if (p != null)
-                        {
-                            var item = FindItem(p.MainKey, p.VariantKey);
-                            EditorGUILayout.LabelField("종류", "Multi");
-                            EditorGUILayout.TextField("이름", item?.Name ?? $"M{p.MainKey}");
-                            EditorGUILayout.Vector3Field("Position",
-                                new Vector3((p.CellX + 0.5f) * cs, p.Height, (p.CellZ + 0.5f) * cs));
-                            EditorGUILayout.FloatField("Height (Y)", p.Height);
-                            EditorGUILayout.IntField("MainKey", p.MainKey);
-                            EditorGUILayout.IntField("VariantKey", p.VariantKey);
-                        }
-                        break;
-                    }
-                case PlacementKind.Road:
-                    {
-                        var p = currentMap.Roads.Find(x => x.CellX == cell.x && x.CellZ == cell.y);
-                        if (p != null)
-                        {
-                            EditorGUILayout.LabelField("종류", "Road");
-                            EditorGUILayout.Vector3Field("Position",
-                                new Vector3((p.CellX + 0.5f) * cs, 0f, (p.CellZ + 0.5f) * cs));
-                            EditorGUILayout.IntField("MainKey", p.MainKey);
-                        }
-                        break;
-                    }
+                var item = FindItem(p.MainKey, p.VariantKey);
+                var size = ValidSize(item);
+                EditorGUILayout.LabelField("종류", kindLabel);
+                EditorGUILayout.TextField("이름", item?.Name ?? $"M{p.MainKey}");
+                EditorGUILayout.Vector3Field("Position",
+                    new Vector3((p.CellX + size.x * 0.5f) * cs, p.PositionY, (p.CellZ + size.y * 0.5f) * cs));
+                EditorGUILayout.FloatField("Height (Y)", p.PositionY);
+                EditorGUILayout.FloatField("Scale", p.Scale);
+                EditorGUILayout.IntField("MainKey", p.MainKey);
+                EditorGUILayout.IntField("VariantKey", p.VariantKey);
+            }
+
+            if (inOccupancy && kind == PlacementKind.Road)
+            {
+                var p = currentMap.Roads.Find(x => x.CellX == cell.x && x.CellZ == cell.y);
+                if (p != null)
+                {
+                    EditorGUILayout.LabelField("종류", "Road");
+                    EditorGUILayout.Vector3Field("Position",
+                        new Vector3((p.CellX + 0.5f) * cs, 0f, (p.CellZ + 0.5f) * cs));
+                    EditorGUILayout.IntField("MainKey", p.MainKey);
+                }
+            }
+            else if (inOccupancy && kind == PlacementKind.Single)
+            {
+                var p = currentMap.Singles.Find(x =>
+                {
+                    var item = FindItem(x.MainKey, x.VariantKey);
+                    if (item?.Category == PrefabCategory.Other) return false;
+                    var size = ValidSize(item);
+                    return cell.x >= x.CellX && cell.x < x.CellX + size.x
+                        && cell.y >= x.CellZ && cell.y < x.CellZ + size.y;
+                });
+                if (p != null) ShowSingle(p, "Single");
+            }
+
+            if (inOther)
+            {
+                var p = currentMap.Singles.Find(x =>
+                {
+                    var item = FindItem(x.MainKey, x.VariantKey);
+                    if (item?.Category != PrefabCategory.Other) return false;
+                    var size = ValidSize(item);
+                    return cell.x >= x.CellX && cell.x < x.CellX + size.x
+                        && cell.y >= x.CellZ && cell.y < x.CellZ + size.y;
+                });
+                if (p != null) ShowSingle(p, "Other");
             }
 
             EditorGUI.EndDisabledGroup();
@@ -1990,22 +2062,24 @@ namespace CitySim.MapEditor
             }
 
             // ① GO 없는 점유 셀만 보조 오버레이 (GO 있으면 스킵)
-            //  Single은 size만큼 footprint가 occupancy에 등록되지만
-            //  _placedObjects는 origin만 저장 → footprint 전체를 skip set으로 사전 수집
-            var goFootprint = new HashSet<Vector2Int>();
+            var goFootprint      = new HashSet<Vector2Int>();
+            var otherGoFootprint = new HashSet<Vector2Int>();
             foreach (var p in currentMap.Singles)
             {
+                var item   = FindItem(p.MainKey, p.VariantKey);
                 var origin = new Vector2Int(p.CellX, p.CellZ);
-                if (!(_placedObjects.TryGetValue(origin, out var sgo) && sgo != null)) continue;
-                var si = FindItem(p.MainKey, p.VariantKey);
-                var sz = ValidSize(si);
+                bool isOther = item?.Category == PrefabCategory.Other;
+                var dict = isOther ? _otherPlacedObjects : _placedObjects;
+                if (!(dict.TryGetValue(origin, out var sgo) && sgo != null)) continue;
+                var sz = ValidSize(item);
                 for (int dx = 0; dx < sz.x; dx++)
                     for (int dz = 0; dz < sz.y; dz++)
-                        goFootprint.Add(new Vector2Int(p.CellX + dx, p.CellZ + dz));
+                    {
+                        var fc = new Vector2Int(p.CellX + dx, p.CellZ + dz);
+                        if (isOther) otherGoFootprint.Add(fc);
+                        else         goFootprint.Add(fc);
+                    }
             }
-            foreach (var p in currentMap.Multis)
-                if (_placedObjects.TryGetValue(new Vector2Int(p.CellX, p.CellZ), out var mgo) && mgo != null)
-                    goFootprint.Add(new Vector2Int(p.CellX, p.CellZ));
             foreach (var p in currentMap.Roads)
                 if (_placedObjects.TryGetValue(new Vector2Int(p.CellX, p.CellZ), out var rgo) && rgo != null)
                     goFootprint.Add(new Vector2Int(p.CellX, p.CellZ));
@@ -2013,19 +2087,20 @@ namespace CitySim.MapEditor
             foreach (var kv in _occupancy)
             {
                 if (goFootprint.Contains(kv.Key)) continue;
-
-                var col = kv.Value switch
-                {
-                    PlacementKind.Single => new Color(0.2f, 0.9f, 0.3f, 0.30f),
-                    PlacementKind.Multi  => new Color(0.2f, 0.5f, 1.0f, 0.30f),
-                    PlacementKind.Road   => new Color(1.0f, 0.85f, 0.1f, 0.30f),
-                    _                    => new Color(1f,   1f,   1f,   0.20f),
-                };
+                var col = kv.Value == PlacementKind.Road
+                    ? new Color(1.0f, 0.85f, 0.1f, 0.30f)
+                    : new Color(0.2f, 0.9f,  0.3f, 0.30f);
                 AddQuad(kv.Key, col);
+            }
+            foreach (var c in _otherCells)
+            {
+                if (otherGoFootprint.Contains(c)) continue;
+                AddQuad(c, new Color(0.6f, 0.4f, 0.9f, 0.25f));
             }
 
             // ② 선택된 배치물 하이라이트 (흰 테두리)
-            if (_selectedCell.HasValue && _occupancy.ContainsKey(_selectedCell.Value))
+            if (_selectedCell.HasValue &&
+                (_occupancy.ContainsKey(_selectedCell.Value) || _otherCells.Contains(_selectedCell.Value)))
                 AddQuad(_selectedCell.Value, new Color(1f, 1f, 1f, 0.35f), 0.025f);
 
             // ③ 마우스 위치 셀 하이라이트
@@ -2038,10 +2113,14 @@ namespace CitySim.MapEditor
                     Color hoverCol;
                     if (selectedMainKey != int.MinValue)
                     {
-                        bool canPlace = !_occupancy.ContainsKey(mouseCell.Value)
-                                     && mouseCell.Value.x >= 0 && mouseCell.Value.y >= 0
+                        var selItem = FindItem(selectedMainKey, selectedVariantKey);
+                        bool isOther = selItem?.Category == PrefabCategory.Other;
+                        bool blocked = isOther
+                            ? _otherCells.Contains(mouseCell.Value)
+                            : _occupancy.ContainsKey(mouseCell.Value);
+                        bool inBounds = mouseCell.Value.x >= 0 && mouseCell.Value.y >= 0
                                      && mouseCell.Value.x < s.Width && mouseCell.Value.y < s.Height;
-                        hoverCol = canPlace
+                        hoverCol = (!blocked && inBounds)
                             ? new Color(0.3f, 1.0f, 0.4f, 0.45f)
                             : new Color(1.0f, 0.25f, 0.25f, 0.45f);
                     }
@@ -2083,14 +2162,6 @@ namespace CitySim.MapEditor
                 float cx = (p.CellX + size.x * 0.5f) * cs;
                 float cz = (p.CellZ + size.y * 0.5f) * cs;
                 Handles.Label(new Vector3(cx, p.PositionY + 0.1f, cz), lbl, labelStyle);
-            }
-            foreach (var p in currentMap.Multis)
-            {
-                var item = FindItem(p.MainKey, p.VariantKey);
-                string lbl = item?.Name ?? $"M{p.MainKey}";
-                Handles.Label(
-                    new Vector3((p.CellX + 0.5f) * cs, p.Height + 0.1f, (p.CellZ + 0.5f) * cs),
-                    lbl, labelStyle);
             }
             foreach (var p in currentMap.Roads)
             {

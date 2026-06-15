@@ -3,10 +3,30 @@
   "dlcName": "0",
   "displayName": "origin",
   "items": [
-    {"mainKey":1,"variantKey":0,"name":"Road_E","category":0},
-    {"mainKey":2,"variantKey":0,"name":"Road_EW","category":0},
+    {"mainKey":1,"variantKey":0,"name":"1E_h","category":0},
+    {"mainKey":2,"variantKey":0,"name":"1N_h","category":0},
     {"mainKey":10000,"variantKey":0,"name":"","category":99},
     {"mainKey":10001,"variantKey":0,"name":"","category":99},
-    {"mainKey":10002,"variantKey":0,"name":"","category":99}
+    {"mainKey":3,"variantKey":0,"name":"1S_h","category":0},
+    {"mainKey":4,"variantKey":0,"name":"1W_h","category":0},
+    {"mainKey":5,"variantKey":0,"name":"2L_NE_h","category":0},
+    {"mainKey":6,"variantKey":0,"name":"2_NW_h","category":0},
+    {"mainKey":7,"variantKey":0,"name":"2L_SE_h","category":0},
+    {"mainKey":8,"variantKey":0,"name":"2L_SW_h","category":0},
+    {"mainKey":9,"variantKey":0,"name":"2S_EW_h","category":0},
+    {"mainKey":10,"variantKey":0,"name":"2S_NS_h","category":0},
+    {"mainKey":11,"variantKey":0,"name":"3NEW_h","category":0},
+    {"mainKey":12,"variantKey":0,"name":"3NSE_h","category":0},
+    {"mainKey":13,"variantKey":0,"name":"3NSW_h","category":0},
+    {"mainKey":14,"variantKey":0,"name":"3SEW_h","category":0},
+    {"mainKey":15,"variantKey":0,"name":"4NSEW_h","category":0},
+    {"mainKey":10002,"variantKey":0,"name":"","category":99},
+    {"mainKey":5000,"variantKey":0,"name":"","category":2},
+    {"mainKey":1000,"variantKey":0,"name":"resiental_h_small","category":1},
+    {"mainKey":1001,"variantKey":0,"name":"resudental_h_middle","category":1},
+    {"mainKey":1002,"variantKey":0,"name":"restarant_h_small","category":1},
+    {"mainKey":1003,"variantKey":0,"name":"powder_h","category":1},
+    {"mainKey":1004,"variantKey":0,"name":"farm_h","category":1},
+    {"mainKey":1005,"variantKey":0,"name":"stock_h","category":1}
   ]
 }

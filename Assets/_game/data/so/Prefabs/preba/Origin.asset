@@ -19,33 +19,35 @@ MonoBehaviour:
   items:
   - MainKey: 1
     VariantKey: 0
-    Name: Road_E
+    Name: 1E_h
     Category: 0
-    Usage: 0
-    Prefab: {fileID: 8063682502518335741, guid: 11260831155d36d47a02b2ce8e454377, type: 3}
+    Usage: 14
+    Prefab: {fileID: 1705889788958085365, guid: ed8eb69488dbc794896d439f77acae53, type: 3}
     Size: {x: 1, y: 1}
-    Offset: {x: 0, y: 0.1, z: 0}
+    Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 2
     MultiCountPerCell: 5
     MultiItemSize: 0.5
     IsSupplier: 0
+    ReliefRaw: 0
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 0
   - MainKey: 2
     VariantKey: 0
-    Name: Road_EW
+    Name: 1N_h
     Category: 0
-    Usage: 0
-    Prefab: {fileID: 8799440274343547266, guid: 481b70de499510243945fb102c9baea0, type: 3}
+    Usage: 14
+    Prefab: {fileID: 4751281870000964476, guid: f6f95850cba0a8a4dba57b988ec6bad4, type: 3}
     Size: {x: 1, y: 1}
-    Offset: {x: 0, y: 0.1, z: 0}
+    Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
-    RoadMask: 10
+    RoadMask: 1
     MultiCountPerCell: 5
     MultiItemSize: 0.5
     IsSupplier: 0
+    ReliefRaw: 0
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 0
@@ -62,6 +64,7 @@ MonoBehaviour:
     MultiCountPerCell: 5
     MultiItemSize: 0.5
     IsSupplier: 0
+    ReliefRaw: 0
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 1
@@ -78,6 +81,7 @@ MonoBehaviour:
     MultiCountPerCell: 5
     MultiItemSize: 0.5
     IsSupplier: 0
+    ReliefRaw: 0
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 1
@@ -87,13 +91,14 @@ MonoBehaviour:
     Category: 99
     Usage: 1
     Prefab: {fileID: 7324531294256472883, guid: 827d9ee7012434144b5cb59c01e5a971, type: 3}
-    Size: {x: 1, y: 1}
+    Size: {x: 10, y: 10}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
     MultiCountPerCell: 5
     MultiItemSize: 0.5
     IsSupplier: 0
+    ReliefRaw: 0
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 0
@@ -110,6 +115,262 @@ MonoBehaviour:
     MultiCountPerCell: 5
     MultiItemSize: 0.5
     IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 10001
+    VariantKey: 0
+    Name: 
+    Category: 99
+    Usage: 1
+    Prefab: {fileID: 3128638269541699198, guid: 40ea3e0f4b0c45746a4e8cd828a2d650, type: 3}
+    Size: {x: 10, y: 10}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 2
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 0
+    VariantKey: 0
+    Name: 
+    Category: 1
+    Usage: 0
+    Prefab: {fileID: 8625090136210993227, guid: 77ceeac0d1e249044bf0d24ef42f82c9, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 3
+    VariantKey: 0
+    Name: 1S_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 980103657890000781, guid: 766043c5ee024d441a5c791729c44781, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 4
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 4
+    VariantKey: 0
+    Name: 1W_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 1137803911253996072, guid: 8b14879f584afa14eb680c0ed67459b5, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 8
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 5
+    VariantKey: 0
+    Name: 2L_NE_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 4940631696477501223, guid: e699d8bb84db5d74c938263467864b0c, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 3
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 6
+    VariantKey: 0
+    Name: 2_NW_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 2844434039493844290, guid: e370e465d5a42e24b810195efbd10bb0, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 9
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 7
+    VariantKey: 0
+    Name: 2L_SE_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 8432099597723197098, guid: 92a145fe2372c5c499b86734beb06757, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 6
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 8
+    VariantKey: 0
+    Name: 2L_SW_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 7126821537464221899, guid: fa0b3ac7c61b46e4487cbbfbcba4a539, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 12
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 9
+    VariantKey: 0
+    Name: 2S_EW_h
+    Category: 0
+    Usage: -1
+    Prefab: {fileID: 3592548993714789272, guid: d23ff8de066790a4fbdd0cd1f349b825, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 10
+    VariantKey: 0
+    Name: 2S_NS_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 6442129362752095637, guid: b60f48a0cb64b8d40a27e50928ddbb91, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 5
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 11
+    VariantKey: 0
+    Name: 3NEW_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 2943124008740244773, guid: dc175fa8e7341f944a4cfa4f16b3704a, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 11
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 12
+    VariantKey: 0
+    Name: 3NSE_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 8879437068768142341, guid: 2f82bea4d45ddab43af523b43e8c5ac5, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 7
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 13
+    VariantKey: 0
+    Name: 3NSW_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 2368236345524416686, guid: fa03b074313c6b5408a10fc1ac411788, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 13
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 14
+    VariantKey: 0
+    Name: 3SEW_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 7147881605370587257, guid: 9cb3bb495dbdca641896d06e9c67d350, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 14
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 15
+    VariantKey: 0
+    Name: 4NSEW_h
+    Category: 0
+    Usage: 14
+    Prefab: {fileID: 7461747478673734504, guid: 5d66b997f580ecc489d3dcc53b6fefeb, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 255
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 0
@@ -117,17 +378,274 @@ MonoBehaviour:
     VariantKey: 0
     Name: 
     Category: 99
-    Usage: 1
-    Prefab: {fileID: 3128638269541699198, guid: 40ea3e0f4b0c45746a4e8cd828a2d650, type: 3}
-    Size: {x: 1, y: 1}
+    Usage: 9
+    Prefab: {fileID: 3435329269771837667, guid: d96198fe948825b48a8c2f2fe773c7df, type: 3}
+    Size: {x: 20, y: 20}
     Offset: {x: 0, y: 0, z: 0}
-    BuildableOn: 2
+    BuildableOn: 1
     RoadMask: 0
     MultiCountPerCell: 5
     MultiItemSize: 0.5
     IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 5000
+    VariantKey: 0
+    Name: 
+    Category: 2
+    Usage: -1
+    Prefab: {fileID: 7468476946143455334, guid: a9d2b3a7d98b8ad4897fc0552e011a48, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1000
+    VariantKey: 0
+    Name: resitetal
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 4842039231314385917, guid: 29d51c6611c4eeb4b89c02a60f4dee31, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 1001
+    VariantKey: 0
+    Name: residental
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 5582211663413722490, guid: e58311b8a29dad94baf1c7cc533503dc, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 1002
+    VariantKey: 0
+    Name: restarant
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 7101352272596805819, guid: 135578afae5bd864e9563b85efcb7a63, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 1003
+    VariantKey: 0
+    Name: human_stock
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 6239777722775948369, guid: 6802f30d03df90d42aeb57cfe9061b08, type: 3}
+    Size: {x: 12, y: 10}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 0
+    VariantKey: 0
+    Name: 
+    Category: 1
+    Usage: 0
+    Prefab: {fileID: 0}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 0
+    VariantKey: 0
+    Name: 
+    Category: 1
+    Usage: 0
+    Prefab: {fileID: 0}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 0
+    VariantKey: 0
+    Name: 
+    Category: 1
+    Usage: 0
+    Prefab: {fileID: 0}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 1000
+    VariantKey: 0
+    Name: resiental_h_small
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 4842039231314385917, guid: 29d51c6611c4eeb4b89c02a60f4dee31, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1001
+    VariantKey: 0
+    Name: resudental_h_middle
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 5582211663413722490, guid: e58311b8a29dad94baf1c7cc533503dc, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1002
+    VariantKey: 0
+    Name: restarant_h_small
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 7101352272596805819, guid: 135578afae5bd864e9563b85efcb7a63, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1003
+    VariantKey: 0
+    Name: powder_h
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 6969019826408937393, guid: 2103c7bdc0d22eb47aad6f9e48cbd945, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1004
+    VariantKey: 0
+    Name: farm_h
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 3231845200399232809, guid: 17cc0418731da4843a87bc5d294aa0aa, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1005
+    VariantKey: 0
+    Name: stock_h
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 6239777722775948369, guid: 6802f30d03df90d42aeb57cfe9061b08, type: 3}
+    Size: {x: 12, y: 10}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 0
   NeedMaps: []
-  Entrances: []
+  Entrances:
+  - MainKey: 1000
+    Offset: {x: 1, y: 0}
+    Dir: 4
+  - MainKey: 1001
+    Offset: {x: 1, y: 0}
+    Dir: 4
+  - MainKey: 1002
+    Offset: {x: 1, y: 0}
+    Dir: 4
+  - MainKey: 1003
+    Offset: {x: 1, y: 0}
+    Dir: 4
+  - MainKey: 1004
+    Offset: {x: 1, y: 0}
+    Dir: 4
+  - MainKey: 1005
+    Offset: {x: 5, y: 0}
+    Dir: 4

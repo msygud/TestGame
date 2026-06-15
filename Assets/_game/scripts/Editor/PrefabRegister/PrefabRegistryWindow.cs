@@ -26,7 +26,7 @@ namespace CitySim.MapEditor
         int selectedRegistryIdx = 0;
 
         // ── 내부 SerializedObject ─────────────────────────────────
-        SerializedObject   serializedReg;
+        SerializedObject serializedReg;
         SerializedProperty itemsProp;
         SerializedProperty dlcIdProp;
         SerializedProperty dlcNameProp;
@@ -39,16 +39,16 @@ namespace CitySim.MapEditor
 
         // ── UI 상태 ────────────────────────────────────────────────
         Vector2 scrollPos;
-        bool foldDlc        = true;
-        bool foldRoad        = true;
-        bool foldBuilding    = true;
+        bool foldDlc = true;
+        bool foldRoad = true;
+        bool foldBuilding = true;
         bool foldEnvironment = true;
-        bool foldCombatUnit  = true;
-        bool foldProjectile  = true;
-        bool foldEffect      = true;
-        bool foldOther       = true;
-        bool foldDeleted     = false;
-        bool showThumbs     = true;
+        bool foldCombatUnit = true;
+        bool foldProjectile = true;
+        bool foldEffect = true;
+        bool foldOther = true;
+        bool foldDeleted = false;
+        bool showThumbs = true;
 
         Dictionary<int, bool> usageFolds = new();
 
@@ -82,7 +82,7 @@ namespace CitySim.MapEditor
             foreach (var guid in guids)
             {
                 var path = AssetDatabase.GUIDToAssetPath(guid);
-                var reg  = AssetDatabase.LoadAssetAtPath<GamePrefabRegistry>(path);
+                var reg = AssetDatabase.LoadAssetAtPath<GamePrefabRegistry>(path);
                 if (reg != null && !registries.Contains(reg))
                     registries.Add(reg);
             }
@@ -101,13 +101,13 @@ namespace CitySim.MapEditor
             var reg = registries[idx];
             if (reg == null) return;
 
-            serializedReg      = new SerializedObject(reg);
-            itemsProp          = serializedReg.FindProperty("items");
-            dlcIdProp          = serializedReg.FindProperty("dlcId");
-            dlcNameProp        = serializedReg.FindProperty("dlcName");
-            displayNameProp    = serializedReg.FindProperty("displayName");
+            serializedReg = new SerializedObject(reg);
+            itemsProp = serializedReg.FindProperty("items");
+            dlcIdProp = serializedReg.FindProperty("dlcId");
+            dlcNameProp = serializedReg.FindProperty("dlcName");
+            displayNameProp = serializedReg.FindProperty("displayName");
             jsonExportPathProp = serializedReg.FindProperty("jsonExportPath");
-            validationDirty    = true;
+            validationDirty = true;
             Repaint();
         }
 
@@ -197,8 +197,8 @@ namespace CitySim.MapEditor
 
             if (foldDlc)
             {
-                EditorGUILayout.PropertyField(dlcIdProp,      new GUIContent("DLC ID"));
-                EditorGUILayout.PropertyField(dlcNameProp,    new GUIContent("DLC Name"));
+                EditorGUILayout.PropertyField(dlcIdProp, new GUIContent("DLC ID"));
+                EditorGUILayout.PropertyField(dlcNameProp, new GUIContent("DLC Name"));
                 EditorGUILayout.PropertyField(displayNameProp,
                     new GUIContent("Display Name", "맵에디터/UI 표시용. 비면 DLC Name 사용."));
 
@@ -240,8 +240,8 @@ namespace CitySim.MapEditor
         {
             foreach (var issue in cachedIssues)
             {
-                MessageType mt = issue.Level == ValidationLevel.Error   ? MessageType.Error
-                              :  issue.Level == ValidationLevel.Warning ? MessageType.Warning
+                MessageType mt = issue.Level == ValidationLevel.Error ? MessageType.Error
+                              : issue.Level == ValidationLevel.Warning ? MessageType.Warning
                                                                         : MessageType.Info;
                 EditorGUILayout.HelpBox(issue.Message, mt);
             }
@@ -328,14 +328,14 @@ namespace CitySim.MapEditor
             var reg = registries[selectedRegistryIdx];
             if (reg == null) return;
 
-            var roads        = new List<int>();
-            var buildings    = new List<int>();
+            var roads = new List<int>();
+            var buildings = new List<int>();
             var environments = new List<int>();
-            var combatUnits  = new List<int>();
-            var projectiles  = new List<int>();
-            var effects      = new List<int>();
-            var others       = new List<int>();
-            var deleted      = new List<int>();
+            var combatUnits = new List<int>();
+            var projectiles = new List<int>();
+            var effects = new List<int>();
+            var others = new List<int>();
+            var deleted = new List<int>();
 
             for (int i = 0; i < itemsProp.arraySize; i++)
             {
@@ -346,27 +346,27 @@ namespace CitySim.MapEditor
                 var cat = (PrefabCategory)elem.FindPropertyRelative("Category").enumValueIndex;
                 switch (cat)
                 {
-                    case PrefabCategory.Road:        roads.Add(i);        break;
-                    case PrefabCategory.Building:    buildings.Add(i);    break;
+                    case PrefabCategory.Road: roads.Add(i); break;
+                    case PrefabCategory.Building: buildings.Add(i); break;
                     case PrefabCategory.Environment: environments.Add(i); break;
-                    case PrefabCategory.CombatUnit:  combatUnits.Add(i);  break;
-                    case PrefabCategory.Projectile:  projectiles.Add(i);  break;
-                    case PrefabCategory.Effect:      effects.Add(i);      break;
-                    default:                         others.Add(i);       break;
+                    case PrefabCategory.CombatUnit: combatUnits.Add(i); break;
+                    case PrefabCategory.Projectile: projectiles.Add(i); break;
+                    case PrefabCategory.Effect: effects.Add(i); break;
+                    default: others.Add(i); break;
                 }
             }
 
-            DrawGroup(GroupTitle("도로 (Road)",        PrefabCategory.Road),        roads,        reg, ref foldRoad,
+            DrawGroup(GroupTitle("도로 (Road)", PrefabCategory.Road), roads, reg, ref foldRoad,
                 () =>
                 {
-                    var item      = reg.AddItem();
+                    var item = reg.AddItem();
                     item.Category = PrefabCategory.Road;
-                    item.Size     = new Vector2Int(1, 1);
+                    item.Size = new Vector2Int(1, 1);
                     // RoadMask는 사용자가 직접 설정 (기본 None = 미설정)
                 });
             EditorGUILayout.Space(5);
 
-            DrawGroup(GroupTitle("건물 (Building)",    PrefabCategory.Building),    buildings,    reg, ref foldBuilding,
+            DrawGroup(GroupTitle("건물 (Building)", PrefabCategory.Building), buildings, reg, ref foldBuilding,
                 () => { var item = reg.AddItem(); item.Category = PrefabCategory.Building; });
             EditorGUILayout.Space(5);
 
@@ -382,11 +382,11 @@ namespace CitySim.MapEditor
                 () => { var item = reg.AddItem(); item.Category = PrefabCategory.Projectile; });
             EditorGUILayout.Space(5);
 
-            DrawGroup(GroupTitle("이펙트 (Effect)",    PrefabCategory.Effect),      effects,      reg, ref foldEffect,
+            DrawGroup(GroupTitle("이펙트 (Effect)", PrefabCategory.Effect), effects, reg, ref foldEffect,
                 () => { var item = reg.AddItem(); item.Category = PrefabCategory.Effect; });
             EditorGUILayout.Space(5);
 
-            DrawGroup(GroupTitle("그 외 (Other)",      PrefabCategory.Other),       others,       reg, ref foldOther,
+            DrawGroup(GroupTitle("그 외 (Other)", PrefabCategory.Other), others, reg, ref foldOther,
                 () => { var item = reg.AddItem(); item.Category = PrefabCategory.Other; });
 
             if (deleted.Count > 0)
@@ -420,23 +420,23 @@ namespace CitySim.MapEditor
         {
             var elem = itemsProp.GetArrayElementAtIndex(index);
 
-            var nameProp       = elem.FindPropertyRelative("Name");
-            var mainKeyProp    = elem.FindPropertyRelative("MainKey");
+            var nameProp = elem.FindPropertyRelative("Name");
+            var mainKeyProp = elem.FindPropertyRelative("MainKey");
             var variantKeyProp = elem.FindPropertyRelative("VariantKey");
-            var dlcKeyProp     = elem.FindPropertyRelative("DlcKey");
-            var prefabProp     = elem.FindPropertyRelative("Prefab");
-            var usageProp      = elem.FindPropertyRelative("Usage");
-            var categoryProp   = elem.FindPropertyRelative("Category");
-            var sizeProp       = elem.FindPropertyRelative("Size");
-            var offsetProp     = elem.FindPropertyRelative("Offset");
-            var roadMaskProp   = elem.FindPropertyRelative("RoadMask");   // RoadDir 비트마스크
-            var multiSizeProp  = elem.FindPropertyRelative("MultiItemSize");
-            var multiCntProp   = elem.FindPropertyRelative("MultiCountPerCell");
-            var buildableOnProp   = elem.FindPropertyRelative("BuildableOn");
+            var dlcKeyProp = elem.FindPropertyRelative("DlcKey");
+            var prefabProp = elem.FindPropertyRelative("Prefab");
+            var usageProp = elem.FindPropertyRelative("Usage");
+            var categoryProp = elem.FindPropertyRelative("Category");
+            var sizeProp = elem.FindPropertyRelative("Size");
+            var offsetProp = elem.FindPropertyRelative("Offset");
+            var roadMaskProp = elem.FindPropertyRelative("RoadMask");   // RoadDir 비트마스크
+            var multiSizeProp = elem.FindPropertyRelative("MultiItemSize");
+            var multiCntProp = elem.FindPropertyRelative("MultiCountPerCell");
+            var buildableOnProp = elem.FindPropertyRelative("BuildableOn");
 
             var category = (PrefabCategory)categoryProp.enumValueIndex;
-            bool isRoad     = category == PrefabCategory.Road;
-            bool isMulti    = category == PrefabCategory.Environment;
+            bool isRoad = category == PrefabCategory.Road;
+            bool isMulti = category == PrefabCategory.Environment;
             bool isBuilding = category == PrefabCategory.Building;
 
             // 도로는 Size 강제 (1, 1)
@@ -470,11 +470,11 @@ namespace CitySim.MapEditor
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.PropertyField(nameProp, GUIContent.none, GUILayout.MinWidth(90));
             EditorGUILayout.LabelField("M", GUILayout.Width(13));
-            EditorGUILayout.PropertyField(mainKeyProp,    GUIContent.none, GUILayout.Width(52));
+            EditorGUILayout.PropertyField(mainKeyProp, GUIContent.none, GUILayout.Width(52));
             EditorGUILayout.LabelField("V", GUILayout.Width(13));
             EditorGUILayout.PropertyField(variantKeyProp, GUIContent.none, GUILayout.Width(42));
             EditorGUILayout.LabelField("D", GUILayout.Width(13));
-            EditorGUILayout.PropertyField(dlcKeyProp,     GUIContent.none, GUILayout.Width(36));
+            EditorGUILayout.PropertyField(dlcKeyProp, GUIContent.none, GUILayout.Width(36));
 
             var prevBg = GUI.backgroundColor;
             GUI.backgroundColor = new Color(1f, 0.5f, 0.5f);
@@ -562,7 +562,7 @@ namespace CitySim.MapEditor
             {
                 EditorGUI.indentLevel++;
                 EditorGUILayout.PropertyField(multiSizeProp, new GUIContent("Item Size"));
-                EditorGUILayout.PropertyField(multiCntProp,  new GUIContent("Count Per Cell"));
+                EditorGUILayout.PropertyField(multiCntProp, new GUIContent("Count Per Cell"));
                 EditorGUI.indentLevel--;
             }
 
@@ -633,8 +633,8 @@ namespace CitySim.MapEditor
                     reg.Entrances.Add(new EntranceEntry
                     {
                         MainKey = mainKey,
-                        Offset  = Vector2Int.zero,
-                        Dir     = RoadDir.S,
+                        Offset = Vector2Int.zero,
+                        Dir = RoadDir.S,
                     });
                     EditorUtility.SetDirty(reg);
                 }
@@ -651,7 +651,7 @@ namespace CitySim.MapEditor
                 {
                     Undo.RecordObject(reg, "Edit Entrance");
                     ent.Offset = off;
-                    ent.Dir    = dir;
+                    ent.Dir = dir;
                     EditorUtility.SetDirty(reg);
                 }
 
@@ -686,8 +686,8 @@ namespace CitySim.MapEditor
                 foreach (int idx in deleted)
                 {
                     var elem = itemsProp.GetArrayElementAtIndex(idx);
-                    int mk   = elem.FindPropertyRelative("MainKey").intValue;
-                    int vk   = elem.FindPropertyRelative("VariantKey").intValue;
+                    int mk = elem.FindPropertyRelative("MainKey").intValue;
+                    int vk = elem.FindPropertyRelative("VariantKey").intValue;
                     string nm = elem.FindPropertyRelative("Name").stringValue;
 
                     EditorGUILayout.BeginHorizontal();

@@ -1,3 +1,4 @@
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 
@@ -45,6 +46,7 @@ namespace CitySim
         public void OnUpdate(ref SystemState state)
         {
             var stamp = SystemAPI.GetSingleton<StampLayers>();
+            var ecb   = new EntityCommandBuffer(Allocator.Temp);
 
             foreach (var (footprint, entrance, entity) in
                      SystemAPI.Query<RefRO<BuildingFootprint>, RefRO<BuildingEntrance>>()
@@ -93,10 +95,37 @@ namespace CitySim
                     {
                         var store = SystemAPI.GetBuffer<StockEntry>(bestW);
                         int got = DrawFromStore(ref store, e.Commodity, want);
-                        if (got > 0) { e.Current += got; input[i] = e; }
+                        if (got > 0)
+                        {
+                            // 즉시 재고 이전 (기존 동작 유지)
+                            e.Current += got;
+                            input[i]   = e;
+
+                            // 운반자 비주얼 요청 발행 (창고 입구 → 건물 입구)
+                            int2 warehouseCell = roadCell; // 창고 입구가 없으면 폴백
+                            if (SystemAPI.HasComponent<BuildingFootprint>(bestW) &&
+                                SystemAPI.HasComponent<BuildingEntrance>(bestW))
+                            {
+                                var wfp  = SystemAPI.GetComponent<BuildingFootprint>(bestW);
+                                var went = SystemAPI.GetComponent<BuildingEntrance>(bestW);
+                                warehouseCell = EntranceOps.EntranceRoadCell(
+                                    wfp.Origin, wfp.Size, in went.Entrance, wfp.RotSteps);
+                            }
+
+                            var reqE = ecb.CreateEntity();
+                            ecb.AddComponent(reqE, new LogisticsCarrierRequest
+                            {
+                                SourceRoadCell = warehouseCell,
+                                DestRoadCell   = roadCell,
+                                OwnerLocalId   = owner,
+                            });
+                        }
                     }
                 }
             }
+
+            ecb.Playback(state.EntityManager);
+            ecb.Dispose();
         }
 
         // 창고에 그 품목 Store 재고가 1 이상 있나.

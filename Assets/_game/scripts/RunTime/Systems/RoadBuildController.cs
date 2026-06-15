@@ -44,6 +44,13 @@ namespace CitySim
         [Tooltip("차선 수 (2 기본, 4 업그레이드).")]
         public byte LaneCount = 2;
 
+        [Tooltip("도로 크기 출처. 지정 시 Registry.DefaultSize를 사용. 비우면 Size 필드 직접 사용.")]
+        public RoadPrefabRegistry Registry;
+
+        [Tooltip("Registry가 없을 때 사용할 도로 크기 (한 변 셀 수). 1 = 1×1.")]
+        [Range(1, 8)]
+        public int Size = 1;
+
         [Header("상태 (읽기용)")]
         [SerializeField] bool _modeActive;
         [SerializeField] int  _pendingCellCount;
@@ -169,10 +176,11 @@ namespace CitySim
                     var e = _em.CreateEntity();
                     _em.AddComponentData(e, new PlaceRoadCommand
                     {
-                        Cell      = cell,
-                        OwnerLocalId = slot,       // 소유 슬롯(=TeamIndex)
-                        LaneCount = LaneCount,
-                        FactionId = faction,    // 호출자 책임: 해소한 FactionId를 채워 넘김
+                        Cell         = cell,
+                        OwnerLocalId = slot,
+                        LaneCount    = LaneCount,
+                        FactionId    = faction,
+                        Size         = (byte)(Registry != null ? Registry.DefaultSize : Size),
                     });
                 }
             }

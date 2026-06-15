@@ -55,6 +55,8 @@ namespace CitySim.MapEditor
         public int   VariantKey;
         public int   CellX, CellZ;  // 좌하단 셀 (Size > 1x1인 경우 기준점)
         public float PositionY;     // 월드 Y 좌표 (에디터 높이 조절, 단위: CellSize * 0.5)
+        public float OffsetX;       // 셀 중심 기준 XZ 오프셋 (월드 단위)
+        public float OffsetZ;
         public float RotationY;     // Y축 회전 (도)
         public float Scale;         // 배치 스케일 (1 = 기본)
     }

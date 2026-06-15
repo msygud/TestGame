@@ -51,6 +51,10 @@ namespace CitySim
         [Tooltip("팩션·방향당 MainKey 매핑. 인스펙터에서 직접 채운다.")]
         public List<Entry> Entries = new();
 
+        [Tooltip("배치 시 기본 도로 크기 (한 변 셀 수, 정사각형). 1 = 1×1, 2 = 2×2 등.")]
+        [Range(1, 8)]
+        public int DefaultSize = 1;
+
         // ── 검증 ────────────────────────────────────────────────────
         /// <summary>정합성 검사. 이슈 목록 반환 (에디터 윈도우에서 표시).</summary>
         public List<ValidationIssue> Validate()
