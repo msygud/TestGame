@@ -647,9 +647,11 @@ MonoBehaviour:
   SubSceneManifests:
   - {fileID: 11400000, guid: 265570b87a9f87e4b94ad5b83bd1df4e, type: 2}
   - {fileID: 11400000, guid: e276fa5a97a67244eb2b2631688e1ab8, type: 2}
-  OwnedDlcIdsForDev: 01000000
+  OwnedDlcIdsForDev: 
   StartMapId: 
   DevMapJson: 
+  DevMapJsonPath: Assets/_game/data/json/maps/NewMap.json
+  ExternalMapLoadControl: 0
 --- !u!4 &1206696573
 Transform:
   m_ObjectHideFlags: 0
@@ -1004,6 +1006,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1701608966}
   - component: {fileID: 1701608967}
+  - component: {fileID: 1701608968}
   m_Layer: 0
   m_Name: test
   m_TagString: Untagged
@@ -1038,6 +1041,33 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1a5415c6536d154449d191160dafd801, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Test
+--- !u!114 &1701608968
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1701608964}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 060c0f1cbd100b6449439a9ed84c6f77, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.SkirmishLobby
+  _slots:
+  - IsOpen: 1
+    TeamID: 0
+    IsPlayer: 1
+    Cell: {x: 0, y: 0}
+    FactionId: 0
+  - IsOpen: 1
+    TeamID: 1
+    IsPlayer: 0
+    Cell: {x: 0, y: 0}
+    FactionId: 0
+  _variantSettings: {fileID: 11400000, guid: ccdab0444f216564b8b905ad84e8e8ba, type: 2}
+  _allMapClear: 0
+  _dlcBootstrap: {fileID: 1206696572}
+  _mapId: hh
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

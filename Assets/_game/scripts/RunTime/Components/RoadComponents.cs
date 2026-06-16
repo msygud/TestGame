@@ -40,6 +40,15 @@ namespace CitySim
 
         /// <summary>footprint 원점(좌하단). FixupRoadLayer + 시각 스케일 계산에 사용.</summary>
         public int2 FootprintOrigin;
+
+        /// <summary>
+        /// 비주얼(프리팹 선택) 방향 강제값. RoadDir.None(0) = 강제 없음(셀 단위 자동 계산 사용).
+        /// Size>1인 블록은 origin 셀 기준 자동 계산이 블록 내부 방향까지 섞여 오염되므로,
+        /// 매크로(블록) 단위로 미리 계산한 값을 여기에 채워 비주얼 선택에만 사용한다.
+        /// 칸 단위 보행 경로(CivilianBFS)는 이 값과 무관하게 GridLayers.RoadLayer의
+        /// 셀별 Directions(자동 계산, 정확함)를 그대로 쓴다.
+        /// </summary>
+        public RoadDir VisualDirectionsOverride;
     }
 
     /// <summary>
@@ -73,6 +82,12 @@ namespace CitySim
         public int  FactionId;
         /// <summary>footprint 한 변 셀 수 (정사각형). 0 또는 1 = 1×1.</summary>
         public byte Size;
+        /// <summary>
+        /// 비주얼 방향 강제값. RoadDir.None(0) = 강제 없음(셀 단위 자동 계산).
+        /// Size>1 블록을 매크로 단위로 이어붙일 때(예: 베이스캠프 외곽 도로 링)
+        /// 호출자가 미리 계산한 블록 간 연결 방향을 여기에 채운다.
+        /// </summary>
+        public RoadDir VisualDirectionsOverride;
     }
 
     /// <summary>도로 철거 명령. 단발성.</summary>

@@ -16,6 +16,7 @@ namespace CitySim
             state.RequireForUpdate<GridLayers>();
             state.RequireForUpdate<PrefabLookup>();
             state.RequireForUpdate<RoadKeyLookup>();
+            state.RequireForUpdate<GridSettings>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -23,6 +24,7 @@ namespace CitySim
             var layers = SystemAPI.GetSingleton<GridLayers>();
             var lookup = SystemAPI.GetSingleton<PrefabLookup>();
             var roadKeys = SystemAPI.GetSingleton<RoadKeyLookup>();
+            var cellSize = SystemAPI.GetSingleton<GridSettings>().CellSize;
             var em = state.EntityManager;
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
@@ -103,11 +105,12 @@ namespace CitySim
                 ecb.AddComponent(road, new GridPosition { Value = origin });
                 ecb.AddComponent(road, new Road
                 {
-                    Directions      = layers.RoadLayer[origin].Directions,
-                    FactionId       = factionId,
-                    LaneCount       = laneCount,
-                    Size            = size,
-                    FootprintOrigin = origin,
+                    Directions                = layers.RoadLayer[origin].Directions,
+                    FactionId                 = factionId,
+                    LaneCount                 = laneCount,
+                    Size                      = size,
+                    FootprintOrigin           = origin,
+                    VisualDirectionsOverride  = cmd.ValueRO.VisualDirectionsOverride,
                 });
                 ecb.AddComponent(road, new RoadVisualInstance { Instance = Entity.Null });
                 ecb.AddComponent(road, new DirtyRoadTag());
@@ -228,7 +231,11 @@ namespace CitySim
 
                 // (FactionId, dirMask) → MainKey → 프리팹
                 // A 방식: 방향마다 MainKey가 다르므로 dirMask로 매번 MainKey를 찾는다.
-                var dirs2 = road.ValueRO.Directions;
+                // Size>1 블록은 origin 셀 자동계산 방향이 블록 내부 방향으로 오염되므로,
+                // VisualDirectionsOverride가 지정돼 있으면(매크로 단위 사전계산값) 그걸 우선한다.
+                var dirs2 = road.ValueRO.VisualDirectionsOverride != RoadDir.None
+                    ? road.ValueRO.VisualDirectionsOverride
+                    : road.ValueRO.Directions;
                 var factionId = road.ValueRO.FactionId;
                 Entity prefabEntity = Entity.Null;
 
@@ -243,8 +250,23 @@ namespace CitySim
                 if (prefabEntity != Entity.Null)
                 {
                     var instance = ecb2.Instantiate(prefabEntity);
-                    float3 worldPos = new float3(cell.x, 0f, cell.y);
-                    ecb2.SetComponent(instance, LocalTransform.FromPosition(worldPos));
+                    // 합의된 배치 규약: 오브젝트 로컬 원점(0,0)이 footprint 원점 셀에 그대로 맞춰진다.
+                    float3 worldPos = new float3(
+                        cell.x * cellSize,
+                        0f,
+                        cell.y * cellSize);
+
+                    // 프리팹에 미리 회전·스케일이 베이크돼 있으므로(방향별로 직접
+                    // 회전된 15종 프리팹) 위치만 바꾸고 회전/스케일은 보존한다.
+                    // LocalTransform.FromPosition은 회전을 identity로 덮어써버려
+                    // 모든 도로가 회전 0으로 보이는 버그의 원인이었다.
+                    var prefabTransform = em.GetComponentData<LocalTransform>(prefabEntity);
+                    ecb2.SetComponent(instance, new LocalTransform
+                    {
+                        Position = worldPos,
+                        Rotation = prefabTransform.Rotation,
+                        Scale    = prefabTransform.Scale,
+                    });
                     vis.ValueRW.Instance = instance;
                 }
 

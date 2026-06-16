@@ -100,6 +100,7 @@ namespace CitySim
             state.RequireForUpdate<GridLayers>();
             state.RequireForUpdate<GridMap>();
             state.RequireForUpdate<GridSettings>();
+            state.RequireForUpdate<RoadKeyLookup>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -110,6 +111,7 @@ namespace CitySim
             var entranceLookup   = SystemAPI.GetSingleton<EntranceLookup>();
             var gridMap          = SystemAPI.GetSingleton<GridMap>();
             var gridSettings     = SystemAPI.GetSingleton<GridSettings>();
+            var roadKeyLookup    = SystemAPI.GetSingleton<RoadKeyLookup>();
             // OccupancyLayer / TerrainLayer 수정이 필요하므로 RW
             ref var layers = ref SystemAPI.GetSingletonRW<GridLayers>().ValueRW;
 
@@ -120,7 +122,7 @@ namespace CitySim
             {
                 var r = req.ValueRO;
                 ProcessRequest(ref r, ref layers, prefabLookup, prefabMetaLookup,
-                    cellTypeLookup, entranceLookup, gridMap, gridSettings, ecb);
+                    cellTypeLookup, entranceLookup, gridMap, gridSettings, roadKeyLookup, ecb);
 
                 ecb.DestroyEntity(reqEntity);
             }
@@ -140,6 +142,7 @@ namespace CitySim
             EntranceLookup           entranceLookup,
             GridMap                  gridMap,
             GridSettings             settings,
+            RoadKeyLookup            roadKeyLookup,
             EntityCommandBuffer      ecb)
         {
             // ── 1. 메타 조회 ─────────────────────────────────────────
@@ -162,10 +165,12 @@ namespace CitySim
             // ── 2. 셀 검증 ──────────────────────────────────────────
             //   회전(req.RotationY)에 따라 footprint 크기를 교환한다.
             //   90°/270°에서 Size.x↔y 교환 — origin은 최소 코너로 유지(EntranceOps 규약).
-            //   도로는 항상 1×1이라 회전 무관.
+            //   도로 크기는 GamePrefabRegistry(항상 1×1 고정)가 아니라
+            //   RoadPrefabRegistry.DefaultSize(RoadKeyLookup으로 베이크)를 따른다 — 회전 무관.
             int rotSteps = meta.IsRoad ? 0 : EntranceOps.RotationToSteps(req.RotationY);
+            byte roadSize = meta.IsRoad ? roadKeyLookup.GetSize(req.FactionId) : (byte)1;
             int2 size = meta.IsRoad
-                ? meta.Size
+                ? new int2(roadSize, roadSize)
                 : EntranceOps.RotateSize(meta.Size, rotSteps);
 
             var  fail = ValidateCells(req.Cell, size, meta.BuildableOn,
@@ -201,7 +206,7 @@ namespace CitySim
 
             // ── 3. 스폰 요청 발행 ────────────────────────────────────
             if (meta.IsRoad)
-                EmitRoad(req, meta, ecb);
+                EmitRoad(req, roadSize, ecb);
             else if (meta.IsMulti)
                 EmitMulti(req, meta, size, settings, ecb);
             else
@@ -353,11 +358,9 @@ namespace CitySim
 
         static void EmitRoad(
             PlaceBuildingRequest req,
-            PrefabMeta           meta,
+            byte                 roadSize,
             EntityCommandBuffer  ecb)
         {
-            // meta.Size는 정사각형 보장 — Size.x를 한 변 길이로 전달
-            byte roadSize = (byte)math.max(1, meta.Size.x);
             var e = ecb.CreateEntity();
             ecb.AddComponent(e, new PlaceRoadCommand
             {

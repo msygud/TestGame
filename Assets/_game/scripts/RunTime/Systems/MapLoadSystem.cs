@@ -41,6 +41,7 @@ namespace CitySim
             state.RequireForUpdate<PrefabMetaLookup>();
             state.RequireForUpdate<CellTypeLookup>();
             state.RequireForUpdate<GridMap>();
+            state.RequireForUpdate<GridLayers>();
             state.RequireForUpdate<GridSettings>();
             state.RequireForUpdate<MapLoadRequest>();
         }
@@ -51,6 +52,8 @@ namespace CitySim
             var prefabMetaLookup = SystemAPI.GetSingleton<PrefabMetaLookup>();
             var cellTypeLookup   = SystemAPI.GetSingleton<CellTypeLookup>();
             var gridMap          = SystemAPI.GetSingleton<GridMap>();
+            // TerrainLayer 갱신이 필요하므로 RW
+            ref var layers       = ref SystemAPI.GetSingletonRW<GridLayers>().ValueRW;
             var em               = state.EntityManager;
             var ecb              = new EntityCommandBuffer(Allocator.Temp);
 
@@ -87,7 +90,7 @@ namespace CitySim
 
                 // 2. TerrainCells
                 SpawnTerrain(mapData, s, prefabLookup, cellTypeLookup,
-                    prefabMetaLookup, gridMap, ecb);
+                    prefabMetaLookup, gridMap, ref layers, ecb);
 
                 // 3. ResourceCells
                 SpawnResources(mapData, s, prefabLookup, cellTypeLookup,
@@ -128,6 +131,7 @@ namespace CitySim
             CellTypeLookup cellTypeLookup,
             PrefabMetaLookup metaLookup,
             GridMap gridMap,
+            ref GridLayers layers,
             EntityCommandBuffer ecb)
         {
             int spawned = 0;
@@ -140,6 +144,16 @@ namespace CitySim
                     continue;
                 }
 
+                // BuildingPlacementSystem.ValidateCells가 OutOfBounds/WrongTerrain/
+                // HeightMismatch 판정에 쓰는 레이어 — 여기서 채우지 않으면 모든 셀이
+                // 영원히 OutOfBounds로 판정돼 건물 배치가 100% 실패한다.
+                var cellPos = new int2(cell.X, cell.Y);
+                layers.TerrainLayer[cellPos] = new TerrainCell
+                {
+                    TypeId = cell.TypeId,
+                    Height = cell.Height,
+                };
+
                 var prefabEntity = prefabLookup.Get(typeInfo.MainKey, typeInfo.VariantKey);
                 if (prefabEntity == Entity.Null) continue;
 
@@ -150,7 +164,7 @@ namespace CitySim
                 ecb.SetComponent(instance, LocalTransform.FromPosition(worldPos));
 
                 if (!typeInfo.Passable)
-                    gridMap.BuildingCells.TryAdd(new int2(cell.X, cell.Y), instance);
+                    gridMap.BuildingCells.TryAdd(cellPos, instance);
 
                 spawned++;
             }
@@ -203,8 +217,15 @@ namespace CitySim
                 var prefabEntity = prefabLookup.Get(p.MainKey, p.VariantKey);
                 if (prefabEntity == Entity.Null) continue;
 
-                var meta     = metaLookup.Get(p.MainKey, p.VariantKey);
-                var worldPos = CellToWorld(p.CellX, p.CellZ, 0, s, meta.Offset);
+                var meta = metaLookup.Get(p.MainKey, p.VariantKey);
+                float cs = s.CellSize;
+
+                // 합의된 배치 규약: 오브젝트 로컬 원점(0,0)이 셀 인덱스에 그대로
+                // 맞춰진다 (중심 보정 없음). PositionY(높이) + OffsetX/Z(랜덤 오프셋) 반영.
+                var worldPos = new float3(
+                    p.CellX * cs + meta.Offset.x + p.OffsetX,
+                    p.PositionY + meta.Offset.y,
+                    p.CellZ * cs + meta.Offset.z + p.OffsetZ);
                 var rot      = quaternion.RotateY(math.radians(p.RotationY));
                 var scale    = p.Scale > 0f ? p.Scale : 1f;
 
@@ -317,9 +338,9 @@ namespace CitySim
         {
             float cs = s.CellSize;
             return new float3(
-                cx * cs + cs * 0.5f,
+                cx * cs,
                 heightStep * cs,
-                cz * cs + cs * 0.5f
+                cz * cs
             ) + offset;
         }
     }

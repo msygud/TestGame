@@ -51,7 +51,7 @@ namespace CitySim
 
             int grain = StockOf(in buf, Commodity.Grain);
             int flour = StockOf(in buf, Commodity.Flour);
-            Debug.Log($"[ProdTest] F{_frame}: Grain={grain} Flour={flour} Progress={job.Progress:F2}");
+            //Debug.Log($"[ProdTest] F{_frame}: Grain={grain} Flour={flour} Progress={job.Progress:F2}");
         }
 
         void Setup(ref SystemState state)

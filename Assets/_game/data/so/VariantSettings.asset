@@ -9,13 +9,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 0}
-  m_Name: FactionBaseDef_New
-  m_EditorClassIdentifier: Assembly-CSharp:CitySim:FactionBaseDefinition
-  FactionId: 0
-  BaseCampSize: 8
-  BaseEntries:
+  m_Script: {fileID: 11500000, guid: 72d87362d1024b6479b3df178e323cf2, type: 3}
+  m_Name: VariantSettings
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.VariantSettings
+  Entries:
   - MainKey: 0
-    VariantKeyOverride: 0
-    CellOffset: {x: 0, y: 0}
-    RotationY: 0
+    VariantKey: 0
+    ApplyTo: 0

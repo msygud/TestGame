@@ -48,6 +48,19 @@ namespace CitySim
         [TextArea(5, 20)]
         public string DevMapJson;
 
+        [Tooltip("맵 JSON 파일 경로 직접 입력 (개발용, Addressables 카탈로그 빌드 전 임시 테스트).\n" +
+                 "DevMapJson이 비어있을 때만 사용. 둘 다 비우면 Addressables에서 로드.")]
+        public string DevMapJsonPath;
+
+        // ── 외부 제어 (SkirmishLobby 등) ──────────────────────────
+        // true면 SubScene 로드 후 StartMapId 자동 로드를 건너뛴다.
+        // 로비가 팀 구성을 먼저 끝낸 뒤 LoadMap()을 직접 호출하는 흐름에서 사용.
+        // SkirmishLobby.Awake()가 Start() 실행 전에 이 값을 true로 설정한다.
+        [HideInInspector] public bool ExternalMapLoadControl;
+
+        /// <summary>SubScene 로드가 끝났는지 여부. 로비가 LoadMap 호출 전에 대기할 때 사용.</summary>
+        public bool SubScenesLoaded { get; private set; }
+
         // ── 내부 상태 ─────────────────────────────────────────────
         World _world;
 
@@ -73,9 +86,10 @@ namespace CitySim
 
             // 3. 보유 DLC SubScene 로드
             yield return LoadSubScenesCoroutine();
+            SubScenesLoaded = true;
 
-            // 4. 맵 로드 요청 생성
-            if (!string.IsNullOrEmpty(StartMapId))
+            // 4. 맵 로드 요청 생성 (로비가 직접 제어하는 경우 스킵)
+            if (!ExternalMapLoadControl && !string.IsNullOrEmpty(StartMapId))
                 yield return RequestMapLoadCoroutine(StartMapId);
         }
 
@@ -182,6 +196,19 @@ namespace CitySim
             {
                 mapData = JsonUtility.FromJson<MapData>(DevMapJson);
                 Debug.Log("[DlcBootstrap] 개발용 MapJson 사용.");
+            }
+            // 개발용: 파일 경로 직접 입력 (Addressables 카탈로그 빌드 전 임시 테스트)
+            else if (!string.IsNullOrEmpty(DevMapJsonPath))
+            {
+                if (!System.IO.File.Exists(DevMapJsonPath))
+                {
+                    Debug.LogError($"[DlcBootstrap] DevMapJsonPath 파일 없음: {DevMapJsonPath}");
+                    yield break;
+                }
+
+                string json = System.IO.File.ReadAllText(DevMapJsonPath, System.Text.Encoding.UTF8);
+                mapData = JsonUtility.FromJson<MapData>(json);
+                Debug.Log($"[DlcBootstrap] 개발용 경로에서 MapJson 로드: {DevMapJsonPath}");
             }
             else
             {

@@ -125,6 +125,9 @@ namespace CitySim
         /// <summary>packed(FactionId, dirMask) → MainKey</summary>
         public NativeHashMap<int, int> Table;
 
+        /// <summary>FactionId → 도로 배치 크기(한 변 셀 수). RoadPrefabRegistry.DefaultSize에서 옴.</summary>
+        public NativeHashMap<int, byte> SizeByFaction;
+
         /// <summary>(FactionId, dirMask)를 단일 정수 키로 패킹. dir는 0~15.</summary>
         public static int Pack(int factionId, RoadDir dir)
             => (factionId << 4) | ((int)dir & 0xF);
@@ -140,6 +143,14 @@ namespace CitySim
             mainKey = 0;
             return false;
         }
+
+        /// <summary>FactionId → 도로 배치 크기. 없으면 Faction 0(공통) 폴백, 그것도 없으면 1.</summary>
+        public byte GetSize(int factionId)
+        {
+            if (SizeByFaction.TryGetValue(factionId, out var size)) return size;
+            if (factionId != 0 && SizeByFaction.TryGetValue(0, out size)) return size;
+            return 1;
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -148,6 +159,8 @@ namespace CitySim
     //  RoadKeyAuthoring이 RoadPrefabRegistry SO의 Entries를 이 버퍼로 구워 넣고,
     //  RoadKeyBuildSystem이 게임 시작 시 읽어 RoadKeyLookup 싱글톤을 구성한다.
     //  (NeedMapping 베이킹 패턴과 동일.)
+    //  Size는 항목(Entry) 단위가 아니라 레지스트리(SO) 단위 값(DefaultSize)을
+    //  그 레지스트리에 등장하는 모든 FactionId에 동일하게 복제해 넣는다.
     // ══════════════════════════════════════════════════════════════════════════
     [InternalBufferCapacity(64)]
     public struct BakedRoadKey : IBufferElementData
@@ -155,5 +168,6 @@ namespace CitySim
         public int     FactionId;
         public RoadDir  Dir;
         public int      MainKey;
+        public byte     Size;
     }
 }

@@ -1,43 +1,8 @@
-using System;
-using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
-using UnityEngine;
 
 namespace CitySim
 {
-    // ══════════════════════════════════════════════════════════════
-    //  FactionDefinition  (ScriptableObject)
-    //
-    //  팩션 메타 정보 (이름/색상).
-    //  프리팹 목록은 NeedMappingEntry(FactionFlags)로 관리.
-    //  베리언트 설정은 VariantSettings SO + VariantProfile로 분리.
-    //
-    //  메뉴: Assets > Create > CitySim > Faction Definition
-    // ══════════════════════════════════════════════════════════════
-    [CreateAssetMenu(
-        menuName = "CitySim/Faction Definition",
-        fileName = "FactionDef_New")]
-    public class FactionDefinition : ScriptableObject
-    {
-        [Tooltip("전역 고유 팩션 ID.\n" +
-                 "NeedMappingEntry.FactionFlags 및\n" +
-                 "FactionBaseDefinition.FactionId와 반드시 일치.")]
-        public int FactionId;
-
-        [Tooltip("이 팩션이 속한 DLC 식별자.")]
-        public int DlcId = 0;
-
-        [Tooltip("팩션 이름 (UI 표시용).")]
-        public string FactionName = "New Faction";
-
-        [Tooltip("팩션 대표 색상 (미니맵/팀 표시).")]
-        public Color FactionColor = Color.white;
-
-        // VariantKey는 VariantSettings SO + VariantProfile로 이관.
-        // (VariantSelectionWindow에서 유닛별 User/AI 독립 설정)
-    }
-
     // ══════════════════════════════════════════════════════════════
     //  FactionConfig  (ECS 싱글톤)
     //
@@ -67,43 +32,31 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  FactionConfigAuthoring
-    // ══════════════════════════════════════════════════════════════
-    public class FactionConfigAuthoring : UnityEngine.MonoBehaviour
-    {
-        [Tooltip("프로젝트의 모든 FactionDefinition SO 목록.\n" +
-                 "Baker가 참조만 하며, 실제 슬롯 값은 SkirmishLobby가 런타임에 채운다.")]
-        public FactionDefinition[] FactionDefinitions;
-
-        class Baker : Unity.Entities.Baker<FactionConfigAuthoring>
-        {
-            public override void Bake(FactionConfigAuthoring authoring)
-            {
-                var e      = GetEntity(TransformUsageFlags.None);
-                var config = new FactionConfig
-                {
-                    // 최대 8팀. 실제 FactionId는 SkirmishLobby에서 채움.
-                    Slots = new NativeHashMap<int, FactionSlot>(8, Allocator.Persistent),
-                };
-
-                // 기본값: 전부 미배정 (-1)
-                for (int i = 0; i < 8; i++)
-                    config.Slots[i] = new FactionSlot { FactionId = -1 };
-
-                AddComponent(e, config);
-            }
-        }
-    }
-
-    // ══════════════════════════════════════════════════════════════
     //  FactionConfigSystem  — FactionConfig 생명주기 관리
+    //
+    //  NativeHashMap은 베이킹 시 직렬화 불가(포인터 포함)하므로
+    //  Baker가 아닌 여기 OnCreate에서 코드로 싱글톤을 생성한다.
+    //  (GridInitSystem/StampInitSystem과 동일한 패턴.)
     // ══════════════════════════════════════════════════════════════
     [Unity.Entities.UpdateInGroup(typeof(Unity.Entities.InitializationSystemGroup))]
     public partial struct FactionConfigSystem : Unity.Entities.ISystem
     {
         public void OnCreate(ref Unity.Entities.SystemState state)
         {
-            state.RequireForUpdate<FactionConfig>();
+            if (SystemAPI.HasSingleton<FactionConfig>()) return;
+
+            var config = new FactionConfig
+            {
+                // 최대 8팀. 실제 FactionId는 SkirmishLobby에서 채움.
+                Slots = new NativeHashMap<int, FactionSlot>(8, Allocator.Persistent),
+            };
+
+            // 기본값: 전부 미배정 (-1)
+            for (int i = 0; i < 8; i++)
+                config.Slots[i] = new FactionSlot { FactionId = -1 };
+
+            var e = state.EntityManager.CreateEntity(typeof(FactionConfig));
+            state.EntityManager.SetComponentData(e, config);
         }
 
         public void OnUpdate(ref Unity.Entities.SystemState state) { }

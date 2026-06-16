@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
-using Unity.Mathematics;
 using UnityEngine;
 using Game.Unit;
 using CitySim;
@@ -36,6 +35,14 @@ namespace Game
         [Tooltip("true 이면 전장의 안개 없이 전맵 공개 (관전·테스트용)")]
         [SerializeField] private bool _allMapClear;
 
+        [Header("맵 로드 연동")]
+        [Tooltip("이 로비가 게임 시작 시 직접 맵 로드를 트리거할 DlcBootstrap.\n" +
+                 "비워두면 DlcBootstrap이 자체 StartMapId로 독립 동작 (기존 동작 유지).")]
+        [SerializeField] private DlcBootstrap _dlcBootstrap;
+
+        [Tooltip("팀 구성 완료 후 로드할 맵 ID. _dlcBootstrap이 설정된 경우에만 사용.")]
+        [SerializeField] private string _mapId;
+
         // ── 런타임 결과 (GameStart 이후 읽기용) ───────────────────────────
         public int  UserSlotIndex { get; private set; } = -1;
         public int  UserTeamID   { get; private set; } = -1;
@@ -49,14 +56,30 @@ namespace Game
         //  Unity lifecycle
         // ══════════════════════════════════════════════════════════════════
 
+        private void Awake()
+        {
+            // DlcBootstrap.Start()가 실행되기 전에 (Awake는 모든 오브젝트에서
+            // Start보다 먼저 호출됨) 자체 StartMapId 자동 로드를 막아둔다.
+            // 실제 맵 로드는 팀 구성이 끝난 뒤 GameStart()에서 직접 트리거한다.
+            if (_dlcBootstrap != null)
+                _dlcBootstrap.ExternalMapLoadControl = true;
+        }
+
         private IEnumerator Start()
         {
             while (World.DefaultGameObjectInjectionWorld == null)
                 yield return null;
 
+            if (_dlcBootstrap != null)
+                while (!_dlcBootstrap.SubScenesLoaded)
+                    yield return null;
+
             _world       = World.DefaultGameObjectInjectionWorld;
             _initialized = true;
             GameStart();
+
+            if (_dlcBootstrap != null && !string.IsNullOrEmpty(_mapId))
+                _dlcBootstrap.LoadMap(_mapId);
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -187,11 +210,10 @@ namespace Game
                 em.AddComponentData(e, info.Data);
                 em.AddComponentData(e, new TeamUnitCountData { UnitCount = 0 });
 
-                em.AddComponentData(e, new TeamStartPoint
-                {
-                    Cell      = new int2(info.Cell.x, info.Cell.y),
-                    TeamIndex = info.SlotIndex,
-                });
+                // TeamStartPoint(Cell)는 여기서 만들지 않는다.
+                // 실제 좌표는 맵 로드 후 MapData.StartPoints에서 와야 하므로
+                // TeamStartPointMergeSystem이 맵 로드 완료 후 TeamIndex 기준으로 붙여준다.
+                // (TeamSlot.Cell은 더 이상 좌표 소스가 아님 — 맵 에디터의 StartPoint가 유일한 소스)
             }
 
             // ── ⑤ 가시성 싱글톤 ───────────────────────────────────────────

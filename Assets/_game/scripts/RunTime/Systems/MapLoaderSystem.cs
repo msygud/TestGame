@@ -163,18 +163,12 @@ namespace CitySim
         static void EmitSingleSpawn(EntityCommandBuffer ecb, SinglePlacement p, float cs,
             PrefabMetaLookup metaLookup)
         {
-            // Size > 1×1 항목은 footprint 중심으로 보정 (에디터와 동일한 계산)
-            float sizeX = 1f, sizeZ = 1f;
-            if (metaLookup.TryGetMeta(p.MainKey, p.VariantKey, out var meta))
-            {
-                sizeX = math.max(1, meta.Size.x);
-                sizeZ = math.max(1, meta.Size.y);
-            }
-
+            // 합의된 배치 규약: 오브젝트 로컬 원점(0,0)이 셀 인덱스에 그대로 맞춰진다
+            // (중심 보정 없음, Size와 무관).
             var position = new float3(
-                p.CellX * cs + sizeX * cs * 0.5f + p.OffsetX,
+                p.CellX * cs + p.OffsetX,
                 p.PositionY,
-                p.CellZ * cs + sizeZ * cs * 0.5f + p.OffsetZ);
+                p.CellZ * cs + p.OffsetZ);
 
             var e = ecb.CreateEntity();
             ecb.AddComponent(e, new SpawnRequest

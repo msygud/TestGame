@@ -1,0 +1,17 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5cc81cd5e26ccd747b983cfea5b64eef, type: 3}
+  m_Name: CellTypeRegistry
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.CellTypeRegistry
+  Types:
+  - {fileID: 11400000, guid: 81d43aa91cc8f034ea9b5e502a8e3ded, type: 2}
+  - {fileID: 11400000, guid: bd125b23996b5e34897612e1fd8185e5, type: 2}
