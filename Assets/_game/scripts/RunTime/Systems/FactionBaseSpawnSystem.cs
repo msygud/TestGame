@@ -217,6 +217,12 @@ namespace CitySim
                 if (IsRingMacroCell(mx, mz + 1, ringMacro)) dir |= RoadDir.N;
                 if (IsRingMacroCell(mx, mz - 1, ringMacro)) dir |= RoadDir.S;
 
+                bool hasEW = (dir & (RoadDir.E | RoadDir.W)) != RoadDir.None;
+                bool hasNS = (dir & (RoadDir.N | RoadDir.S)) != RoadDir.None;
+                var axis = (hasEW && hasNS) ? RoadPlacedAxis.Any
+                         : hasEW            ? RoadPlacedAxis.EW
+                                            : RoadPlacedAxis.NS;
+
                 var e = ecb.CreateEntity();
                 ecb.AddComponent(e, new PlaceRoadCommand
                 {
@@ -226,6 +232,7 @@ namespace CitySim
                     FactionId                 = factionId,
                     Size                      = (byte)step,
                     VisualDirectionsOverride  = dir,
+                    Axis                      = axis,
                 });
                 emitted++;
             }

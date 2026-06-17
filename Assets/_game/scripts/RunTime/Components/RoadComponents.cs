@@ -14,6 +14,14 @@ namespace CitySim
     // ========== 도로 ==========
 
     /// <summary>
+    /// 도로가 배치된 주행 축. 평행 도로 간 자동 연결 방지에 사용.
+    /// Any  = 모든 방향 연결 (지도 사전 배치, 베이스캠프 도로).
+    /// EW   = 동서 축으로 배치된 도로 (남북 방향 연결은 교차 도로만 허용).
+    /// NS   = 남북 축으로 배치된 도로.
+    /// </summary>
+    public enum RoadPlacedAxis : byte { Any = 0, EW = 1, NS = 2 }
+
+    /// <summary>
     /// 도로 태그 + 시각 데이터.
     /// 길찾기는 GridLayers.RoadLayer가 담당.
     /// 이 컴포넌트는 시각 프리팹 관리용.
@@ -49,6 +57,9 @@ namespace CitySim
         /// 셀별 Directions(자동 계산, 정확함)를 그대로 쓴다.
         /// </summary>
         public RoadDir VisualDirectionsOverride;
+
+        /// <summary>배치 축. 평행 도로 간 자동 연결 차단에 사용.</summary>
+        public RoadPlacedAxis Axis;
     }
 
     /// <summary>
@@ -88,6 +99,9 @@ namespace CitySim
         /// 호출자가 미리 계산한 블록 간 연결 방향을 여기에 채운다.
         /// </summary>
         public RoadDir VisualDirectionsOverride;
+
+        /// <summary>배치 축. RoadBuildController가 드래그 방향에서 결정.</summary>
+        public RoadPlacedAxis Axis;
     }
 
     /// <summary>도로 철거 명령. 단발성.</summary>

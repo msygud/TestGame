@@ -76,6 +76,33 @@
 - ✅ **블록(매크로) 단위 방향 계산 신규 도입**: 기존 `RoadSystem.ComputeDirections`는 셀 1개 기준이라 `Size>1`이면 블록 내부 셀까지 "연결됨"으로 잡혀 방향이 오염됨. `Road`/`PlaceRoadCommand`에 `VisualDirectionsOverride` 추가 — 비주얼(프리팹 선택)만 이 값 우선 사용, 보행 경로(`CivilianBFS`)가 쓰는 셀 단위 방향은 그대로 자동계산(정확함, 영향 없음). `FactionBaseSpawnSystem.EmitPerimeterRoads`가 매크로 좌표 인접성으로 직접 계산해서 채움.
 - ✅ **회전 버그 수정**: `RoadSystem`이 도로 인스턴스화 시 `LocalTransform.FromPosition(...)`을 써서 프리팹에 미리 베이크된 회전을 매번 identity(0)로 덮어쓰고 있었음 — 방향별로 직접 회전시킨 15종 프리팹을 등록해도 전부 회전 0으로 보이던 원인. 이제 프리팹의 원래 Rotation/Scale을 읽어서 보존.
 
+### 인게임 HUD (2026-06-17)
+- ✅ `GameHUD.cs` — 도로/건설 탭 UI MonoBehaviour (Canvas 씬 설정은 유저 담당)
+  - 도로 탭: 건설 시작/중지 토글, 확정, 되돌리기 버튼 + 구간 수 레이블
+  - 단축키: Enter/Space=확정, Z=되돌리기, Escape=모드 해제
+  - `RoadBuildController` API(`EnterBuildMode`, `ExitBuildMode`, `Confirm`, `Undo`, `IsModeActive`, `SegmentCount`) 위임
+- ⬜ Unity 에디터에서 Canvas 계층 구성 및 GameHUD 필드 와이어링
+- ⬜ 건설 탭 — 건물 배치 UI (미착수)
+
+### 도로 방향·연결 정책 (2026-06-17~18)
+- ✅ **`RoadPlacedAxis (Any/EW/NS)` 도입** — 평행 도로 간 자동 연결 차단
+  - `RoadCell`, `Road`, `PlaceRoadCommand` 모두에 `Axis` 필드 추가
+  - `ComputeAxisFilteredMacroDirections`: `myAllows || neighborAllows` 규칙 — 한쪽이라도 허용하면 연결
+- ✅ **`ComputeMacroDirections`** 신규 도입 — `Size>1` 도로의 내부 셀 방향 오염 방지 (경계 셀만 검사)
+- ✅ **L-드래그 폐지** — 한 드래그 = 단일 축 직선만 허용 (지배 축 자동 선택)
+  - 여러 방향 도로는 직선 드래그 복수 → 단일 Confirm
+  - `Confirm()`에서 세그먼트 축 = `EW` or `NS` (코너 `Any` 없음)
+- ✅ **베이스캠프 외곽 도로 `Axis` 자동 결정** (`FactionBaseSpawnSystem.EmitPerimeterRoads`)
+  - 직선 구간: `dir`에 EW만 있으면 `Axis=EW`, NS만 있으면 `Axis=NS`
+  - 코너 셀: 두 축 모두 있으면 `Axis=Any` (코너이므로 양방향 연결 허용)
+- ✅ **플레이어별 도로 레이어 분리** (2026-06-18)
+  - `ComputeDirections`, `ComputeMacroDirections`, `ComputeAxisFilteredMacroDirections` 모두 `ownerLocalId` 파라미터 추가
+  - 이웃 셀 `OwnerLocalId` 불일치 시 연결 무시 → 다른 플레이어 도로와 시각적·비트마스크 모두 분리
+  - `UpdateFootprintBoundaryDirections`: 이웃 갱신 시 그 이웃 자신의 `OwnerLocalId` 사용
+  - BFS(`CivilianBFS`)는 원래부터 `OwnerLocalId` 체크 → 경로 탐색은 이미 분리돼 있었음
+- ❓ 물-육지 경계 삼거리 이슈 — `StampTestBootstrap`이 원인으로 추정, 미확인
+- ❓ 인접 평행 도로를 가로질러 수직 도로 연결 불가 — 점유 레이어가 막음. 설계 제약으로 수용 (최소 1셀 간격 필요)
+
 ### 다음 단계
 - ⬜ 그라운드 큐브 같은 중심-피벗 프리팹들의 `RegistryItem.Offset` 일괄 점검/설정
 - ⬜ 시민 초기 스폰 트리거 (여전히 미착수)

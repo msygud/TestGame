@@ -33,7 +33,7 @@ namespace CitySim
                      SystemAPI.Query<RefRO<PreviewRoadCommand>>().WithEntityAccess())
             {
                 var cell = cmd.ValueRO.Cell;
-                var dirs = ComputeDirections(cell, layers.RoadLayer);
+                var dirs = ComputeDirections(cell, cmd.ValueRO.OwnerLocalId, layers.RoadLayer);
 
                 var oldQ = SystemAPI.QueryBuilder().WithAll<RoadPreview>().Build();
                 ecb.DestroyEntity(oldQ, EntityQueryCaptureMode.AtPlayback);
@@ -64,12 +64,14 @@ namespace CitySim
                 }
                 if (blocked) { ecb.DestroyEntity(cmdEntity); continue; }
 
+                var placedAxis = cmd.ValueRO.Axis;
+
                 // footprint 전체 셀을 RoadLayer + OccupancyLayer에 등록
                 for (int dx = 0; dx < size; dx++)
                 for (int dz = 0; dz < size; dz++)
                 {
                     var c    = origin + new int2(dx, dz);
-                    var dirs = ComputeDirections(c, layers.RoadLayer);
+                    var dirs = ComputeDirections(c, ownerLocalId, layers.RoadLayer);
                     layers.RoadLayer.Add(c, new RoadCell
                     {
                         Directions      = dirs,
@@ -79,6 +81,7 @@ namespace CitySim
                         RoadEntity      = Entity.Null,
                         FootprintOrigin = origin,
                         Size            = size,
+                        Axis            = placedAxis,
                     });
                     layers.OccupancyLayer[c] = new OccupancyCell
                     {
@@ -95,7 +98,7 @@ namespace CitySim
                 {
                     var c = origin + new int2(dx, dz);
                     if (!layers.RoadLayer.TryGetValue(c, out var rc)) continue;
-                    rc.Directions = ComputeDirections(c, layers.RoadLayer);
+                    rc.Directions = ComputeDirections(c, ownerLocalId, layers.RoadLayer);
                     rc.FlowAxis   = ComputeFlowAxis(rc.Directions);
                     layers.RoadLayer[c] = rc;
                 }
@@ -105,12 +108,13 @@ namespace CitySim
                 ecb.AddComponent(road, new GridPosition { Value = origin });
                 ecb.AddComponent(road, new Road
                 {
-                    Directions                = layers.RoadLayer[origin].Directions,
-                    FactionId                 = factionId,
-                    LaneCount                 = laneCount,
-                    Size                      = size,
-                    FootprintOrigin           = origin,
-                    VisualDirectionsOverride  = cmd.ValueRO.VisualDirectionsOverride,
+                    Directions               = layers.RoadLayer[origin].Directions,
+                    FactionId                = factionId,
+                    LaneCount                = laneCount,
+                    Size                     = size,
+                    FootprintOrigin          = origin,
+                    VisualDirectionsOverride = cmd.ValueRO.VisualDirectionsOverride,
+                    Axis                     = placedAxis,
                 });
                 ecb.AddComponent(road, new RoadVisualInstance { Instance = Entity.Null });
                 ecb.AddComponent(road, new DirtyRoadTag());
@@ -219,23 +223,23 @@ namespace CitySim
                 if (vis.ValueRO.Instance != Entity.Null)
                 {
                     ecb2.DestroyEntity(vis.ValueRO.Instance);
-                    vis.ValueRW.Instance = Entity.Null;
+                    ecb2.SetComponent(e, new RoadVisualInstance { Instance = Entity.Null });
                 }
 
                 var cell = gp.ValueRO.Value;
+                int visualOwner = -1;
                 if (layers.RoadLayer.TryGetValue(cell, out var roadCell))
                 {
                     road.ValueRW.Directions = roadCell.Directions;
-                    road.ValueRW.LaneCount = roadCell.LaneCount;
+                    road.ValueRW.LaneCount  = roadCell.LaneCount;
+                    visualOwner             = roadCell.OwnerLocalId;
                 }
 
-                // (FactionId, dirMask) → MainKey → 프리팹
-                // A 방식: 방향마다 MainKey가 다르므로 dirMask로 매번 MainKey를 찾는다.
-                // Size>1 블록은 origin 셀 자동계산 방향이 블록 내부 방향으로 오염되므로,
-                // VisualDirectionsOverride가 지정돼 있으면(매크로 단위 사전계산값) 그걸 우선한다.
-                var dirs2 = road.ValueRO.VisualDirectionsOverride != RoadDir.None
-                    ? road.ValueRO.VisualDirectionsOverride
-                    : road.ValueRO.Directions;
+                // 비주얼 방향: 축 필터링된 매크로 방향으로 항상 재계산.
+                // 소유자 필터도 포함 — 다른 플레이어의 도로에 시각적으로 연결되지 않도록.
+                byte macroSize = road.ValueRO.Size <= 1 ? (byte)1 : road.ValueRO.Size;
+                var dirs2 = ComputeAxisFilteredMacroDirections(
+                    cell, macroSize, road.ValueRO.Axis, visualOwner, layers.RoadLayer);
                 var factionId = road.ValueRO.FactionId;
                 Entity prefabEntity = Entity.Null;
 
@@ -267,7 +271,9 @@ namespace CitySim
                         Rotation = prefabTransform.Rotation,
                         Scale    = prefabTransform.Scale,
                     });
-                    vis.ValueRW.Instance = instance;
+                    // instance는 ecb2의 지연 엔티티 — 직접 쓰면 다음 프레임 ecb2에서
+                    // "different command buffer" 오류 발생. ECB에 위임해 playback 시 해소.
+                    ecb2.SetComponent(e, new RoadVisualInstance { Instance = instance });
                 }
 
                 ecb2.RemoveComponent<DirtyRoadTag>(e);
@@ -279,16 +285,86 @@ namespace CitySim
 
         // ── 헬퍼 ──────────────────────────────────────────────────
 
+        // 셀 단위 — BFS/점유 계산용 (Size=1일 때 MacroDirections와 동일).
+        // 같은 소유자의 도로만 연결.
         public static RoadDir ComputeDirections(
-            int2 cell,
+            int2 cell, int ownerLocalId,
             NativeHashMap<int2, RoadCell> roadLayer)
         {
             RoadDir dirs = RoadDir.None;
             for (int i = 0; i < 4; i++)
             {
                 var nCell = cell + RoadDirOps.Offsets[i];
-                if (roadLayer.ContainsKey(nCell))
+                if (roadLayer.TryGetValue(nCell, out var nc) && nc.OwnerLocalId == ownerLocalId)
                     dirs |= RoadDirOps.FromIndex(i);
+            }
+            return dirs;
+        }
+
+        // 매크로 단위 — 비주얼 프리팹 선택용.
+        // footprint 외곽 경계 너머의 같은 소유자 도로만 본다.
+        public static RoadDir ComputeMacroDirections(
+            int2 origin, byte size, int ownerLocalId,
+            NativeHashMap<int2, RoadCell> roadLayer)
+        {
+            RoadDir dirs = RoadDir.None;
+            for (int d = 0; d < 4; d++)
+            {
+                var off = RoadDirOps.Offsets[d];
+                bool found = false;
+                for (int i = 0; i < size && !found; i++)
+                {
+                    int2 check = off.x != 0
+                        ? new int2(origin.x + (off.x > 0 ? size : -1), origin.y + i)
+                        : new int2(origin.x + i, origin.y + (off.y > 0 ? size : -1));
+                    if (roadLayer.TryGetValue(check, out var nc) && nc.OwnerLocalId == ownerLocalId)
+                        found = true;
+                }
+                if (found) dirs |= RoadDirOps.FromIndex(d);
+            }
+            return dirs;
+        }
+
+        // 축 필터링 매크로 방향.
+        // 두 도로가 방향 D로 연결되려면:
+        //   ① 같은 소유자여야 하고
+        //   ② 적어도 한 쪽이 그 방향 축을 허용해야 한다.
+        //   EW 도로: E/W 연결 허용. N/S는 이웃이 NS 또는 Any일 때만 허용(교차로).
+        //   NS 도로: N/S 연결 허용. E/W는 이웃이 EW 또는 Any일 때만 허용.
+        //   Any    : 모든 방향 연결 허용 (지도 사전 배치, 베이스캠프).
+        // → 같은 축 평행 도로끼리는 연결 안 됨. 다른 소유자 도로와도 연결 안 됨.
+        public static RoadDir ComputeAxisFilteredMacroDirections(
+            int2 origin, byte size, RoadPlacedAxis myAxis, int ownerLocalId,
+            NativeHashMap<int2, RoadCell> roadLayer)
+        {
+            RoadDir dirs = RoadDir.None;
+            for (int d = 0; d < 4; d++)
+            {
+                var off   = RoadDirOps.Offsets[d];
+                bool isEW = off.x != 0; // true=E/W, false=N/S
+
+                bool myAllows = myAxis == RoadPlacedAxis.Any
+                    || (myAxis == RoadPlacedAxis.EW && isEW)
+                    || (myAxis == RoadPlacedAxis.NS && !isEW);
+
+                bool found = false;
+                for (int i = 0; i < size && !found; i++)
+                {
+                    int2 check = isEW
+                        ? new int2(origin.x + (off.x > 0 ? size : -1), origin.y + i)
+                        : new int2(origin.x + i, origin.y + (off.y > 0 ? size : -1));
+
+                    if (!roadLayer.TryGetValue(check, out var neighbor)) continue;
+                    if (neighbor.OwnerLocalId != ownerLocalId) continue; // 다른 플레이어 무시
+
+                    bool neighborAllows = neighbor.Axis == RoadPlacedAxis.Any
+                        || (neighbor.Axis == RoadPlacedAxis.EW && isEW)
+                        || (neighbor.Axis == RoadPlacedAxis.NS && !isEW);
+
+                    if (myAllows || neighborAllows)
+                        found = true;
+                }
+                if (found) dirs |= RoadDirOps.FromIndex(d);
             }
             return dirs;
         }
@@ -327,7 +403,7 @@ namespace CitySim
                     if (!visited.Add(nCell)) continue;
                     if (!layers.RoadLayer.TryGetValue(nCell, out var nRoadCell)) continue;
 
-                    var newDirs = ComputeDirections(nCell, layers.RoadLayer);
+                    var newDirs = ComputeDirections(nCell, nRoadCell.OwnerLocalId, layers.RoadLayer);
                     nRoadCell.Directions = newDirs;
                     nRoadCell.FlowAxis   = ComputeFlowAxis(newDirs);
                     layers.RoadLayer[nCell] = nRoadCell;

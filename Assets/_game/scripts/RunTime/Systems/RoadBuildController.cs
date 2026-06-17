@@ -3,6 +3,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace CitySim
 {
@@ -44,12 +45,8 @@ namespace CitySim
         [Tooltip("차선 수 (2 기본, 4 업그레이드).")]
         public byte LaneCount = 2;
 
-        [Tooltip("도로 크기 출처. 지정 시 Registry.DefaultSize를 사용. 비우면 Size 필드 직접 사용.")]
+        [Tooltip("도로 비주얼 프리팹 레지스트리. 크기 결정에는 사용하지 않음 (항상 1×1).")]
         public RoadPrefabRegistry Registry;
-
-        [Tooltip("Registry가 없을 때 사용할 도로 크기 (한 변 셀 수). 1 = 1×1.")]
-        [Range(1, 8)]
-        public int Size = 1;
 
         [Header("상태 (읽기용)")]
         [SerializeField] bool _modeActive;
@@ -69,6 +66,8 @@ namespace CitySim
         bool       _dragging;
         int2       _dragStart;
         List<int2> _currentDrag = new();   // 현재 드래그 중 셀 (확정 전)
+        bool       _hasHover;
+        int2       _hoverCell;
 
         EntityManager _em;
         Entity        _previewEntity;
@@ -165,13 +164,24 @@ namespace CitySim
             // 한 셀당 한 번만 명령 발행되도록 집합으로 정리.
             var placed = new HashSet<int2>(new Int2Comparer());
             var layers = GetLayers(out bool hasLayers);
+            byte roadSize = 1;
 
             foreach (var seg in _segments)
             {
+                if (seg.Count == 0) continue;
+
+                int2 segStart = seg[0];
+                int2 segEnd   = seg[seg.Count - 1];
+                // BuildPath가 단일 축만 생성하므로 코너(Any) 없음
+                bool hasH = segEnd.x != segStart.x;
+                RoadPlacedAxis segAxis = hasH ? RoadPlacedAxis.EW : RoadPlacedAxis.NS;
+
                 foreach (var cell in seg)
                 {
-                    if (!placed.Add(cell)) continue;          // 이미 발행
-                    if (hasLayers && !IsCellPlaceable(cell, layers)) continue; // 불가 셀 스킵
+                    if (!placed.Add(cell)) continue;
+                    if (hasLayers && !IsCellPlaceable(cell, layers)) continue;
+
+                    RoadPlacedAxis axis = segAxis;
 
                     var e = _em.CreateEntity();
                     _em.AddComponentData(e, new PlaceRoadCommand
@@ -180,7 +190,8 @@ namespace CitySim
                         OwnerLocalId = slot,
                         LaneCount    = LaneCount,
                         FactionId    = faction,
-                        Size         = (byte)(Registry != null ? Registry.DefaultSize : Size),
+                        Size         = roadSize,
+                        Axis         = axis,
                     });
                 }
             }
@@ -197,69 +208,70 @@ namespace CitySim
         // ───────────────────────────────────────────────────────────
         void HandleDragInput()
         {
-            if (!TryGetHoverCell(out int2 cell)) return;
+            var mouse = Mouse.current;
+            if (mouse == null) return;
 
-            if (Input.GetMouseButtonDown(0))
+            if (!TryGetHoverCell(out int2 cell))
             {
-                _dragging = true;
-                _dragStart = cell;
-                _currentDrag = BuildPath(_dragStart, cell);
+                _hasHover = false;
+                return;
             }
-            else if (_dragging && Input.GetMouseButton(0))
+            _hasHover  = true;
+            _hoverCell = cell;
+
+            int step = CurrentRoadSize();
+            if (mouse.leftButton.wasPressedThisFrame)
             {
-                _currentDrag = BuildPath(_dragStart, cell);
+                _dragging  = true;
+                _dragStart = cell;   // 시작점은 1셀 정밀도 그대로
+                _currentDrag = BuildPath(_dragStart, cell, step);
             }
-            else if (_dragging && Input.GetMouseButtonUp(0))
+            else if (_dragging && mouse.leftButton.isPressed)
+            {
+                _currentDrag = BuildPath(_dragStart, cell, step);
+            }
+            else if (_dragging && mouse.leftButton.wasReleasedThisFrame)
             {
                 _dragging = false;
-                var path = BuildPath(_dragStart, cell);
+                var path = BuildPath(_dragStart, cell, step);
                 if (path.Count > 0)
-                {
-                    _segments.Add(path);   // 한 드래그 = 한 segment
-                }
+                    _segments.Add(path);
                 _currentDrag.Clear();
             }
         }
 
         // ───────────────────────────────────────────────────────────
-        //  경로 계산 — 자동 축 고정 + L자
+        //  경로 계산 — 단일 축 직선
         //
-        //  start→end 를 격자 직선으로 보정한다.
-        //    - 가로 이동량 ≥ 세로 이동량 → 가로 우세.
-        //    - 한 축만 있으면 직선.
-        //    - 두 축 다 있으면 L자: "가로 먼저, 그다음 세로" (사용자 선택 옵션 1).
-        //  대각선·계단식 없음. 살짝 어긋나도 항상 직선/L자.
+        //  드래그 이동량이 큰 축 하나만 사용 (L자 없음).
+        //  동점이면 수평(X) 우선.
+        //  → 코너 셀(Axis=Any) 생성을 원천 차단.
         // ───────────────────────────────────────────────────────────
-        static List<int2> BuildPath(int2 start, int2 end)
+        static List<int2> BuildPath(int2 start, int2 end, int step)
         {
             var path = new List<int2>();
 
             int dx = end.x - start.x;
             int dz = end.y - start.y;
-            int adx = math.abs(dx);
-            int adz = math.abs(dz);
 
-            int sx = (int)math.sign(dx);
-            int sz = (int)math.sign(dz);
-
-            // 코너 지점: 가로 먼저 진행 → (end.x, start.z) 에서 꺾어 세로로.
-            int2 corner = new int2(end.x, start.y);
-
-            // 1) 가로 구간: start.x → end.x (start.z 고정)
-            int x = start.x;
-            path.Add(new int2(x, start.y));
-            while (x != end.x)
+            // 더 많이 움직인 축 하나만 사용
+            if (math.abs(dx) >= math.abs(dz))
             {
-                x += sx;
+                // 수평(X) 직선
+                int ex = start.x + (dx / step) * step;
+                int sx = (int)math.sign(ex - start.x);
+                int x  = start.x;
                 path.Add(new int2(x, start.y));
+                while (x != ex) { x += sx; path.Add(new int2(x, start.y)); }
             }
-
-            // 2) 세로 구간: corner.z → end.z (end.x 고정), 코너 중복 제외
-            int z = start.y;
-            while (z != end.y)
+            else
             {
-                z += sz;
-                path.Add(new int2(end.x, z));
+                // 수직(Z) 직선
+                int ez = start.y + (dz / step) * step;
+                int sz = (int)math.sign(ez - start.y);
+                int z  = start.y;
+                path.Add(new int2(start.x, z));
+                while (z != ez) { z += sz; path.Add(new int2(start.x, z)); }
             }
 
             return path;
@@ -271,6 +283,16 @@ namespace CitySim
         void RebuildPreviewBuffer()
         {
             if (!_ecsReady) return;
+
+            // RoadSize를 매 프레임 동기화 (Registry.DefaultSize 변경 대응)
+            var previewState = _em.GetComponentData<RoadBuildPreviewState>(_previewEntity);
+            byte curSize = CurrentRoadSize();
+            if (previewState.RoadSize != curSize)
+            {
+                previewState.RoadSize = curSize;
+                _em.SetComponentData(_previewEntity, previewState);
+            }
+
             var buf = _em.GetBuffer<PreviewCell>(_previewEntity);
             buf.Clear();
 
@@ -288,7 +310,7 @@ namespace CitySim
                 }
             }
 
-            // 현재 드래그 중 segment
+            // 드래그 중이면 드래그 경로, 아니면 호버 셀 1개
             if (_dragging)
             {
                 foreach (var cell in _currentDrag)
@@ -296,6 +318,11 @@ namespace CitySim
                     bool valid = !hasLayers || IsCellPlaceable(cell, layers);
                     buf.Add(new PreviewCell { Cell = cell, Valid = valid, Kind = PreviewKind.Dragging });
                 }
+            }
+            else if (_hasHover)
+            {
+                bool valid = !hasLayers || IsCellPlaceable(_hoverCell, layers);
+                buf.Add(new PreviewCell { Cell = _hoverCell, Valid = valid, Kind = PreviewKind.Dragging });
             }
 
             _pendingCellCount = cellCount;
@@ -314,8 +341,10 @@ namespace CitySim
         // ───────────────────────────────────────────────────────────
         bool IsCellPlaceable(int2 cell, GridLayers layers)
         {
-            // 이미 도로면 "가능"으로 본다(겹쳐 그어도 모양만 갱신, RoadSystem에서 처리).
-            if (layers.RoadLayer.ContainsKey(cell)) return true;
+            // 1×1 도로: 기존 도로 위 재배치 허용 (모양 갱신).
+            // 멀티셀 도로: 기존 도로와 겹치면 끼워넣기가 되므로 불허.
+            if (layers.RoadLayer.ContainsKey(cell))
+                return CurrentRoadSize() <= 1;
 
             // 그 외 점유(건물/유닛/지형)면 불가.
             if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty)
@@ -337,7 +366,10 @@ namespace CitySim
             if (BuildCamera == null) return false;
             if (!SystemAPI_TryGetCellSize(out float cs) || cs <= 0f) return false;
 
-            Ray ray = BuildCamera.ScreenPointToRay(Input.mousePosition);
+            var mouse = Mouse.current;
+            if (mouse == null) return false;
+            Ray ray = BuildCamera.ScreenPointToRay(
+                (Vector2)mouse.position.ReadValue());
 
             // 1) 콜라이더 우선
             if (Physics.Raycast(ray, out var hit, 5000f, GroundLayerMask))
@@ -403,8 +435,14 @@ namespace CitySim
         void SetPreviewActive(bool active)
         {
             if (!_ecsReady) return;
-            _em.SetComponentData(_previewEntity, new RoadBuildPreviewState { Active = active });
+            _em.SetComponentData(_previewEntity, new RoadBuildPreviewState
+            {
+                Active   = active,
+                RoadSize = CurrentRoadSize(),
+            });
         }
+
+        byte CurrentRoadSize() => 1;
 
         GridLayers GetLayers(out bool ok)
         {

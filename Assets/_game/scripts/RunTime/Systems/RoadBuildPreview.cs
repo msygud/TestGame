@@ -43,7 +43,8 @@ namespace CitySim
     /// </summary>
     public struct RoadBuildPreviewState : IComponentData
     {
-        public bool Active;   // 도로 건설 모드 ON일 때만 그림
+        public bool Active;
+        public byte RoadSize;  // 도로 한 변 셀 수 (1이상), 프리뷰 쿼드 크기 결정
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -89,6 +90,8 @@ namespace CitySim
             if (_mat != null) Object.DestroyImmediate(_mat);
         }
 
+        float _halfExtent;  // = RoadSize * cellSize * 0.5f
+
         // 메인스레드: 버퍼 → 그리기 캐시로 스냅샷.
         protected override void OnUpdate()
         {
@@ -101,6 +104,9 @@ namespace CitySim
             var settings = SystemAPI.GetSingleton<GridSettings>();
             _cellSize = settings.CellSize;
             if (_cellSize <= 0f) return;
+
+            int roadSize = math.max(1, state.RoadSize);
+            _halfExtent = roadSize * _cellSize * 0.5f;
 
             var previewEntity = SystemAPI.GetSingletonEntity<RoadBuildPreviewState>();
             if (!EntityManager.HasBuffer<PreviewCell>(previewEntity)) return;
@@ -115,8 +121,9 @@ namespace CitySim
                     ? (pc.Valid ? ValidDragging : InvalidDragging)
                     : (pc.Valid ? ValidPending  : InvalidPending);
 
-                float cx = pc.Cell.x * _cellSize + _cellSize * 0.5f;
-                float cz = pc.Cell.y * _cellSize + _cellSize * 0.5f;
+                // Cell은 footprint 원점(좌하단). 쿼드 중심 = 원점 + halfExtent
+                float cx = pc.Cell.x * _cellSize + _halfExtent;
+                float cz = pc.Cell.y * _cellSize + _halfExtent;
                 _cells.Add(new DrawCell { Center = new float3(cx, 0.05f, cz), Color = c });
             }
             _hasData = _cells.Count > 0;
@@ -131,8 +138,7 @@ namespace CitySim
             if (cam.cameraType != CameraType.Game && cam.cameraType != CameraType.SceneView)
                 return;
 
-            float inset = _cellSize * 0.08f;
-            float h = _cellSize * 0.5f - inset;
+            float h = _halfExtent;
 
             _mat.SetPass(0);
             GL.PushMatrix();

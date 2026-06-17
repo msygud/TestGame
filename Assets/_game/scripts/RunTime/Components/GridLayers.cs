@@ -188,6 +188,9 @@ namespace CitySim
 
         /// <summary>footprint 한 변 셀 수 (항상 정사각형). 1 = 1×1.</summary>
         public byte Size;
+
+        /// <summary>배치 축 — 평행 도로 간 자동 연결 차단용.</summary>
+        public RoadPlacedAxis Axis;
     }
 
     // ══════════════════════════════════════════════════════════════
