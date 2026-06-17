@@ -65,8 +65,9 @@
 ### 베이스캠프 배치 좌표계
 - ✅ **"시작점에서 우상향(+X+Z)으로만 확장, 절대 음수 좌표 금지"** 규칙 확정 (메모리에도 저장: `feedback_grid_index_origin`)
 - ✅ `campSize`(BaseCampSize)는 **건물 전용 안쪽 영역** 크기. 도로는 그 바깥에 한 겹(`roadSize`만큼) 두름. `buildOrigin = originCell + (roadSize, roadSize)`로 안쪽 이동, 도로 링은 `originCell` 그대로(음수 없음).
-- ✅ **배치 위치 공식 통일**: "오브젝트 로컬 원점(0,0)이 셀 인덱스에 그대로 맞춰진다" — `index * cellSize`만 쓰고 `+size*0.5` 같은 중심 보정 전부 제거 (에디터+런타임 17곳: `GridSettings.CellCenter`, `MapLoadSystem`(`CellToWorld`/`SpawnSingles`), `MapLoaderSystem`, `RoadSystem`, `MapEditorWindow`의 모든 Instantiate/Preview/Label 함수).
-  - 프리팹 자체 피벗이 중심인 경우(예: 콜라이더용 큰 그라운드 큐브)는 코드에서 보정하지 않고 **`RegistryItem.Offset` 필드**(이미 모든 공식에 `+ meta.Offset`으로 더해짐)로 그 프리팹 항목에만 보정값을 넣어 해결.
+- ✅ **배치 위치 공식**: `(index + 0.5f) * cellSize` — 오브젝트 중심이 셀 중심에 맞춰짐.
+  - `GridSettings.CellCenter`, `MapLoadSystem.CellToWorld`, `MapLoaderSystem.EmitSingleSpawn`, `RoadSystem` worldPos, `MapEditorWindow` Instantiate/Preview 함수 전체 일치.
+  - (2026-06-17) 한 차례 `index * cellSize`로 변경했다가 원복함.
 - ✅ **`GridLayers.TerrainLayer` 미등록 버그 발견·수정** — `MapLoadSystem.SpawnTerrain`이 지형 비주얼만 스폰하고 `TerrainLayer`(건물 배치 검증이 보는 레이어)에는 한 번도 기록 안 했음 → 모든 셀이 영원히 `OutOfBounds`로 판정되던 근본 원인. 이제 `SpawnTerrain`에서 `layers.TerrainLayer[cell] = new TerrainCell{...}` 등록.
 
 ### 도로 크기/방향

@@ -19,14 +19,15 @@ namespace CitySim
         public int   Height;
 
         /// <summary>
-        /// 셀 인덱스의 월드 좌표 (XZ). Y는 heightStep * CellSize.
-        /// 합의된 배치 규약: 오브젝트의 로컬 원점(0,0)이 셀 인덱스에 그대로 맞춰진다
-        /// (중심 보정 없음). 이름은 호환을 위해 유지하지만 더 이상 "중심"이 아니다.
+        /// footprint 중심 월드 좌표. Size를 넘기면 footprint 중심, 기본(1,1)은 셀 중심.
         /// </summary>
-        public float3 CellCenter(int cx, int cz, byte heightStep = 0)
-            => new float3(cx * CellSize,
+        public float3 CellCenter(int cx, int cz, int2 size, byte heightStep = 0)
+            => new float3((cx + size.x * 0.5f) * CellSize,
                           heightStep * CellSize,
-                          cz * CellSize);
+                          (cz + size.y * 0.5f) * CellSize);
+
+        public float3 CellCenter(int cx, int cz, byte heightStep = 0)
+            => CellCenter(cx, cz, new int2(1, 1), heightStep);
     }
 
     /// <summary>

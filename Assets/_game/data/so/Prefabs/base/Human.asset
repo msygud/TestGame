@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: Human
   m_EditorClassIdentifier: Assembly-CSharp::CitySim.FactionBaseDefinition
   FactionId: 0
-  BaseCampSize: 8
+  BaseCampSize: 4
   BaseEntries:
   - MainKey: 1000
     VariantKeyOverride: 0

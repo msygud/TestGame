@@ -414,6 +414,10 @@ namespace CitySim.MapEditor
             {
                 s.CellSize = newCs; s.Width = newW; s.Height = newH;
                 currentMap.Settings = s;
+                // CellSize 변경 → 배치 GO 위치 전부 재계산 + 그리드 캐시 무효화
+                _gridCacheCs = -1f;
+                ReloadAllPlacedObjects();
+                _overlayDirty = true;
                 SceneView.RepaintAll();
             }
 
@@ -1429,11 +1433,11 @@ namespace CitySim.MapEditor
             _previewCell = cell;
 
             float cs = currentMap.Settings.CellSize;
-            // 합의된 배치 규약: 오브젝트 로컬 원점(0,0)이 셀 인덱스에 그대로 맞춰진다.
+            var sz = ValidSize(item);
             var pos = new Vector3(
-                cell.Value.x * cs + item.Offset.x,
+                (cell.Value.x + sz.x * 0.5f) * cs + item.Offset.x,
                 item.Offset.y,
-                cell.Value.y * cs + item.Offset.z);
+                (cell.Value.y + sz.y * 0.5f) * cs + item.Offset.z);
 
             _previewGo = (GameObject)PrefabUtility.InstantiatePrefab(item.Prefab);
             _previewGo.transform.SetPositionAndRotation(pos, Quaternion.identity);
@@ -1846,11 +1850,11 @@ namespace CitySim.MapEditor
 
         static GameObject InstantiateSingle(SinglePlacement p, RegistryItem item, float cs)
         {
-            // 합의된 배치 규약: 오브젝트 로컬 원점(0,0)이 셀 인덱스에 그대로 맞춰진다.
+            var sz = ValidSize(item);
             var pos = new Vector3(
-                p.CellX * cs + item.Offset.x + p.OffsetX,
+                (p.CellX + sz.x * 0.5f) * cs + item.Offset.x + p.OffsetX,
                 p.PositionY + item.Offset.y,
-                p.CellZ * cs + item.Offset.z + p.OffsetZ);
+                (p.CellZ + sz.y * 0.5f) * cs + item.Offset.z + p.OffsetZ);
             var go = (GameObject)PrefabUtility.InstantiatePrefab(item.Prefab);
             go.transform.SetPositionAndRotation(pos, Quaternion.Euler(0f, p.RotationY, 0f));
             go.transform.localScale = Vector3.one * (p.Scale > 0f ? p.Scale : 1f);
@@ -1860,8 +1864,9 @@ namespace CitySim.MapEditor
 
         static GameObject InstantiateMulti(MultiPlacement p, RegistryItem item, float cs)
         {
-            // 에디터에서는 셀 원점에 1개 미리보기만 표시 (인게임에서 랜덤 배치)
-            var pos = new Vector3(p.CellX * cs, p.Height, p.CellZ * cs);
+            // 에디터에서는 footprint 중심에 1개 미리보기만 표시 (인게임에서 랜덤 배치)
+            var sz = ValidSize(item);
+            var pos = new Vector3((p.CellX + sz.x * 0.5f) * cs, p.Height, (p.CellZ + sz.y * 0.5f) * cs);
             var go = (GameObject)PrefabUtility.InstantiatePrefab(item.Prefab);
             go.transform.position = pos;
             go.transform.localScale = Vector3.one;
@@ -1871,7 +1876,8 @@ namespace CitySim.MapEditor
 
         static GameObject InstantiateRoad(RoadPlacement p, RegistryItem item, float cs)
         {
-            var pos = new Vector3(p.CellX * cs, 0f, p.CellZ * cs);
+            var sz = ValidSize(item);
+            var pos = new Vector3((p.CellX + sz.x * 0.5f) * cs, 0f, (p.CellZ + sz.y * 0.5f) * cs);
             var go = (GameObject)PrefabUtility.InstantiatePrefab(item.Prefab);
             go.transform.position = pos;
             go.hideFlags = HideFlags.DontSave;
@@ -1987,10 +1993,11 @@ namespace CitySim.MapEditor
             void ShowSingle(SinglePlacement p, string kindLabel)
             {
                 var item = FindItem(p.MainKey, p.VariantKey);
+                var sz2  = ValidSize(item);
                 EditorGUILayout.LabelField("종류", kindLabel);
                 EditorGUILayout.TextField("이름", item?.Name ?? $"M{p.MainKey}");
                 EditorGUILayout.Vector3Field("Position",
-                    new Vector3(p.CellX * cs, p.PositionY, p.CellZ * cs));
+                    new Vector3((p.CellX + sz2.x * 0.5f) * cs, p.PositionY, (p.CellZ + sz2.y * 0.5f) * cs));
                 EditorGUILayout.FloatField("Height (Y)", p.PositionY);
                 EditorGUILayout.FloatField("Scale", p.Scale);
                 EditorGUILayout.IntField("MainKey", p.MainKey);
@@ -2004,7 +2011,7 @@ namespace CitySim.MapEditor
                 {
                     EditorGUILayout.LabelField("종류", "Road");
                     EditorGUILayout.Vector3Field("Position",
-                        new Vector3((p.CellX + 0.5f) * cs, 0f, (p.CellZ + 0.5f) * cs));
+                        new Vector3((p.CellX + 0.5f) * cs, 0f, (p.CellZ + 0.5f) * cs)); // road = 1x1
                     EditorGUILayout.IntField("MainKey", p.MainKey);
                 }
             }
@@ -2163,14 +2170,15 @@ namespace CitySim.MapEditor
             {
                 var item = FindItem(p.MainKey, p.VariantKey);
                 string lbl = item?.Name ?? $"M{p.MainKey}";
-                float cx = p.CellX * cs;
-                float cz = p.CellZ * cs;
+                var sz3 = ValidSize(item);
+                float cx = (p.CellX + sz3.x * 0.5f) * cs;
+                float cz = (p.CellZ + sz3.y * 0.5f) * cs;
                 Handles.Label(new Vector3(cx, p.PositionY + 0.1f, cz), lbl, labelStyle);
             }
             foreach (var p in currentMap.Roads)
             {
                 Handles.Label(
-                    new Vector3(p.CellX * cs, 0.1f, p.CellZ * cs),
+                    new Vector3((p.CellX + 0.5f) * cs, 0.1f, (p.CellZ + 0.5f) * cs),
                     "Road", labelStyle);
             }
         }

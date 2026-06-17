@@ -291,7 +291,7 @@ namespace CitySim
             GridSettings         settings,
             EntityCommandBuffer  ecb)
         {
-            float3 pos = settings.CellCenter(req.Cell.x, req.Cell.y, baseHeight)
+            float3 pos = settings.CellCenter(req.Cell.x, req.Cell.y, meta.Size, baseHeight)
                          + meta.Offset;
 
             // 입구 정보: 입구 있는 건물만 적재 (검증부와 동일한 조회 경로).

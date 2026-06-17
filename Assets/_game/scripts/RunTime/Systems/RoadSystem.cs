@@ -250,11 +250,11 @@ namespace CitySim
                 if (prefabEntity != Entity.Null)
                 {
                     var instance = ecb2.Instantiate(prefabEntity);
-                    // 합의된 배치 규약: 오브젝트 로컬 원점(0,0)이 footprint 원점 셀에 그대로 맞춰진다.
+                    float roadHalf = road.ValueRO.Size * 0.5f;
                     float3 worldPos = new float3(
-                        cell.x * cellSize,
+                        (cell.x + roadHalf) * cellSize,
                         0f,
-                        cell.y * cellSize);
+                        (cell.y + roadHalf) * cellSize);
 
                     // 프리팹에 미리 회전·스케일이 베이크돼 있으므로(방향별로 직접
                     // 회전된 15종 프리팹) 위치만 바꾸고 회전/스케일은 보존한다.

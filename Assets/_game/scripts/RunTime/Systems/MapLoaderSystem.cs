@@ -163,12 +163,19 @@ namespace CitySim
         static void EmitSingleSpawn(EntityCommandBuffer ecb, SinglePlacement p, float cs,
             PrefabMetaLookup metaLookup)
         {
-            // 합의된 배치 규약: 오브젝트 로컬 원점(0,0)이 셀 인덱스에 그대로 맞춰진다
-            // (중심 보정 없음, Size와 무관).
+            int2   size   = new int2(1, 1);
+            float3 metaOffset = float3.zero;
+            if (metaLookup.Table.IsCreated &&
+                metaLookup.TryGetMeta(p.MainKey, p.VariantKey, out var meta))
+            {
+                size      = math.max(meta.Size, new int2(1, 1));
+                metaOffset = meta.Offset;
+            }
+
             var position = new float3(
-                p.CellX * cs + p.OffsetX,
-                p.PositionY,
-                p.CellZ * cs + p.OffsetZ);
+                (p.CellX + size.x * 0.5f) * cs + metaOffset.x + p.OffsetX,
+                p.PositionY                    + metaOffset.y,
+                (p.CellZ + size.y * 0.5f) * cs + metaOffset.z + p.OffsetZ);
 
             var e = ecb.CreateEntity();
             ecb.AddComponent(e, new SpawnRequest

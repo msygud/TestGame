@@ -220,12 +220,11 @@ namespace CitySim
                 var meta = metaLookup.Get(p.MainKey, p.VariantKey);
                 float cs = s.CellSize;
 
-                // 합의된 배치 규약: 오브젝트 로컬 원점(0,0)이 셀 인덱스에 그대로
-                // 맞춰진다 (중심 보정 없음). PositionY(높이) + OffsetX/Z(랜덤 오프셋) 반영.
+                int2 sz = math.max(meta.Size, new int2(1, 1));
                 var worldPos = new float3(
-                    p.CellX * cs + meta.Offset.x + p.OffsetX,
+                    (p.CellX + sz.x * 0.5f) * cs + meta.Offset.x + p.OffsetX,
                     p.PositionY + meta.Offset.y,
-                    p.CellZ * cs + meta.Offset.z + p.OffsetZ);
+                    (p.CellZ + sz.y * 0.5f) * cs + meta.Offset.z + p.OffsetZ);
                 var rot      = quaternion.RotateY(math.radians(p.RotationY));
                 var scale    = p.Scale > 0f ? p.Scale : 1f;
 
@@ -338,9 +337,9 @@ namespace CitySim
         {
             float cs = s.CellSize;
             return new float3(
-                cx * cs,
+                (cx + 0.5f) * cs,
                 heightStep * cs,
-                cz * cs
+                (cz + 0.5f) * cs
             ) + offset;
         }
     }
