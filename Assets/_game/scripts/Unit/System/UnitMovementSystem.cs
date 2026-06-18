@@ -162,6 +162,7 @@ namespace Game.Unit
 
             var waypointLookup = SystemAPI.GetBufferLookup<UnitPathWaypoint>(false);
             var commandStates = SystemAPI.GetComponentLookup<UnitCommandState>(false);
+            var teamLookup = SystemAPI.GetComponentLookup<TeamInfoData>(true);
             var movementBlockers = SystemAPI.GetComponentLookup<UnitMovementBlocker>(true);
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             foreach (var yieldState in SystemAPI.Query<RefRW<UnitYieldState>>())
@@ -170,18 +171,23 @@ namespace Game.Unit
             var yieldLookup = SystemAPI.GetComponentLookup<UnitYieldState>(false);
             bool hasActiveMoveTarget = false;
             bool hasYieldCandidate = false;
+            bool hasCrowdHoldCandidate = false;
             bool hasDetourRefreshCandidate = false;
-            foreach (var (target, motion, steering) in
+            foreach (var (target, motion, steering, commandState) in
                      SystemAPI.Query<
                          RefRO<UnitMoveTarget>,
                          RefRO<UnitMotionState>,
-                         RefRO<UnitPathSteeringState>>()
+                         RefRO<UnitPathSteeringState>,
+                         RefRO<UnitCommandState>>()
                          .WithAll<UnitTag>())
             {
                 if (target.ValueRO.HasTarget == 0)
                     continue;
 
                 hasActiveMoveTarget = true;
+
+                if (commandState.ValueRO.Kind == UnitCommandKind.AttackMove)
+                    hasCrowdHoldCandidate = true;
 
                 if (target.ValueRO.RepathRequested == 0 &&
                     motion.ValueRO.StuckTime + deltaTime >= UnitMovementUtility.YieldRequestStuckTime)
@@ -228,11 +234,12 @@ namespace Game.Unit
             NativeArray<UnitFootprint> unitFootprints = default;
             NativeArray<UnitMoveTarget> unitTargets = default;
             NativeArray<UnitActivityState> unitActivities = default;
+            NativeArray<TeamInfoData> unitTeams = default;
             bool hasYieldSnapshots = false;
-            if (hasYieldCandidate)
+            if (hasYieldCandidate || hasCrowdHoldCandidate)
             {
                 var unitQuery = SystemAPI.QueryBuilder()
-                    .WithAll<UnitTag, UnitFootprint, UnitMoveTarget, UnitActivityState, UnitYieldState, LocalTransform>()
+                    .WithAll<UnitTag, UnitFootprint, UnitMoveTarget, UnitActivityState, UnitYieldState, TeamInfoData, LocalTransform>()
                     .Build();
                 int unitCount = unitQuery.CalculateEntityCount();
                 if (unitCount > 0)
@@ -242,6 +249,7 @@ namespace Game.Unit
                     unitFootprints = unitQuery.ToComponentDataArray<UnitFootprint>(Allocator.Temp);
                     unitTargets = unitQuery.ToComponentDataArray<UnitMoveTarget>(Allocator.Temp);
                     unitActivities = unitQuery.ToComponentDataArray<UnitActivityState>(Allocator.Temp);
+                    unitTeams = unitQuery.ToComponentDataArray<TeamInfoData>(Allocator.Temp);
                     hasYieldSnapshots = true;
                 }
             }
@@ -254,10 +262,10 @@ namespace Game.Unit
                          RefRW<LocalTransform>,
                          RefRO<UnitMoveSpeed>,
                          RefRW<UnitMoveTarget>,
-                         RefRO<UnitFootprint>,
-                         RefRW<UnitMotionState>,
-                         RefRW<UnitPathSteeringState>,
-                         RefRW<UnitActivityState>>()
+                        RefRO<UnitFootprint>,
+                        RefRW<UnitMotionState>,
+                        RefRW<UnitPathSteeringState>,
+                        RefRW<UnitActivityState>>()
                          .WithAll<UnitTag>()
                          .WithEntityAccess())
             {
@@ -300,6 +308,31 @@ namespace Game.Unit
                 float finalDistance = math.sqrt(finalDistanceSq);
                 float relaxedStopDistance = math.max(stopDistance, unitRadius * 0.8f);
                 UnitMovementUtility.UpdateStuckTimer(finalDistance, relaxedStopDistance, deltaTime, ref motion.ValueRW);
+
+                bool isAttackMove = commandStates.HasComponent(entity) &&
+                                    commandStates[entity].Kind == UnitCommandKind.AttackMove;
+                if (isAttackMove &&
+                    hasYieldSnapshots &&
+                    teamLookup.HasComponent(entity) &&
+                    !hasPathWaypoint &&
+                    finalDistance > relaxedStopDistance * 2.5f &&
+                    UnitMovementUtility.ShouldHoldBackline(
+                        entity,
+                        position,
+                        navigationTarget,
+                        unitRadius,
+                        teamLookup[entity],
+                        unitEntities,
+                        unitTransforms,
+                        unitFootprints,
+                        unitTargets,
+                        unitTeams))
+                {
+                    UnitMovementUtility.ClearSteering(ref steering.ValueRW);
+                    UnitMovementUtility.Stop(ref motion.ValueRW);
+                    UnitMovementUtility.SetActivity(ref activity.ValueRW, UnitActivityKind.Settled, deltaTime);
+                    continue;
+                }
 
                 if (UnitMovementUtility.ShouldArrive(finalDistance, stopDistance, relaxedStopDistance, motion.ValueRO, hasPathWaypoint))
                 {
@@ -437,6 +470,7 @@ namespace Game.Unit
 
             if (hasYieldSnapshots)
             {
+                unitTeams.Dispose();
                 unitActivities.Dispose();
                 unitTargets.Dispose();
                 unitFootprints.Dispose();
@@ -677,6 +711,60 @@ namespace Game.Unit
                 return false;
 
             return motion.StuckTime >= YieldRequestStuckTime;
+        }
+
+        public static bool ShouldHoldBackline(
+            Entity entity,
+            float3 position,
+            float3 navigationTarget,
+            float radius,
+            TeamInfoData team,
+            NativeArray<Entity> unitEntities,
+            NativeArray<LocalTransform> unitTransforms,
+            NativeArray<UnitFootprint> unitFootprints,
+            NativeArray<UnitMoveTarget> unitTargets,
+            NativeArray<TeamInfoData> unitTeams)
+        {
+            float3 toTarget = navigationTarget - position;
+            toTarget.y = 0f;
+            float distanceSq = math.lengthsq(toTarget);
+            if (distanceSq <= 0.0001f)
+                return false;
+
+            float3 direction = toTarget * math.rsqrt(distanceSq);
+            float lookAhead = math.max(4f, radius * 7f);
+            float lateralLimit = math.max(2.25f, radius * 3.5f);
+            int checkedCandidates = 0;
+            int blockers = 0;
+
+            for (int i = 0; i < unitEntities.Length; i++)
+            {
+                if (unitEntities[i] == entity ||
+                    unitTeams[i].LocalID != team.LocalID)
+                    continue;
+
+                checkedCandidates++;
+                if (checkedCandidates > 96)
+                    return false;
+
+                float3 toOther = unitTransforms[i].Position - position;
+                toOther.y = 0f;
+                float along = math.dot(toOther, direction);
+                if (along <= 0f || along > lookAhead)
+                    continue;
+
+                float3 lateral = toOther - direction * along;
+                float otherRadius = math.max(0.01f, unitFootprints[i].Radius);
+                float lateralClearance = lateralLimit + otherRadius;
+                if (math.lengthsq(lateral) > lateralClearance * lateralClearance)
+                    continue;
+
+                blockers++;
+                if (blockers >= 5)
+                    return true;
+            }
+
+            return false;
         }
 
         public static bool TryIssueYieldRequest(
@@ -1111,7 +1199,7 @@ namespace Game.Unit
                 return;
 
             var unitQuery = SystemAPI.QueryBuilder()
-                .WithAll<UnitTag, UnitFootprint, UnitObstacleAvoidanceOffset, LocalTransform>()
+                .WithAll<UnitTag, UnitFootprint, UnitMotionState, UnitObstacleAvoidanceOffset, LocalTransform>()
                 .Build();
             var obstacleQuery = SystemAPI.QueryBuilder()
                 .WithAll<ObstacleFootprint, LocalTransform>()
@@ -1125,17 +1213,35 @@ namespace Game.Unit
             var units = unitQuery.ToEntityArray(Allocator.TempJob);
             var unitTransforms = unitQuery.ToComponentDataArray<LocalTransform>(Allocator.TempJob);
             var unitFootprints = unitQuery.ToComponentDataArray<UnitFootprint>(Allocator.TempJob);
+            var unitMotions = unitQuery.ToComponentDataArray<UnitMotionState>(Allocator.TempJob);
             var obstacleTransforms = obstacleQuery.ToComponentDataArray<LocalTransform>(Allocator.TempJob);
             var obstacleFootprints = obstacleQuery.ToComponentDataArray<ObstacleFootprint>(Allocator.TempJob);
             var offsets = new NativeArray<float3>(unitCount, Allocator.TempJob);
+            float maxUnitRadius = UnitObstacleAvoidanceUtility.CalculateMaxUnitRadius(unitFootprints);
+            float maxObstacleRadius = UnitObstacleAvoidanceUtility.CalculateMaxObstacleRadius(obstacleFootprints);
+            float maxObstaclePadding = UnitObstacleAvoidanceUtility.CalculateMaxObstaclePadding(obstacleFootprints);
+            float obstacleCellSize = UnitObstacleAvoidanceUtility.CalculateCellSize(maxUnitRadius, maxObstacleRadius, maxObstaclePadding);
+            int obstacleSearchRadius = UnitObstacleAvoidanceUtility.CalculateSearchCellRadius(
+                maxUnitRadius,
+                maxObstacleRadius,
+                maxObstaclePadding,
+                obstacleCellSize);
+            var obstacleSpatialHash = new NativeParallelMultiHashMap<int2, int>(obstacleCount, Allocator.TempJob);
+
+            for (int i = 0; i < obstacleCount; i++)
+                obstacleSpatialHash.Add(UnitObstacleAvoidanceUtility.CellOf(obstacleTransforms[i].Position, obstacleCellSize), i);
 
             var obstacleAvoidanceJob = new UnitObstacleAvoidanceOffsetsJob
             {
                 UnitTransforms = unitTransforms,
                 UnitFootprints = unitFootprints,
+                UnitMotions = unitMotions,
                 ObstacleTransforms = obstacleTransforms,
                 ObstacleFootprints = obstacleFootprints,
+                ObstacleSpatialHash = obstacleSpatialHash,
                 Offsets = offsets,
+                ObstacleCellSize = obstacleCellSize,
+                ObstacleSearchRadius = obstacleSearchRadius,
             };
             var offsetLookup = SystemAPI.GetComponentLookup<UnitObstacleAvoidanceOffset>(false);
             float maxPush = UnitObstacleAvoidanceUtility.MaxPushPerTick * math.max(1f, deltaTime * 60f);
@@ -1150,8 +1256,10 @@ namespace Game.Unit
             JobHandle obstacleHandle = obstacleAvoidanceJob.Schedule(unitCount, 32, state.Dependency);
             JobHandle writeHandle = writeJob.Schedule(unitCount, 32, obstacleHandle);
             writeHandle = offsets.Dispose(writeHandle);
+            writeHandle = obstacleSpatialHash.Dispose(writeHandle);
             writeHandle = obstacleFootprints.Dispose(writeHandle);
             writeHandle = obstacleTransforms.Dispose(writeHandle);
+            writeHandle = unitMotions.Dispose(writeHandle);
             writeHandle = unitFootprints.Dispose(writeHandle);
             writeHandle = unitTransforms.Dispose(writeHandle);
             writeHandle = units.Dispose(writeHandle);
@@ -1162,6 +1270,59 @@ namespace Game.Unit
     static class UnitObstacleAvoidanceUtility
     {
         public const float MaxPushPerTick = 0.35f;
+        public const float MinimumSpatialCellSize = 0.5f;
+
+        public static float CalculateMaxUnitRadius(NativeArray<UnitFootprint> unitFootprints)
+        {
+            float maxRadius = 0.01f;
+            for (int i = 0; i < unitFootprints.Length; i++)
+                maxRadius = math.max(maxRadius, math.max(0.01f, unitFootprints[i].Radius));
+
+            return maxRadius;
+        }
+
+        public static float CalculateMaxObstacleRadius(NativeArray<ObstacleFootprint> obstacleFootprints)
+        {
+            float maxRadius = 0.01f;
+            for (int i = 0; i < obstacleFootprints.Length; i++)
+                maxRadius = math.max(maxRadius, UnitMovementUtility.GetEffectiveObstacleRadius(obstacleFootprints[i]));
+
+            return maxRadius;
+        }
+
+        public static float CalculateMaxObstaclePadding(NativeArray<ObstacleFootprint> obstacleFootprints)
+        {
+            float maxPadding = 0f;
+            for (int i = 0; i < obstacleFootprints.Length; i++)
+                maxPadding = math.max(maxPadding, math.max(0f, obstacleFootprints[i].ExtraPadding));
+
+            return maxPadding;
+        }
+
+        public static float CalculateCellSize(float maxUnitRadius, float maxObstacleRadius, float maxObstaclePadding)
+        {
+            return math.max(
+                MinimumSpatialCellSize,
+                math.max(0.01f, maxUnitRadius + maxObstacleRadius + maxObstaclePadding));
+        }
+
+        public static int CalculateSearchCellRadius(
+            float maxUnitRadius,
+            float maxObstacleRadius,
+            float maxObstaclePadding,
+            float cellSize)
+        {
+            float maxInteractionDistance = maxUnitRadius + maxObstacleRadius + maxObstaclePadding;
+            return math.max(1, (int)math.ceil(maxInteractionDistance / math.max(MinimumSpatialCellSize, cellSize)));
+        }
+
+        public static int2 CellOf(float3 position, float cellSize)
+        {
+            float inverseCellSize = 1f / math.max(MinimumSpatialCellSize, cellSize);
+            return new int2(
+                (int)math.floor(position.x * inverseCellSize),
+                (int)math.floor(position.z * inverseCellSize));
+        }
 
         public static float3 StablePairDirection(int unitIndex, int obstacleIndex)
         {
@@ -1176,33 +1337,55 @@ namespace Game.Unit
     {
         [ReadOnly] public NativeArray<LocalTransform> UnitTransforms;
         [ReadOnly] public NativeArray<UnitFootprint> UnitFootprints;
+        [ReadOnly] public NativeArray<UnitMotionState> UnitMotions;
         [ReadOnly] public NativeArray<LocalTransform> ObstacleTransforms;
         [ReadOnly] public NativeArray<ObstacleFootprint> ObstacleFootprints;
+        [ReadOnly] public NativeParallelMultiHashMap<int2, int> ObstacleSpatialHash;
         public NativeArray<float3> Offsets;
+        public float ObstacleCellSize;
+        public int ObstacleSearchRadius;
 
         public void Execute(int unitIndex)
         {
+            if (UnitMotions[unitIndex].IsMoving == 0)
+            {
+                Offsets[unitIndex] = float3.zero;
+                return;
+            }
+
             float3 offset = float3.zero;
             float unitRadius = math.max(0.01f, UnitFootprints[unitIndex].Radius);
+            int2 originCell = UnitObstacleAvoidanceUtility.CellOf(UnitTransforms[unitIndex].Position, ObstacleCellSize);
 
-            for (int obstacleIndex = 0; obstacleIndex < ObstacleFootprints.Length; obstacleIndex++)
+            for (int z = -ObstacleSearchRadius; z <= ObstacleSearchRadius; z++)
             {
-                float obstacleRadius = UnitMovementUtility.GetEffectiveObstacleRadius(ObstacleFootprints[obstacleIndex]);
-                float minDistance = unitRadius + obstacleRadius + math.max(0f, ObstacleFootprints[obstacleIndex].ExtraPadding);
+                for (int x = -ObstacleSearchRadius; x <= ObstacleSearchRadius; x++)
+                {
+                    int2 cell = originCell + new int2(x, z);
+                    if (!ObstacleSpatialHash.TryGetFirstValue(cell, out int obstacleIndex, out var iterator))
+                        continue;
 
-                float3 delta = UnitTransforms[unitIndex].Position - ObstacleTransforms[obstacleIndex].Position;
-                delta.y = 0f;
-                float distanceSq = math.lengthsq(delta);
+                    do
+                    {
+                        float obstacleRadius = UnitMovementUtility.GetEffectiveObstacleRadius(ObstacleFootprints[obstacleIndex]);
+                        float minDistance = unitRadius + obstacleRadius + math.max(0f, ObstacleFootprints[obstacleIndex].ExtraPadding);
 
-                if (distanceSq >= minDistance * minDistance)
-                    continue;
+                        float3 delta = UnitTransforms[unitIndex].Position - ObstacleTransforms[obstacleIndex].Position;
+                        delta.y = 0f;
+                        float distanceSq = math.lengthsq(delta);
 
-                float distance = math.sqrt(distanceSq);
-                float3 direction = distance > 0.0001f
-                    ? delta / distance
-                    : UnitObstacleAvoidanceUtility.StablePairDirection(unitIndex, obstacleIndex);
+                        if (distanceSq >= minDistance * minDistance)
+                            continue;
 
-                offset += direction * (minDistance - distance);
+                        float distance = math.sqrt(distanceSq);
+                        float3 direction = distance > 0.0001f
+                            ? delta / distance
+                            : UnitObstacleAvoidanceUtility.StablePairDirection(unitIndex, obstacleIndex);
+
+                        offset += direction * (minDistance - distance);
+                    }
+                    while (ObstacleSpatialHash.TryGetNextValue(out obstacleIndex, ref iterator));
+                }
             }
 
             Offsets[unitIndex] = offset;

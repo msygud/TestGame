@@ -33,7 +33,7 @@ namespace CitySim
                      SystemAPI.Query<RefRO<PreviewRoadCommand>>().WithEntityAccess())
             {
                 var cell = cmd.ValueRO.Cell;
-                var dirs = ComputeDirections(cell, cmd.ValueRO.OwnerLocalId, layers.RoadLayer);
+                var dirs = ComputeDirections(cell, cmd.ValueRO.OwnerLocalId, layers.RoadLayer, layers.TerrainLayer);
 
                 var oldQ = SystemAPI.QueryBuilder().WithAll<RoadPreview>().Build();
                 ecb.DestroyEntity(oldQ, EntityQueryCaptureMode.AtPlayback);
@@ -53,16 +53,45 @@ namespace CitySim
                 var factionId = cmd.ValueRO.FactionId;
                 var size      = cmd.ValueRO.Size <= 1 ? (byte)1 : cmd.ValueRO.Size;
 
-                // footprint 전체 셀 중 하나라도 점유돼 있으면 배치 거부
+                // footprint 전체 셀 중 하나라도
+                //   · 환경 외 점유물(도로/건물)         → 거부
+                //   · 채취 자원(ResourceLayer Amount>0) → 거부 (자원 보존)
+                //   · footprint 내부 단차              → 거부 (도로는 경사에 못 앉음)
+                // 환경(나무/바위)은 막지 않고 통과 후 제거한다.
+                // 단차 너머 인접 도로와는 "연결만" 안 함(ComputeDirections 높이 필터). 배치는 허용.
                 bool blocked = false;
+                bool firstCell = true; byte baseHeight = 0;
                 for (int dx = 0; dx < size && !blocked; dx++)
                 for (int dz = 0; dz < size && !blocked; dz++)
                 {
                     var c = origin + new int2(dx, dz);
-                    if (layers.OccupancyLayer.TryGetValue(c, out var occ) && !occ.IsEmpty)
+                    if (layers.OccupancyLayer.TryGetValue(c, out var occ) && !occ.IsEmpty
+                        && occ.Type != OccupantType.Environment)
                         blocked = true;
+                    else if (layers.ResourceLayer.TryGetValue(c, out var res) && res.Amount > 0)
+                        blocked = true;
+
+                    // footprint 내부 단차 거부 (모든 셀 지형 높이 동일해야 함)
+                    byte ch = layers.TerrainLayer.TryGetValue(c, out var ct) ? ct.Height : (byte)0;
+                    if (firstCell) { baseHeight = ch; firstCell = false; }
+                    else if (ch != baseHeight) blocked = true;
                 }
                 if (blocked) { ecb.DestroyEntity(cmdEntity); continue; }
+
+                // 통과 → footprint 내 환경 오브젝트(나무/바위)를 경고 없이 제거.
+                // 직접 destroy하지 않고 셀 단위 요청 발행(EnvironmentClearSystem이 처리).
+                for (int dx = 0; dx < size; dx++)
+                for (int dz = 0; dz < size; dz++)
+                {
+                    var c = origin + new int2(dx, dz);
+                    if (layers.OccupancyLayer.TryGetValue(c, out var eo)
+                        && eo.Type == OccupantType.Environment)
+                    {
+                        var clr = ecb.CreateEntity();
+                        ecb.AddComponent(clr, new EnvironmentClearRequest { Cell = c });
+                        layers.OccupancyLayer.Remove(c);
+                    }
+                }
 
                 var placedAxis = cmd.ValueRO.Axis;
 
@@ -71,7 +100,7 @@ namespace CitySim
                 for (int dz = 0; dz < size; dz++)
                 {
                     var c    = origin + new int2(dx, dz);
-                    var dirs = ComputeDirections(c, ownerLocalId, layers.RoadLayer);
+                    var dirs = ComputeDirections(c, ownerLocalId, layers.RoadLayer, layers.TerrainLayer);
                     layers.RoadLayer.Add(c, new RoadCell
                     {
                         Directions      = dirs,
@@ -98,7 +127,7 @@ namespace CitySim
                 {
                     var c = origin + new int2(dx, dz);
                     if (!layers.RoadLayer.TryGetValue(c, out var rc)) continue;
-                    rc.Directions = ComputeDirections(c, ownerLocalId, layers.RoadLayer);
+                    rc.Directions = ComputeDirections(c, ownerLocalId, layers.RoadLayer, layers.TerrainLayer);
                     rc.FlowAxis   = ComputeFlowAxis(rc.Directions);
                     layers.RoadLayer[c] = rc;
                 }
@@ -239,7 +268,7 @@ namespace CitySim
                 // 소유자 필터도 포함 — 다른 플레이어의 도로에 시각적으로 연결되지 않도록.
                 byte macroSize = road.ValueRO.Size <= 1 ? (byte)1 : road.ValueRO.Size;
                 var dirs2 = ComputeAxisFilteredMacroDirections(
-                    cell, macroSize, road.ValueRO.Axis, visualOwner, layers.RoadLayer);
+                    cell, macroSize, road.ValueRO.Axis, visualOwner, layers.RoadLayer, layers.TerrainLayer);
                 var factionId = road.ValueRO.FactionId;
                 Entity prefabEntity = Entity.Null;
 
@@ -255,9 +284,13 @@ namespace CitySim
                 {
                     var instance = ecb2.Instantiate(prefabEntity);
                     float roadHalf = road.ValueRO.Size * 0.5f;
+                    // Y는 지형 높이를 따라간다 (CellToWorld 규약과 동일: height * cellSize).
+                    // 예전엔 0f 하드코딩이라 높이 1+ 지형 위 도로가 전부 0에 깔리던 버그.
+                    float roadY = layers.TerrainLayer.TryGetValue(cell, out var rtc)
+                        ? rtc.Height * cellSize : 0f;
                     float3 worldPos = new float3(
                         (cell.x + roadHalf) * cellSize,
-                        0f,
+                        roadY,
                         (cell.y + roadHalf) * cellSize);
 
                     // 프리팹에 미리 회전·스케일이 베이크돼 있으므로(방향별로 직접
@@ -286,27 +319,37 @@ namespace CitySim
         // ── 헬퍼 ──────────────────────────────────────────────────
 
         // 셀 단위 — BFS/점유 계산용 (Size=1일 때 MacroDirections와 동일).
-        // 같은 소유자의 도로만 연결.
+        // 같은 소유자 + 같은 지형 높이의 도로만 연결 (단차 너머로는 연결 안 됨).
         public static RoadDir ComputeDirections(
             int2 cell, int ownerLocalId,
-            NativeHashMap<int2, RoadCell> roadLayer)
+            NativeHashMap<int2, RoadCell> roadLayer,
+            NativeHashMap<int2, TerrainCell> terrainLayer)
         {
+            byte myH = CellHeight(cell, terrainLayer);
             RoadDir dirs = RoadDir.None;
             for (int i = 0; i < 4; i++)
             {
                 var nCell = cell + RoadDirOps.Offsets[i];
-                if (roadLayer.TryGetValue(nCell, out var nc) && nc.OwnerLocalId == ownerLocalId)
+                if (roadLayer.TryGetValue(nCell, out var nc)
+                    && nc.OwnerLocalId == ownerLocalId
+                    && CellHeight(nCell, terrainLayer) == myH)
                     dirs |= RoadDirOps.FromIndex(i);
             }
             return dirs;
         }
 
+        static byte CellHeight(int2 cell, NativeHashMap<int2, TerrainCell> terrainLayer)
+            => terrainLayer.IsCreated && terrainLayer.TryGetValue(cell, out var t)
+                ? t.Height : (byte)0;
+
         // 매크로 단위 — 비주얼 프리팹 선택용.
         // footprint 외곽 경계 너머의 같은 소유자 도로만 본다.
         public static RoadDir ComputeMacroDirections(
             int2 origin, byte size, int ownerLocalId,
-            NativeHashMap<int2, RoadCell> roadLayer)
+            NativeHashMap<int2, RoadCell> roadLayer,
+            NativeHashMap<int2, TerrainCell> terrainLayer)
         {
+            byte myH = CellHeight(origin, terrainLayer);
             RoadDir dirs = RoadDir.None;
             for (int d = 0; d < 4; d++)
             {
@@ -317,7 +360,8 @@ namespace CitySim
                     int2 check = off.x != 0
                         ? new int2(origin.x + (off.x > 0 ? size : -1), origin.y + i)
                         : new int2(origin.x + i, origin.y + (off.y > 0 ? size : -1));
-                    if (roadLayer.TryGetValue(check, out var nc) && nc.OwnerLocalId == ownerLocalId)
+                    if (roadLayer.TryGetValue(check, out var nc) && nc.OwnerLocalId == ownerLocalId
+                        && CellHeight(check, terrainLayer) == myH)
                         found = true;
                 }
                 if (found) dirs |= RoadDirOps.FromIndex(d);
@@ -335,8 +379,10 @@ namespace CitySim
         // → 같은 축 평행 도로끼리는 연결 안 됨. 다른 소유자 도로와도 연결 안 됨.
         public static RoadDir ComputeAxisFilteredMacroDirections(
             int2 origin, byte size, RoadPlacedAxis myAxis, int ownerLocalId,
-            NativeHashMap<int2, RoadCell> roadLayer)
+            NativeHashMap<int2, RoadCell> roadLayer,
+            NativeHashMap<int2, TerrainCell> terrainLayer)
         {
+            byte myH = CellHeight(origin, terrainLayer);
             RoadDir dirs = RoadDir.None;
             for (int d = 0; d < 4; d++)
             {
@@ -356,6 +402,7 @@ namespace CitySim
 
                     if (!roadLayer.TryGetValue(check, out var neighbor)) continue;
                     if (neighbor.OwnerLocalId != ownerLocalId) continue; // 다른 플레이어 무시
+                    if (CellHeight(check, terrainLayer) != myH) continue; // 단차 너머 연결 안 함
 
                     bool neighborAllows = neighbor.Axis == RoadPlacedAxis.Any
                         || (neighbor.Axis == RoadPlacedAxis.EW && isEW)
@@ -403,7 +450,7 @@ namespace CitySim
                     if (!visited.Add(nCell)) continue;
                     if (!layers.RoadLayer.TryGetValue(nCell, out var nRoadCell)) continue;
 
-                    var newDirs = ComputeDirections(nCell, nRoadCell.OwnerLocalId, layers.RoadLayer);
+                    var newDirs = ComputeDirections(nCell, nRoadCell.OwnerLocalId, layers.RoadLayer, layers.TerrainLayer);
                     nRoadCell.Directions = newDirs;
                     nRoadCell.FlowAxis   = ComputeFlowAxis(newDirs);
                     layers.RoadLayer[nCell] = nRoadCell;

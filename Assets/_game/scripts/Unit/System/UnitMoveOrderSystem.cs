@@ -1,10 +1,516 @@
+using Unity.Burst;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Transforms;
 
 namespace Game.Unit
 {
+    [BurstCompile]
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateBefore(typeof(UnitDirectMoveOrderSystem))]
+    public partial struct SelectedUnitMoveOrderSystem : ISystem
+    {
+        public void OnCreate(ref SystemState state)
+        {
+            state.RequireForUpdate<SelectedUnitMoveOrderRequest>();
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            var ecb = SystemAPI
+                .GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>()
+                .CreateCommandBuffer(state.WorldUnmanaged);
+            JobHandle dependency = state.Dependency;
+
+            foreach (var (request, requestEntity) in
+                     SystemAPI.Query<RefRO<SelectedUnitMoveOrderRequest>>()
+                         .WithEntityAccess())
+            {
+                var job = new SelectedUnitMoveOrderJob
+                {
+                    Request = request.ValueRO,
+                };
+
+                dependency = job.ScheduleParallel(dependency);
+                ecb.DestroyEntity(requestEntity);
+            }
+
+            state.Dependency = dependency;
+        }
+    }
+
+    [BurstCompile]
+    [WithAll(typeof(UnitTag), typeof(SelectedUnit))]
+    partial struct SelectedUnitMoveOrderJob : IJobEntity
+    {
+        public SelectedUnitMoveOrderRequest Request;
+
+        public void Execute(
+            [EntityIndexInQuery] int entityIndex,
+            ref UnitMoveTarget moveTarget,
+            ref UnitMotionState motion,
+            ref UnitCommandState commandState,
+            ref CombatAttackTarget attackTarget,
+            ref CombatEngagementDecision engagementDecision,
+            DynamicBuffer<UnitPathWaypoint> waypoints)
+        {
+            int unitCount = math.max(1, Request.UnitCount);
+            int columns = math.max(1, (int)math.ceil(math.sqrt(unitCount)));
+            int rows = math.max(1, (int)math.ceil(unitCount / (float)columns));
+            int x = entityIndex % columns;
+            int z = entityIndex / columns;
+
+            float3 forward = Request.FormationForward;
+            forward.y = 0f;
+            forward = math.lengthsq(forward) <= 0.0001f
+                ? new float3(0f, 0f, 1f)
+                : math.normalize(forward);
+            float3 right = math.cross(math.up(), forward);
+            right = math.lengthsq(right) <= 0.0001f
+                ? new float3(1f, 0f, 0f)
+                : math.normalize(right);
+
+            float spacing = math.max(0.01f, Request.FormationSpacing);
+            float offsetX = (x - (columns - 1) * 0.5f) * spacing;
+            float offsetZ = (z - (rows - 1) * 0.5f) * spacing;
+            float3 destination = Request.Target + right * offsetX + forward * offsetZ;
+
+            moveTarget = new UnitMoveTarget
+            {
+                Position = destination,
+                StopDistance = Request.StopDistance,
+                RepathCount = 0,
+                PathStatus = UnitPathStatus.Direct,
+                HasTarget = 1,
+                RepathRequested = 0,
+            };
+
+            motion.LastTargetDistance = float.MaxValue;
+            motion.StuckTime = 0f;
+
+            if (Request.CommandKind != UnitCommandKind.None)
+            {
+                commandState = new UnitCommandState
+                {
+                    Kind = Request.CommandKind,
+                    TargetEntity = Entity.Null,
+                    TargetPosition = destination,
+                    HasTargetEntity = 0,
+                };
+            }
+
+            attackTarget = new CombatAttackTarget
+            {
+                Target = Entity.Null,
+                ApproachRefreshTime = 0f,
+                HasTarget = 0,
+            };
+            engagementDecision = new CombatEngagementDecision
+            {
+                PreferredRange = 0f,
+                TargetPosition = float3.zero,
+                ShouldApproach = 0,
+                HasUsableWeapon = 0,
+            };
+            waypoints.Clear();
+        }
+    }
+
+    [BurstCompile]
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateBefore(typeof(AttackOrderSystem))]
+    public partial struct SelectedUnitAttackOrderSystem : ISystem
+    {
+        public void OnCreate(ref SystemState state)
+        {
+            state.RequireForUpdate<SelectedUnitAttackOrderRequest>();
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            var ecb = SystemAPI
+                .GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>()
+                .CreateCommandBuffer(state.WorldUnmanaged);
+            JobHandle dependency = state.Dependency;
+
+            foreach (var (request, requestEntity) in
+                     SystemAPI.Query<RefRO<SelectedUnitAttackOrderRequest>>()
+                         .WithEntityAccess())
+            {
+                var job = new SelectedUnitAttackOrderJob
+                {
+                    Target = request.ValueRO.Target,
+                    CommandKind = request.ValueRO.CommandKind == UnitCommandKind.None
+                        ? UnitCommandKind.ForceAttack
+                        : request.ValueRO.CommandKind,
+                };
+
+                dependency = job.ScheduleParallel(dependency);
+                ecb.DestroyEntity(requestEntity);
+            }
+
+            state.Dependency = dependency;
+        }
+    }
+
+    [BurstCompile]
+    [WithAll(typeof(UnitTag), typeof(SelectedUnit))]
+    partial struct SelectedUnitAttackOrderJob : IJobEntity
+    {
+        public Entity Target;
+        public UnitCommandKind CommandKind;
+
+        public void Execute(
+            ref CombatAttackTarget attackTarget,
+            ref UnitCommandState commandState)
+        {
+            attackTarget = new CombatAttackTarget
+            {
+                Target = Target,
+                ApproachRefreshTime = 0f,
+                HasTarget = Target == Entity.Null ? (byte)0 : (byte)1,
+            };
+            commandState = new UnitCommandState
+            {
+                Kind = CommandKind,
+                TargetEntity = Target,
+                TargetPosition = float3.zero,
+                HasTargetEntity = Target == Entity.Null ? (byte)0 : (byte)1,
+            };
+        }
+    }
+
+    [BurstCompile]
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateBefore(typeof(UnitDirectMoveOrderSystem))]
+    public partial struct UnitGroupMoveOrderSystem : ISystem
+    {
+        public void OnCreate(ref SystemState state)
+        {
+            state.RequireForUpdate<UnitGroupMoveOrderRequest>();
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            var ecb = SystemAPI
+                .GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>()
+                .CreateCommandBuffer(state.WorldUnmanaged);
+            JobHandle dependency = state.Dependency;
+
+            foreach (var (request, requestEntity) in
+                     SystemAPI.Query<RefRO<UnitGroupMoveOrderRequest>>()
+                         .WithEntityAccess())
+            {
+                var job = new UnitGroupMoveOrderJob
+                {
+                    Request = request.ValueRO,
+                };
+
+                dependency = job.ScheduleParallel(dependency);
+                ecb.DestroyEntity(requestEntity);
+            }
+
+            state.Dependency = dependency;
+        }
+    }
+
+    [BurstCompile]
+    [WithAll(typeof(UnitTag))]
+    partial struct UnitGroupMoveOrderJob : IJobEntity
+    {
+        public UnitGroupMoveOrderRequest Request;
+
+        public void Execute(
+            [EntityIndexInQuery] int entityIndex,
+            in TeamInfoData team,
+            in UnitCommandGroupMember group,
+            ref UnitMoveTarget moveTarget,
+            ref UnitMotionState motion,
+            ref UnitCommandState commandState,
+            ref CombatAttackTarget attackTarget,
+            ref CombatEngagementDecision engagementDecision,
+            DynamicBuffer<UnitPathWaypoint> waypoints)
+        {
+            if (team.LocalID != Request.LocalId ||
+                group.GroupId != Request.GroupId)
+                return;
+
+            float3 destination = ResolveFormationDestination(entityIndex, Request);
+            moveTarget = new UnitMoveTarget
+            {
+                Position = destination,
+                StopDistance = Request.StopDistance,
+                RepathCount = 0,
+                PathStatus = UnitPathStatus.Direct,
+                HasTarget = 1,
+                RepathRequested = 0,
+            };
+            motion.LastTargetDistance = float.MaxValue;
+            motion.StuckTime = 0f;
+
+            if (Request.CommandKind != UnitCommandKind.None)
+            {
+                commandState = new UnitCommandState
+                {
+                    Kind = Request.CommandKind,
+                    TargetEntity = Entity.Null,
+                    TargetPosition = destination,
+                    HasTargetEntity = 0,
+                };
+            }
+
+            attackTarget = new CombatAttackTarget
+            {
+                Target = Entity.Null,
+                ApproachRefreshTime = 0f,
+                HasTarget = 0,
+            };
+            engagementDecision = new CombatEngagementDecision
+            {
+                PreferredRange = 0f,
+                TargetPosition = float3.zero,
+                ShouldApproach = 0,
+                HasUsableWeapon = 0,
+            };
+            waypoints.Clear();
+        }
+
+        static float3 ResolveFormationDestination(int entityIndex, UnitGroupMoveOrderRequest request)
+        {
+            int unitCount = math.max(1, request.UnitCount);
+            int columns = math.max(1, (int)math.ceil(math.sqrt(unitCount)));
+            int rows = math.max(1, (int)math.ceil(unitCount / (float)columns));
+            int x = entityIndex % columns;
+            int z = entityIndex / columns;
+
+            float3 forward = request.FormationForward;
+            forward.y = 0f;
+            forward = math.lengthsq(forward) <= 0.0001f
+                ? new float3(0f, 0f, 1f)
+                : math.normalize(forward);
+
+            float3 right = math.cross(math.up(), forward);
+            right = math.lengthsq(right) <= 0.0001f
+                ? new float3(1f, 0f, 0f)
+                : math.normalize(right);
+
+            float spacing = math.max(0.01f, request.FormationSpacing);
+            float offsetX = (x - (columns - 1) * 0.5f) * spacing;
+            float offsetZ = (z - (rows - 1) * 0.5f) * spacing;
+            return request.Target + right * offsetX + forward * offsetZ;
+        }
+    }
+
+    [BurstCompile]
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateBefore(typeof(AttackOrderSystem))]
+    public partial struct UnitGroupAttackOrderSystem : ISystem
+    {
+        public void OnCreate(ref SystemState state)
+        {
+            state.RequireForUpdate<UnitGroupAttackOrderRequest>();
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            var ecb = SystemAPI
+                .GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>()
+                .CreateCommandBuffer(state.WorldUnmanaged);
+            JobHandle dependency = state.Dependency;
+
+            foreach (var (request, requestEntity) in
+                     SystemAPI.Query<RefRO<UnitGroupAttackOrderRequest>>()
+                         .WithEntityAccess())
+            {
+                var job = new UnitGroupAttackOrderJob
+                {
+                    LocalId = request.ValueRO.LocalId,
+                    GroupId = request.ValueRO.GroupId,
+                    Target = request.ValueRO.Target,
+                    CommandKind = request.ValueRO.CommandKind == UnitCommandKind.None
+                        ? UnitCommandKind.ForceAttack
+                        : request.ValueRO.CommandKind,
+                };
+
+                dependency = job.ScheduleParallel(dependency);
+                ecb.DestroyEntity(requestEntity);
+            }
+
+            state.Dependency = dependency;
+        }
+    }
+
+    [BurstCompile]
+    [WithAll(typeof(UnitTag))]
+    partial struct UnitGroupAttackOrderJob : IJobEntity
+    {
+        public int LocalId;
+        public int GroupId;
+        public Entity Target;
+        public UnitCommandKind CommandKind;
+
+        public void Execute(
+            in TeamInfoData team,
+            in UnitCommandGroupMember group,
+            ref CombatAttackTarget attackTarget,
+            ref UnitCommandState commandState)
+        {
+            if (team.LocalID != LocalId ||
+                group.GroupId != GroupId)
+                return;
+
+            attackTarget = new CombatAttackTarget
+            {
+                Target = Target,
+                ApproachRefreshTime = 0f,
+                HasTarget = Target == Entity.Null ? (byte)0 : (byte)1,
+            };
+            commandState = new UnitCommandState
+            {
+                Kind = CommandKind,
+                TargetEntity = Target,
+                TargetPosition = float3.zero,
+                HasTargetEntity = Target == Entity.Null ? (byte)0 : (byte)1,
+            };
+        }
+    }
+
+    [BurstCompile]
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateBefore(typeof(UnitMoveOrderSystem))]
+    public partial struct UnitDirectMoveOrderSystem : ISystem
+    {
+        public void OnCreate(ref SystemState state)
+        {
+            state.RequireForUpdate<UnitDirectMoveOrderBatch>();
+        }
+
+        [BurstCompile]
+        public void OnUpdate(ref SystemState state)
+        {
+            var ecb = new EntityCommandBuffer(Allocator.TempJob);
+
+            foreach (var (orders, batchEntity) in
+                     SystemAPI.Query<DynamicBuffer<UnitDirectMoveOrderElement>>()
+                         .WithAll<UnitDirectMoveOrderBatch>()
+                         .WithEntityAccess())
+            {
+                var orderArray = orders.ToNativeArray(Allocator.TempJob);
+                var job = new UnitDirectMoveOrderJob
+                {
+                    Orders = orderArray,
+                    MoveTargets = SystemAPI.GetComponentLookup<UnitMoveTarget>(false),
+                    MotionStates = SystemAPI.GetComponentLookup<UnitMotionState>(false),
+                    CommandStates = SystemAPI.GetComponentLookup<UnitCommandState>(false),
+                    AttackTargets = SystemAPI.GetComponentLookup<CombatAttackTarget>(false),
+                    EngagementDecisions = SystemAPI.GetComponentLookup<CombatEngagementDecision>(false),
+                    Waypoints = SystemAPI.GetBufferLookup<UnitPathWaypoint>(false),
+                    Ecb = ecb.AsParallelWriter(),
+                };
+
+                JobHandle handle = job.Schedule(orderArray.Length, 64, state.Dependency);
+                handle.Complete();
+                orderArray.Dispose();
+                state.Dependency = default;
+                ecb.DestroyEntity(batchEntity);
+            }
+
+            ecb.Playback(state.EntityManager);
+            ecb.Dispose();
+        }
+    }
+
+    [BurstCompile]
+    struct UnitDirectMoveOrderJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<UnitDirectMoveOrderElement> Orders;
+        [NativeDisableParallelForRestriction] public ComponentLookup<UnitMoveTarget> MoveTargets;
+        [NativeDisableParallelForRestriction] public ComponentLookup<UnitMotionState> MotionStates;
+        [NativeDisableParallelForRestriction] public ComponentLookup<UnitCommandState> CommandStates;
+        [NativeDisableParallelForRestriction] public ComponentLookup<CombatAttackTarget> AttackTargets;
+        [NativeDisableParallelForRestriction] public ComponentLookup<CombatEngagementDecision> EngagementDecisions;
+        [NativeDisableParallelForRestriction] public BufferLookup<UnitPathWaypoint> Waypoints;
+        public EntityCommandBuffer.ParallelWriter Ecb;
+
+        public void Execute(int index)
+        {
+            UnitDirectMoveOrderElement order = Orders[index];
+            Entity unit = order.Unit;
+            var target = new UnitMoveTarget
+            {
+                Position = order.Target,
+                StopDistance = order.StopDistance,
+                RepathCount = 0,
+                PathStatus = UnitPathStatus.Direct,
+                HasTarget = 1,
+                RepathRequested = 0,
+            };
+
+            if (MoveTargets.HasComponent(unit))
+                MoveTargets[unit] = target;
+            else
+                Ecb.AddComponent(index, unit, target);
+
+            if (MotionStates.HasComponent(unit))
+            {
+                var motion = MotionStates[unit];
+                motion.LastTargetDistance = float.MaxValue;
+                motion.StuckTime = 0f;
+                MotionStates[unit] = motion;
+            }
+
+            if (order.CommandKind != UnitCommandKind.None)
+            {
+                var commandState = new UnitCommandState
+                {
+                    Kind = order.CommandKind,
+                    TargetEntity = Entity.Null,
+                    TargetPosition = order.Target,
+                    HasTargetEntity = 0,
+                };
+
+                if (CommandStates.HasComponent(unit))
+                    CommandStates[unit] = commandState;
+                else
+                    Ecb.AddComponent(index, unit, commandState);
+            }
+
+            if (order.CommandKind == UnitCommandKind.ForceMove)
+            {
+                if (AttackTargets.HasComponent(unit))
+                {
+                    var attackTarget = AttackTargets[unit];
+                    attackTarget.Target = Entity.Null;
+                    attackTarget.ApproachRefreshTime = 0f;
+                    attackTarget.HasTarget = 0;
+                    AttackTargets[unit] = attackTarget;
+                }
+
+                if (EngagementDecisions.HasComponent(unit))
+                {
+                    EngagementDecisions[unit] = new CombatEngagementDecision
+                    {
+                        PreferredRange = 0f,
+                        TargetPosition = float3.zero,
+                        ShouldApproach = 0,
+                        HasUsableWeapon = 0,
+                    };
+                }
+            }
+
+            if (Waypoints.HasBuffer(unit))
+                Waypoints[unit].Clear();
+
+        }
+    }
+
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct UnitMoveOrderSystem : ISystem
     {
@@ -41,6 +547,8 @@ namespace Game.Unit
                 : default;
             var pathCache = new NativeList<PathCacheEntry>(Allocator.Temp);
             var pathCachePoints = new NativeList<float3>(Allocator.Temp);
+            var blockedGridOffsets = new NativeParallelHashMap<int, int>(MaxPathBuildsPerFrame, Allocator.Temp);
+            var blockedGridData = new NativeList<byte>(Allocator.Temp);
             int pathBuildsThisFrame = 0;
 
             foreach (var (request, requestEntity) in
@@ -61,7 +569,8 @@ namespace Game.Unit
                         pathFound = true;
                         reachedTarget = true;
                     }
-                    else if (hasGrid &&
+                    else if (request.ValueRO.SkipPathfinding == 0 &&
+                        hasGrid &&
                         transforms.HasComponent(unit) &&
                         footprints.HasComponent(unit))
                     {
@@ -79,21 +588,34 @@ namespace Game.Unit
                         {
                             if (pathBuildsThisFrame >= MaxPathBuildsPerFrame)
                             {
-                                path.Dispose();
-                                continue;
+                                if (request.ValueRO.CommandKind != UnitCommandKind.None)
+                                    pathAttempted = false;
+                                else
+                                {
+                                    path.Dispose();
+                                    continue;
+                                }
                             }
-
-                            pathBuildsThisFrame++;
-                            pathFound = UnitPathfinding.TryBuildPath(
-                                grid,
-                                transforms[unit].Position,
-                                request.ValueRO.Target,
-                                unitRadius,
-                                obstacleTransforms,
-                                obstacleFootprints,
-                                path,
-                                out reachedTarget);
-                            AddCachedPath(cacheKey, pathFound, reachedTarget, path, pathCache, pathCachePoints);
+                            else
+                            {
+                                pathBuildsThisFrame++;
+                                var blockedGrid = GetBlockedGrid(
+                                    grid,
+                                    unitRadius,
+                                    cacheKey.RadiusStep,
+                                    obstacleTransforms,
+                                    obstacleFootprints,
+                                    blockedGridOffsets,
+                                    blockedGridData);
+                                pathFound = UnitPathfinding.TryBuildPathWithBlockedGrid(
+                                    grid,
+                                    transforms[unit].Position,
+                                    request.ValueRO.Target,
+                                    blockedGrid,
+                                    path,
+                                    out reachedTarget);
+                                AddCachedPath(cacheKey, pathFound, reachedTarget, path, pathCache, pathCachePoints);
+                            }
                         }
                     }
 
@@ -185,6 +707,8 @@ namespace Game.Unit
                 ecb.DestroyEntity(requestEntity);
             }
 
+            blockedGridData.Dispose();
+            blockedGridOffsets.Dispose();
             pathCachePoints.Dispose();
             pathCache.Dispose();
 
@@ -313,6 +837,35 @@ namespace Game.Unit
             return true;
         }
 
+        static NativeArray<byte> GetBlockedGrid(
+            UnitNavigationGrid grid,
+            float unitRadius,
+            int radiusStep,
+            NativeArray<LocalTransform> obstacleTransforms,
+            NativeArray<ObstacleFootprint> obstacleFootprints,
+            NativeParallelHashMap<int, int> blockedGridOffsets,
+            NativeList<byte> blockedGridData)
+        {
+            int cellCount = grid.Size.x * grid.Size.y;
+            if (blockedGridOffsets.TryGetValue(radiusStep, out int offset))
+                return blockedGridData.AsArray().GetSubArray(offset, cellCount);
+
+            offset = blockedGridData.Length;
+            blockedGridData.ResizeUninitialized(offset + cellCount);
+            var blockedGrid = blockedGridData.AsArray().GetSubArray(offset, cellCount);
+            for (int i = 0; i < blockedGrid.Length; i++)
+                blockedGrid[i] = 0;
+
+            UnitPathfinding.BuildBlockedGrid(
+                grid,
+                unitRadius,
+                obstacleTransforms,
+                obstacleFootprints,
+                blockedGrid);
+            blockedGridOffsets.Add(radiusStep, offset);
+            return blockedGrid;
+        }
+
     }
 
     public static class UnitPathfinding
@@ -334,24 +887,42 @@ namespace Game.Unit
 
             var blocked = new NativeArray<byte>(cellCount, Allocator.Temp);
             BuildBlockedGrid(grid, unitRadius, obstacleTransforms, obstacleFootprints, blocked);
+            bool pathFound = TryBuildPathWithBlockedGrid(
+                grid,
+                startPosition,
+                targetPosition,
+                blocked,
+                path,
+                out reachedTarget);
+            blocked.Dispose();
+            return pathFound;
+        }
+
+        public static bool TryBuildPathWithBlockedGrid(
+            UnitNavigationGrid grid,
+            float3 startPosition,
+            float3 targetPosition,
+            NativeArray<byte> blocked,
+            NativeList<float3> path,
+            out bool reachedTarget)
+        {
+            reachedTarget = false;
+            int cellCount = grid.Size.x * grid.Size.y;
+            if (cellCount <= 0 || blocked.Length < cellCount)
+                return false;
 
             int2 startCell = WorldToCell(grid, startPosition);
             int2 targetCell = WorldToCell(grid, targetPosition);
             if (!IsInside(grid, startCell) || !IsInside(grid, targetCell))
-            {
-                blocked.Dispose();
                 return false;
-            }
 
             int startIndex = ToIndex(grid, startCell);
             int requestedTargetIndex = ToIndex(grid, targetCell);
             int targetIndex = FindNearestWalkableIndex(grid, targetCell, blocked);
             if (targetIndex < 0)
-            {
-                blocked.Dispose();
                 return false;
-            }
 
+            byte originalStartBlocked = blocked[startIndex];
             blocked[startIndex] = 0;
 
             bool targetCellWasWalkable = targetIndex == requestedTargetIndex;
@@ -360,7 +931,7 @@ namespace Game.Unit
             {
                 path.Add(startPosition);
                 path.Add(targetPosition);
-                blocked.Dispose();
+                blocked[startIndex] = originalStartBlocked;
                 reachedTarget = true;
                 return true;
             }
@@ -368,7 +939,7 @@ namespace Game.Unit
             var cameFrom = new NativeArray<int>(cellCount, Allocator.Temp);
             var gScore = new NativeArray<float>(cellCount, Allocator.Temp);
             var closed = new NativeArray<byte>(cellCount, Allocator.Temp);
-            var open = new NativeList<int>(Allocator.Temp);
+            var open = new NativeList<PathOpenNode>(Allocator.Temp);
 
             for (int i = 0; i < cellCount; i++)
             {
@@ -377,18 +948,17 @@ namespace Game.Unit
             }
 
             gScore[startIndex] = 0f;
-            open.Add(startIndex);
+            int2 targetCellResolved = ToCell(grid, targetIndex);
+            PushOpenNode(open, startIndex, Heuristic(startCell, targetCellResolved));
 
             bool found = false;
             int bestReachable = startIndex;
-            float bestReachableScore = Heuristic(startCell, ToCell(grid, targetIndex));
+            float bestReachableScore = Heuristic(startCell, targetCellResolved);
             int searched = 0;
 
             while (open.Length > 0 && searched < grid.MaxSearchNodes)
             {
-                int currentOpenIndex = FindBestOpenIndex(grid, open, gScore, targetIndex);
-                int current = open[currentOpenIndex];
-                open.RemoveAtSwapBack(currentOpenIndex);
+                int current = PopBestOpenNode(open);
 
                 if (closed[current] != 0)
                     continue;
@@ -403,21 +973,21 @@ namespace Game.Unit
                 searched++;
 
                 int2 cell = ToCell(grid, current);
-                float reachableScore = Heuristic(cell, ToCell(grid, targetIndex));
+                float reachableScore = Heuristic(cell, targetCellResolved);
                 if (reachableScore < bestReachableScore)
                 {
                     bestReachableScore = reachableScore;
                     bestReachable = current;
                 }
 
-                TryVisitNeighbor(grid, cell, new int2(1, 0), current, blocked, closed, cameFrom, gScore, open);
-                TryVisitNeighbor(grid, cell, new int2(-1, 0), current, blocked, closed, cameFrom, gScore, open);
-                TryVisitNeighbor(grid, cell, new int2(0, 1), current, blocked, closed, cameFrom, gScore, open);
-                TryVisitNeighbor(grid, cell, new int2(0, -1), current, blocked, closed, cameFrom, gScore, open);
-                TryVisitNeighbor(grid, cell, new int2(1, 1), current, blocked, closed, cameFrom, gScore, open);
-                TryVisitNeighbor(grid, cell, new int2(1, -1), current, blocked, closed, cameFrom, gScore, open);
-                TryVisitNeighbor(grid, cell, new int2(-1, 1), current, blocked, closed, cameFrom, gScore, open);
-                TryVisitNeighbor(grid, cell, new int2(-1, -1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, targetCellResolved, new int2(1, 0), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, targetCellResolved, new int2(-1, 0), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, targetCellResolved, new int2(0, 1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, targetCellResolved, new int2(0, -1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, targetCellResolved, new int2(1, 1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, targetCellResolved, new int2(1, -1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, targetCellResolved, new int2(-1, 1), current, blocked, closed, cameFrom, gScore, open);
+                TryVisitNeighbor(grid, cell, targetCellResolved, new int2(-1, -1), current, blocked, closed, cameFrom, gScore, open);
             }
 
             int resolvedTargetIndex = found ? targetIndex : bestReachable;
@@ -434,7 +1004,7 @@ namespace Game.Unit
             closed.Dispose();
             gScore.Dispose();
             cameFrom.Dispose();
-            blocked.Dispose();
+            blocked[startIndex] = originalStartBlocked;
 
             reachedTarget = found && targetCellWasWalkable;
             return hasPath && path.Length > 1;
@@ -525,36 +1095,85 @@ namespace Game.Unit
             return -1;
         }
 
-        static int FindBestOpenIndex(UnitNavigationGrid grid, NativeList<int> open, NativeArray<float> gScore, int targetIndex)
+        struct PathOpenNode
         {
-            int bestOpenIndex = 0;
-            float bestScore = float.MaxValue;
-            int2 targetCell = ToCell(grid, targetIndex);
+            public int Index;
+            public float Score;
+        }
 
-            for (int i = 0; i < open.Length; i++)
+        static void PushOpenNode(NativeList<PathOpenNode> open, int index, float score)
+        {
+            int child = open.Length;
+            open.Add(new PathOpenNode
             {
-                int node = open[i];
-                float score = gScore[node] + Heuristic(ToCell(grid, node), targetCell);
-                if (score >= bestScore)
-                    continue;
+                Index = index,
+                Score = score,
+            });
 
-                bestScore = score;
-                bestOpenIndex = i;
+            while (child > 0)
+            {
+                int parent = (child - 1) >> 1;
+                if (open[parent].Score <= open[child].Score)
+                    break;
+
+                SwapOpenNodes(open, parent, child);
+                child = parent;
+            }
+        }
+
+        static int PopBestOpenNode(NativeList<PathOpenNode> open)
+        {
+            int best = open[0].Index;
+            int last = open.Length - 1;
+            if (last == 0)
+            {
+                open.RemoveAtSwapBack(0);
+                return best;
             }
 
-            return bestOpenIndex;
+            open[0] = open[last];
+            open.RemoveAtSwapBack(last);
+
+            int parent = 0;
+            while (true)
+            {
+                int left = parent * 2 + 1;
+                if (left >= open.Length)
+                    break;
+
+                int right = left + 1;
+                int bestChild = right < open.Length && open[right].Score < open[left].Score
+                    ? right
+                    : left;
+
+                if (open[parent].Score <= open[bestChild].Score)
+                    break;
+
+                SwapOpenNodes(open, parent, bestChild);
+                parent = bestChild;
+            }
+
+            return best;
+        }
+
+        static void SwapOpenNodes(NativeList<PathOpenNode> open, int a, int b)
+        {
+            PathOpenNode temp = open[a];
+            open[a] = open[b];
+            open[b] = temp;
         }
 
         static void TryVisitNeighbor(
             UnitNavigationGrid grid,
             int2 cell,
+            int2 targetCell,
             int2 offset,
             int current,
             NativeArray<byte> blocked,
             NativeArray<byte> closed,
             NativeArray<int> cameFrom,
             NativeArray<float> gScore,
-            NativeList<int> open)
+            NativeList<PathOpenNode> open)
         {
             int2 nextCell = cell + offset;
             if (!IsInside(grid, nextCell))
@@ -579,7 +1198,7 @@ namespace Game.Unit
 
             cameFrom[next] = current;
             gScore[next] = tentativeScore;
-            open.Add(next);
+            PushOpenNode(open, next, tentativeScore + Heuristic(nextCell, targetCell));
         }
 
         static void ReconstructPath(UnitNavigationGrid grid, int targetIndex, NativeArray<int> cameFrom, NativeList<float3> path)

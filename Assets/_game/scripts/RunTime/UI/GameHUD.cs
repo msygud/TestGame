@@ -49,6 +49,7 @@ namespace CitySim
         [SerializeField] Button    _btnRoadUndo;
         [SerializeField] TMP_Text  _lblRoadToggle;   // "건설 시작" / "건설 중지"
         [SerializeField] TMP_Text  _lblSegmentInfo;  // "구간: N"
+        [SerializeField] TMP_Text  _lblHoverStatus;  // 호버 셀 사유 ("건설 불가: 단차 불일치" 등)
 
         // ── 탭 색 ──────────────────────────────────────────────────
         static readonly Color TabActive   = new Color(0.25f, 0.55f, 1.00f);
@@ -143,6 +144,7 @@ namespace CitySim
         {
             if (_roadController == null) return;
             _roadController.Undo();
+            RefreshRoadPanel();   // 되돌린 직후 구간 수 라벨 즉시 갱신
         }
 
         // ───────────────────────────────────────────────────────────
@@ -166,6 +168,9 @@ namespace CitySim
                 _lblSegmentInfo.text = active
                     ? $"Segments: {_roadController.SegmentCount}"
                     : string.Empty;
+
+            if (_lblHoverStatus != null)
+                _lblHoverStatus.text = active ? _roadController.HoverStatusText : string.Empty;
         }
     }
 }

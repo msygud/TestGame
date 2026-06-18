@@ -94,13 +94,13 @@ namespace CitySim
 
                 // 3. ResourceCells
                 SpawnResources(mapData, s, prefabLookup, cellTypeLookup,
-                    prefabMetaLookup, ecb);
+                    prefabMetaLookup, ref layers, ecb);
 
                 // 4. Singles
-                SpawnSingles(mapData, s, prefabLookup, prefabMetaLookup, gridMap, ecb);
+                SpawnSingles(mapData, s, prefabLookup, prefabMetaLookup, gridMap, ref layers, ecb);
 
                 // 5. Multis
-                SpawnMultis(mapData, s, prefabLookup, prefabMetaLookup, ecb);
+                SpawnMultis(mapData, s, prefabLookup, prefabMetaLookup, ref layers, ecb);
 
                 // 6. Roads → PlaceRoadCommand
                 IssueRoadCommands(mapData, ecb);
@@ -180,11 +180,29 @@ namespace CitySim
             PrefabLookup prefabLookup,
             CellTypeLookup cellTypeLookup,
             PrefabMetaLookup metaLookup,
+            ref GridLayers layers,
             EntityCommandBuffer ecb)
         {
             int spawned = 0;
+            int registered = 0;
             foreach (var cell in mapData.ResourceCells)
             {
+                var cellPos = new int2(cell.X, cell.Y);
+
+                // ResourceLayer 등록 — 자원 유무/양의 단일 소스.
+                // 배치 검증(도로/건물)이 이 레이어를 조회해 자원 위 건설을 차단한다.
+                // (양이 0 이하면 의미 없으므로 등록하지 않음 → 고갈 시 제거하면 곧 건설 가능)
+                if (cell.Amount > 0)
+                {
+                    layers.ResourceLayer[cellPos] = new ResourceCell
+                    {
+                        TypeId = cell.TypeId,
+                        Amount = cell.Amount,
+                    };
+                    registered++;
+                }
+
+                // 비주얼은 프리팹이 있을 때만 (아직 없으면 ResourceDebugRenderSystem가 대체 표시)
                 if (!cellTypeLookup.TryGet(cell.TypeId, out var typeInfo)) continue;
 
                 var prefabEntity = prefabLookup.Get(typeInfo.MainKey, typeInfo.VariantKey);
@@ -197,7 +215,7 @@ namespace CitySim
                 ecb.SetComponent(instance, LocalTransform.FromPosition(worldPos));
                 spawned++;
             }
-            Debug.Log($"[MapLoadSystem] 자원 {spawned}개 스폰");
+            Debug.Log($"[MapLoadSystem] 자원 {registered}개 등록, {spawned}개 비주얼 스폰");
         }
 
         // ══════════════════════════════════════════════════════════
@@ -209,6 +227,7 @@ namespace CitySim
             PrefabLookup prefabLookup,
             PrefabMetaLookup metaLookup,
             GridMap gridMap,
+            ref GridLayers layers,
             EntityCommandBuffer ecb)
         {
             int spawned = 0;
@@ -232,16 +251,55 @@ namespace CitySim
                 ecb.SetComponent(instance,
                     LocalTransform.FromPositionRotationScale(worldPos, rot, scale));
 
-                // 점유 등록 (Size 만큼 모든 셀)
-                for (int dx = 0; dx < meta.Size.x; dx++)
-                for (int dz = 0; dz < meta.Size.y; dz++)
-                    gridMap.BuildingCells.TryAdd(
-                        new int2(p.CellX + dx, p.CellZ + dz), instance);
+                // 점유를 스폰 오브젝트 종류(MainKey 구역)에서 런타임 판단해 등록.
+                //   Building    → OccupantType.Building  (건설 차단)
+                //   Environment → OccupantType.Environment (배치 시 치움)
+                var occType = OccupantFor(p.MainKey);
+                if (occType != OccupantType.None)
+                {
+                    // 환경물은 셀 기준 제거를 위해 EnvironmentInstance 태그를 단다.
+                    bool isEnv = occType == OccupantType.Environment;
+                    var occ = new OccupancyCell
+                    {
+                        Type         = occType,
+                        Occupant     = isEnv ? Entity.Null : instance,
+                        OwnerLocalId = -1,   // 맵 사전 배치 = 중립
+                    };
+                    for (int dx = 0; dx < sz.x; dx++)
+                    for (int dz = 0; dz < sz.y; dz++)
+                    {
+                        var oc = new int2(p.CellX + dx, p.CellZ + dz);
+                        layers.OccupancyLayer[oc] = occ;
+                    }
+                    if (isEnv)
+                        ecb.AddComponent(instance, new EnvironmentInstance
+                        {
+                            Cell = new int2(p.CellX, p.CellZ),
+                        });
+                }
+
+                // 정적 건물 점유(시민 BFS 등이 참조)는 GridMap에도 등록.
+                // 환경물은 제외 — 철거되면 BuildingCells에 죽은 엔티티 참조가 남으므로.
+                if (occType != OccupantType.Environment)
+                    for (int dx = 0; dx < sz.x; dx++)
+                    for (int dz = 0; dz < sz.y; dz++)
+                        gridMap.BuildingCells.TryAdd(
+                            new int2(p.CellX + dx, p.CellZ + dz), instance);
 
                 spawned++;
             }
             Debug.Log($"[MapLoadSystem] Single {spawned}개 스폰");
         }
+
+        // 스폰 오브젝트의 MainKey 구역 → 점유 종류.
+        // 도로/유닛/이펙트 등은 OccupancyLayer 점유 대상 아님(None).
+        static OccupantType OccupantFor(int mainKey)
+            => MainKeyRange.CategoryOf(mainKey) switch
+            {
+                PrefabCategory.Building    => OccupantType.Building,
+                PrefabCategory.Environment => OccupantType.Environment,
+                _                          => OccupantType.None,
+            };
 
         // ══════════════════════════════════════════════════════════
         //  Multi 배치 스폰 (셀당 N개 랜덤, 시드 재현)
@@ -251,6 +309,7 @@ namespace CitySim
             MapSettings s,
             PrefabLookup prefabLookup,
             PrefabMetaLookup metaLookup,
+            ref GridLayers layers,
             EntityCommandBuffer ecb)
         {
             int totalSpawned = 0;
@@ -272,6 +331,9 @@ namespace CitySim
                 float baseX = p.CellX * cs;
                 float baseZ = p.CellZ * cs;
 
+                // 한 셀의 N개 비주얼 각각에 EnvironmentInstance(셀) 태그를 붙인다.
+                // 점유 해제 시 EnvironmentClearSystem이 셀 기준으로 일괄 destroy.
+                var envCell = new int2(p.CellX, p.CellZ);
                 for (int i = 0; i < count; i++)
                 {
                     float rx = rng.NextFloat(0f, cs);
@@ -284,7 +346,16 @@ namespace CitySim
                     var instance = ecb.Instantiate(prefabEntity);
                     ecb.SetComponent(instance,
                         LocalTransform.FromPositionRotation(pos, rot));
+                    ecb.AddComponent(instance, new EnvironmentInstance { Cell = envCell });
                 }
+
+                // 환경(Multi=scatter) 셀 점유 등록. 제거는 셀 기준 요청으로 처리.
+                layers.OccupancyLayer[envCell] = new OccupancyCell
+                {
+                    Type         = OccupantType.Environment,
+                    Occupant     = Entity.Null,
+                    OwnerLocalId = -1,
+                };
 
                 totalSpawned += count;
             }

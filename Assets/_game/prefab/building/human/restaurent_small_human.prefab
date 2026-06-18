@@ -50,10 +50,33 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 3ea8177313ce9c04da80ffe562982078, type: 3}
       propertyPath: m_Name
-      value: fastfood_001
+      value: restaurent_small_human
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 3ea8177313ce9c04da80ffe562982078, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 941630273644960968}
   m_SourcePrefab: {fileID: 100100000, guid: 3ea8177313ce9c04da80ffe562982078, type: 3}
+--- !u!1 &7101352272596805819 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: 3ea8177313ce9c04da80ffe562982078, type: 3}
+  m_PrefabInstance: {fileID: 7947863324782663146}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &941630273644960968
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7101352272596805819}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1638d91c787904d498924eca75a1e671, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.ObstacleFootprintAuthoring
+  FootprintSize: {x: 4, y: 4}
+  FootprintRadius: 1
+  ExtraPadding: 0.25

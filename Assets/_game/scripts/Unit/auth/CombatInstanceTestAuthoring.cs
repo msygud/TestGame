@@ -47,9 +47,10 @@ namespace Game.Unit
         [Min(0.01f)]
         public float Scale = 1f;
 
-        [Header("Orders")]
-        public bool AutoAttack = true;
-        public bool TargetsAutoAttack;
+        [Header("AI Orders")]
+        public bool AiAttackMove = true;
+        [Min(0.1f)]
+        public float AiAttackMoveFormationSpacing = 2.25f;
 
         class Baker : Baker<CombatInstanceTestAuthoring>
         {
@@ -74,8 +75,8 @@ namespace Game.Unit
                     TargetTeamId = authoring.TargetTeamId,
                     AttackerNamePrefix = ResolvePrefix(authoring.AttackerNamePrefix, "A"),
                     TargetNamePrefix = ResolvePrefix(authoring.TargetNamePrefix, "T"),
-                    AutoAttack = authoring.AutoAttack ? (byte)1 : (byte)0,
-                    TargetsAutoAttack = authoring.TargetsAutoAttack ? (byte)1 : (byte)0,
+                    AiAttackMove = authoring.AiAttackMove ? (byte)1 : (byte)0,
+                    AiAttackMoveFormationSpacing = math.max(0.1f, authoring.AiAttackMoveFormationSpacing),
                 });
 
                 var attackers = AddBuffer<CombatInstanceTestAttackerPrefab>(entity);
@@ -168,8 +169,8 @@ namespace Game.Unit
         public int TargetTeamId;
         public FixedString32Bytes AttackerNamePrefix;
         public FixedString32Bytes TargetNamePrefix;
-        public byte AutoAttack;
-        public byte TargetsAutoAttack;
+        public float AiAttackMoveFormationSpacing;
+        public byte AiAttackMove;
     }
 
     public struct CombatInstanceTestAttackerPrefab : IBufferElementData
@@ -213,11 +214,6 @@ namespace Game.Unit
                     continue;
                 }
 
-                Entity firstTarget = Entity.Null;
-                Entity firstAttacker = Entity.Null;
-                var spawnedTargets = config.ValueRO.TargetsAutoAttack != 0
-                    ? new NativeList<Entity>(config.ValueRO.TargetCount, Allocator.Temp)
-                    : default;
                 TeamInfoData attackerTeam = BuildTeam(
                     config.ValueRO.AttackerLocalId,
                     config.ValueRO.AttackerTeamId,
@@ -228,6 +224,7 @@ namespace Game.Unit
                     config.ValueRO.TargetTeamId,
                     config.ValueRO.AttackerLocalId,
                     config.ValueRO.TargetTeamId == config.ValueRO.AttackerTeamId);
+                int commandGroupId = math.max(0, configEntity.Index);
 
                 for (int i = 0; i < config.ValueRO.TargetCount; i++)
                 {
@@ -240,14 +237,10 @@ namespace Game.Unit
                         config.ValueRO.Scale);
                     FixedString64Bytes targetName = BuildName(config.ValueRO.TargetNamePrefix, i);
                     SetOrAddTeam(ecb, entityManager, prefab, target, targetTeam);
+                    SetOrAddCommandGroup(ecb, entityManager, prefab, target, commandGroupId);
                     SetOrAddName(ecb, entityManager, prefab, target, targetName);
                     ecb.SetName(target, targetName.ToString());
 
-                    if (firstTarget == Entity.Null)
-                        firstTarget = target;
-
-                    if (config.ValueRO.TargetsAutoAttack != 0)
-                        spawnedTargets.Add(target);
                 }
 
                 for (int i = 0; i < config.ValueRO.AttackerCount; i++)
@@ -261,26 +254,21 @@ namespace Game.Unit
                         config.ValueRO.Scale);
                     FixedString64Bytes attackerName = BuildName(config.ValueRO.AttackerNamePrefix, i);
                     SetOrAddTeam(ecb, entityManager, prefab, attacker, attackerTeam);
+                    SetOrAddCommandGroup(ecb, entityManager, prefab, attacker, commandGroupId);
                     SetOrAddName(ecb, entityManager, prefab, attacker, attackerName);
                     ecb.SetName(attacker, attackerName.ToString());
 
-                    if (firstAttacker == Entity.Null)
-                        firstAttacker = attacker;
-
-                    if (config.ValueRO.AutoAttack != 0 && firstTarget != Entity.Null)
-                    {
-                        AddAttackOrder(ecb, attacker, firstTarget);
-                    }
                 }
 
-                if (config.ValueRO.TargetsAutoAttack != 0 && firstAttacker != Entity.Null)
-                {
-                    for (int i = 0; i < spawnedTargets.Length; i++)
-                        AddAttackOrder(ecb, spawnedTargets[i], firstAttacker);
-                }
-
-                if (config.ValueRO.TargetsAutoAttack != 0)
-                    spawnedTargets.Dispose();
+                if (config.ValueRO.AiAttackMove != 0)
+                    AddAiAttackMoveOrder(
+                        ecb,
+                        config.ValueRO.TargetLocalId,
+                        commandGroupId,
+                        config.ValueRO.AttackerOrigin,
+                        config.ValueRO.TargetOrigin,
+                        config.ValueRO.TargetCount,
+                        config.ValueRO.AiAttackMoveFormationSpacing);
 
                 ecb.AddComponent<CombatInstanceTestDone>(configEntity);
             }
@@ -310,14 +298,32 @@ namespace Game.Unit
             return instance;
         }
 
-        static void AddAttackOrder(EntityCommandBuffer ecb, Entity attacker, Entity target)
+        static void AddAiAttackMoveOrder(
+            EntityCommandBuffer ecb,
+            int localId,
+            int groupId,
+            float3 target,
+            float3 origin,
+            int unitCount,
+            float formationSpacing)
         {
+            float3 forward = target - origin;
+            forward.y = 0f;
+            forward = math.lengthsq(forward) <= 0.0001f
+                ? new float3(0f, 0f, 1f)
+                : math.normalize(forward);
+
             Entity request = ecb.CreateEntity();
-            ecb.AddComponent(request, new AttackOrderRequest
+            ecb.AddComponent(request, new UnitGroupMoveOrderRequest
             {
-                Attacker = attacker,
+                LocalId = math.clamp(localId, 0, 7),
+                GroupId = groupId,
                 Target = target,
-                CommandKind = UnitCommandKind.ForceAttack,
+                FormationForward = forward,
+                StopDistance = 0.25f,
+                FormationSpacing = math.max(0.1f, formationSpacing),
+                UnitCount = math.max(1, unitCount),
+                CommandKind = UnitCommandKind.AttackMove,
             });
         }
 
@@ -357,6 +363,24 @@ namespace Game.Unit
                 ecb.SetComponent(entity, team);
             else
                 ecb.AddComponent(entity, team);
+        }
+
+        static void SetOrAddCommandGroup(
+            EntityCommandBuffer ecb,
+            EntityManager entityManager,
+            Entity prefab,
+            Entity entity,
+            int groupId)
+        {
+            var group = new UnitCommandGroupMember
+            {
+                GroupId = math.max(0, groupId),
+            };
+
+            if (entityManager.HasComponent<UnitCommandGroupMember>(prefab))
+                ecb.SetComponent(entity, group);
+            else
+                ecb.AddComponent(entity, group);
         }
 
         static FixedString64Bytes BuildName(FixedString32Bytes prefix, int index)

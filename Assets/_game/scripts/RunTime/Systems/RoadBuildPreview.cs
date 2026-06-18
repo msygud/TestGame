@@ -12,14 +12,17 @@ namespace CitySim
     //
     //  설계:
     //    - 입력 컨트롤러(RoadBuildController)가 PreviewCell 버퍼에 "어느 셀을
-    //      어떤 유효성으로 보여줄지" 채운다.
+    //      어떤 상태(PreviewStatus)로 보여줄지" 채운다.
     //    - 이 시스템은 그 버퍼를 매 프레임 관리 캐시(_cells)에 복사하고,
     //      URP의 RenderPipelineManager.endCameraRendering 콜백에서 GL로 그린다.
     //    - URP에서는 PresentationSystemGroup의 GL 직접 호출이 카메라 렌더 밖이라
     //      화면에 안 나온다. 반드시 endCameraRendering 콜백 안에서 그려야 한다.
     //
-    //    - 모양(비트마스크) 결정은 프리뷰에서 하지 않는다. 마커는 위치/유효성만.
+    //    - 모양(비트마스크) 결정은 프리뷰에서 하지 않는다. 마커는 위치/상태만.
     //      실제 모양은 확정 후 RoadSystem이 "실제 연결 상태"로만 파생.
+    //
+    //    - 셀 Y는 지형 높이(TerrainCell.Height)를 따라간다. 평지(0)뿐 아니라
+    //      단차 지형 위에서도 마커가 지표면에 붙는다.
     // ══════════════════════════════════════════════════════════════════════════
 
     public enum PreviewKind : byte
@@ -28,13 +31,62 @@ namespace CitySim
         Dragging = 1,   // 현재 드래그 중
     }
 
+    /// <summary>
+    /// 프리뷰 셀의 상태. 색·외곽선·건설 가능 여부를 결정.
+    ///   Valid          — 건설 가능 (초록)
+    ///   Occupied       — 건물/유닛/지형/타 플레이어 도로가 점유 → 건설 불가 (빨강 + 외곽선)
+    ///   OutOfBounds    — 맵 범위 밖 → 건설 불가 (어두운 빨강)
+    ///   HeightMismatch — 연결될 인접 도로와 단차 불일치 → 건설 불가 (주황)
+    ///   ParallelWarn   — 평행 동축 도로라 연결 안 됨 (경고, 건설은 가능 · 노랑)
+    ///   OwnerWarn      — 인접한 타 플레이어 도로와 연결 안 됨 (경고 · 자홍)
+    /// </summary>
+    public enum PreviewStatus : byte
+    {
+        Valid           = 0,
+        Occupied        = 1,
+        OutOfBounds     = 2,
+        HeightMismatch  = 3,
+        ParallelWarn    = 4,
+        OwnerWarn       = 5,
+        ResourceBlocked = 6,  // 채취 자원 위 — 건설 불가 (자원 보존)
+        WillClear       = 7,  // 환경물(나무/바위) 위 — 건설 가능, 배치 시 철거됨
+    }
+
     /// <summary>프리뷰 마커 한 칸.</summary>
     [InternalBufferCapacity(64)]
     public struct PreviewCell : IBufferElementData
     {
-        public int2        Cell;
-        public bool        Valid;   // true=초록(가능), false=빨강(불가)
-        public PreviewKind Kind;
+        public int2          Cell;
+        public PreviewStatus Status;
+        public PreviewKind   Kind;
+    }
+
+    public static class PreviewStatusOps
+    {
+        /// <summary>이 상태가 배치를 막는 상태인가 (건설 불가).</summary>
+        public static bool IsBlocking(PreviewStatus s)
+            => s == PreviewStatus.Occupied
+            || s == PreviewStatus.OutOfBounds
+            || s == PreviewStatus.HeightMismatch
+            || s == PreviewStatus.ResourceBlocked;
+
+        /// <summary>대상 오브젝트(점유물/철거 예정물)에 외곽선 강조를 줄지.</summary>
+        public static bool ShowOutline(PreviewStatus s)
+            => s == PreviewStatus.Occupied || s == PreviewStatus.WillClear;
+
+        /// <summary>유저에게 보일 사유 텍스트 (HUD 라벨용).</summary>
+        public static string ToText(PreviewStatus s) => s switch
+        {
+            PreviewStatus.Valid          => "건설 가능",
+            PreviewStatus.Occupied       => "건설 불가: 오브젝트 점유",
+            PreviewStatus.OutOfBounds    => "건설 불가: 맵 범위 밖",
+            PreviewStatus.HeightMismatch => "건설 불가: 단차 불일치",
+            PreviewStatus.ParallelWarn   => "경고: 평행 도로 — 연결 안 됨",
+            PreviewStatus.OwnerWarn      => "경고: 타 플레이어 도로 — 연결 안 됨",
+            PreviewStatus.ResourceBlocked => "건설 불가: 자원 점유",
+            PreviewStatus.WillClear      => "환경물 철거 후 건설",
+            _                            => string.Empty,
+        };
     }
 
     /// <summary>
@@ -55,14 +107,22 @@ namespace CitySim
     {
         Material _mat;
 
-        // 색
-        static readonly Color ValidPending     = new Color(0.20f, 0.85f, 0.30f, 0.45f);
-        static readonly Color InvalidPending   = new Color(0.90f, 0.20f, 0.20f, 0.45f);
-        static readonly Color ValidDragging    = new Color(0.30f, 0.95f, 0.45f, 0.65f);
-        static readonly Color InvalidDragging  = new Color(1.00f, 0.30f, 0.30f, 0.65f);
+        // 상태별 색 (RGBA). 알파는 Kind(Pending/Dragging)로 가감.
+        static Color StatusColor(PreviewStatus s) => s switch
+        {
+            PreviewStatus.Valid          => new Color(0.25f, 0.90f, 0.40f, 1f),  // 초록
+            PreviewStatus.Occupied       => new Color(0.95f, 0.20f, 0.20f, 1f),  // 빨강
+            PreviewStatus.OutOfBounds    => new Color(0.55f, 0.10f, 0.10f, 1f),  // 어두운 빨강
+            PreviewStatus.HeightMismatch => new Color(1.00f, 0.55f, 0.10f, 1f),  // 주황
+            PreviewStatus.ParallelWarn   => new Color(0.95f, 0.90f, 0.20f, 1f),  // 노랑
+            PreviewStatus.OwnerWarn      => new Color(0.85f, 0.30f, 0.90f, 1f),  // 자홍
+            PreviewStatus.ResourceBlocked => new Color(0.10f, 0.70f, 0.85f, 1f), // 청록 (자원)
+            PreviewStatus.WillClear      => new Color(0.55f, 0.40f, 0.20f, 1f), // 갈색 (철거 예정)
+            _                            => Color.white,
+        };
 
         // 콜백이 그릴 데이터의 스냅샷 (메인스레드 캐시)
-        struct DrawCell { public float3 Center; public Color Color; }
+        struct DrawCell { public float3 Center; public Color Color; public bool Outline; }
         readonly List<DrawCell> _cells = new(128);
         float _cellSize;
         bool  _hasData;
@@ -114,17 +174,32 @@ namespace CitySim
             var buf = EntityManager.GetBuffer<PreviewCell>(previewEntity);
             if (buf.Length == 0) return;
 
+            // 지형 높이를 따라 마커 Y를 올린다 (단차 지형 대응).
+            bool hasTerrain = SystemAPI.TryGetSingleton<GridLayers>(out var layers)
+                              && layers.TerrainLayer.IsCreated;
+
             for (int i = 0; i < buf.Length; i++)
             {
                 var pc = buf[i];
-                Color c = pc.Kind == PreviewKind.Dragging
-                    ? (pc.Valid ? ValidDragging : InvalidDragging)
-                    : (pc.Valid ? ValidPending  : InvalidPending);
+
+                Color c = StatusColor(pc.Status);
+                // 확정 대기는 살짝 옅게, 드래그 중은 진하게.
+                c.a = pc.Kind == PreviewKind.Dragging ? 0.65f : 0.45f;
 
                 // Cell은 footprint 원점(좌하단). 쿼드 중심 = 원점 + halfExtent
                 float cx = pc.Cell.x * _cellSize + _halfExtent;
                 float cz = pc.Cell.y * _cellSize + _halfExtent;
-                _cells.Add(new DrawCell { Center = new float3(cx, 0.05f, cz), Color = c });
+
+                float height = 0f;
+                if (hasTerrain && layers.TerrainLayer.TryGetValue(pc.Cell, out var tc))
+                    height = tc.Height * _cellSize;
+
+                _cells.Add(new DrawCell
+                {
+                    Center  = new float3(cx, height + 0.05f, cz),
+                    Color   = c,
+                    Outline = PreviewStatusOps.ShowOutline(pc.Status),
+                });
             }
             _hasData = _cells.Count > 0;
         }
@@ -142,8 +217,9 @@ namespace CitySim
 
             _mat.SetPass(0);
             GL.PushMatrix();
-            GL.Begin(GL.QUADS);
 
+            // 1) 채움 쿼드
+            GL.Begin(GL.QUADS);
             for (int i = 0; i < _cells.Count; i++)
             {
                 var d = _cells[i];
@@ -154,8 +230,24 @@ namespace CitySim
                 GL.Vertex3(x + h, y, z + h);
                 GL.Vertex3(x + h, y, z - h);
             }
-
             GL.End();
+
+            // 2) 점유 오브젝트 강조 외곽선 (대상 오브젝트가 무엇인지 식별 가능하게)
+            GL.Begin(GL.LINES);
+            for (int i = 0; i < _cells.Count; i++)
+            {
+                var d = _cells[i];
+                if (!d.Outline) continue;
+                GL.Color(new Color(1f, 1f, 1f, 0.95f));   // 흰 테두리로 대상 강조
+                float x = d.Center.x, y = d.Center.y + 0.02f, z = d.Center.z;
+                // 사각 외곽선 4변
+                GL.Vertex3(x - h, y, z - h); GL.Vertex3(x - h, y, z + h);
+                GL.Vertex3(x - h, y, z + h); GL.Vertex3(x + h, y, z + h);
+                GL.Vertex3(x + h, y, z + h); GL.Vertex3(x + h, y, z - h);
+                GL.Vertex3(x + h, y, z - h); GL.Vertex3(x - h, y, z - h);
+            }
+            GL.End();
+
             GL.PopMatrix();
         }
     }

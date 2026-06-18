@@ -4,6 +4,7 @@ using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.EventSystems;
 
 namespace CitySim
 {
@@ -59,6 +60,32 @@ namespace CitySim
         public bool IsModeActive => _modeActive;
         public int  SegmentCount => _segmentCount;
 
+        // 현재 호버 셀의 상태 (HUD 사유 표시용). 호버 없으면 Valid.
+        PreviewStatus _hoverStatus   = PreviewStatus.Valid;
+        OccupantType  _hoverOccupant = OccupantType.None;  // 점유 종류 (Occupied일 때)
+        public PreviewStatus HoverStatus => _hoverStatus;
+        public bool          HasHover    => _hasHover;
+        public string        HoverStatusText
+        {
+            get
+            {
+                if (!_hasHover) return string.Empty;
+                // 점유 셀이면 무엇이 막는지(건물/유닛/지형) 같이 표시.
+                if (_hoverStatus == PreviewStatus.Occupied
+                    && _hoverOccupant != OccupantType.None)
+                    return $"건설 불가: {OccupantText(_hoverOccupant)} 점유";
+                return PreviewStatusOps.ToText(_hoverStatus);
+            }
+        }
+
+        static string OccupantText(OccupantType t) => t switch
+        {
+            OccupantType.Road        => "도로",
+            OccupantType.Building     => "건물",
+            OccupantType.Environment => "환경물",
+            _                        => "오브젝트",
+        };
+
         // ── 내부 상태 ──────────────────────────────────────────────
         // 각 segment = 그 드래그가 만든 셀 목록 (순서 보존, 중복 제거).
         readonly List<List<int2>> _segments = new();
@@ -66,6 +93,7 @@ namespace CitySim
         bool       _dragging;
         int2       _dragStart;
         List<int2> _currentDrag = new();   // 현재 드래그 중 셀 (확정 전)
+        readonly List<int2> _hoverList = new(1);  // 호버 단일 셀 평가용 (재사용)
         bool       _hasHover;
         int2       _hoverCell;
 
@@ -170,16 +198,16 @@ namespace CitySim
             {
                 if (seg.Count == 0) continue;
 
-                int2 segStart = seg[0];
-                int2 segEnd   = seg[seg.Count - 1];
-                // BuildPath가 단일 축만 생성하므로 코너(Any) 없음
-                bool hasH = segEnd.x != segStart.x;
-                RoadPlacedAxis segAxis = hasH ? RoadPlacedAxis.EW : RoadPlacedAxis.NS;
+                // 중간에 건물/자원/단차가 하나라도 있으면 이 구간 전체를 건설하지 않음.
+                if (hasLayers &&
+                    PreviewStatusOps.IsBlocking(SegmentBlockStatus(seg, slot, layers)))
+                    continue;
+
+                RoadPlacedAxis segAxis = SegmentAxis(seg);
 
                 foreach (var cell in seg)
                 {
                     if (!placed.Add(cell)) continue;
-                    if (hasLayers && !IsCellPlaceable(cell, layers)) continue;
 
                     RoadPlacedAxis axis = segAxis;
 
@@ -210,6 +238,16 @@ namespace CitySim
         {
             var mouse = Mouse.current;
             if (mouse == null) return;
+
+            // UI 위 포인터면 새 드래그를 시작하지 않는다.
+            // (Undo/Confirm 버튼 클릭이 유령 드래그→세그먼트 추가로 새던 버그 방지.
+            //  진행 중 드래그는 그대로 유지해 UI 위를 지나가도 끊기지 않게 함.)
+            if (!_dragging && EventSystem.current != null
+                && EventSystem.current.IsPointerOverGameObject())
+            {
+                _hasHover = false;
+                return;
+            }
 
             if (!TryGetHoverCell(out int2 cell))
             {
@@ -277,6 +315,83 @@ namespace CitySim
             return path;
         }
 
+        // 세그먼트(셀 목록)의 배치 축. 단일 축 직선이므로 양 끝으로 판정.
+        // 셀 1개 이하면 축 미정 → Any.
+        static RoadPlacedAxis SegmentAxis(List<int2> seg)
+        {
+            if (seg == null || seg.Count < 2) return RoadPlacedAxis.Any;
+            return seg[seg.Count - 1].x != seg[0].x
+                ? RoadPlacedAxis.EW : RoadPlacedAxis.NS;
+        }
+
+        // 세그먼트 전체 차단 평가.
+        //   "중간에 건물/자원/단차가 있으면 그 구간 전체를 건설불가"
+        //   - 건물(Occupied)/자원(ResourceBlocked)/범위밖(OutOfBounds): 즉시 반환
+        //   - 단차(HeightMismatch): 세그먼트 내 모든 셀의 지형 높이가 같아야 함
+        //     (도로는 경사를 가로지를 수 없음). 단차 너머 기존 도로와는 "연결만"
+        //     안 될 뿐 배치는 허용하므로 여기서 막지 않는다.
+        //   - 환경물은 차단 아님(배치 시 철거)
+        //  차단 사유 없으면 Valid.
+        PreviewStatus SegmentBlockStatus(List<int2> seg, int ownerSlot, GridLayers layers)
+        {
+            bool first = true;
+            byte baseH = 0;
+
+            foreach (var cell in seg)
+            {
+                if (layers.RoadLayer.TryGetValue(cell, out var hereRoad))
+                {
+                    if (ownerSlot >= 0 && hereRoad.OwnerLocalId != ownerSlot)
+                        return PreviewStatus.Occupied;
+                    if (CurrentRoadSize() > 1)
+                        return PreviewStatus.Occupied;
+                }
+                else
+                {
+                    if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty
+                        && occ.Type != OccupantType.Environment)
+                        return PreviewStatus.Occupied;
+                    if (layers.ResourceLayer.IsCreated
+                        && layers.ResourceLayer.TryGetValue(cell, out var res) && res.Amount > 0)
+                        return PreviewStatus.ResourceBlocked;
+                    if (layers.TerrainLayer.IsCreated && !layers.TerrainLayer.ContainsKey(cell))
+                        return PreviewStatus.OutOfBounds;
+                }
+
+                byte h = layers.TerrainLayer.IsCreated
+                      && layers.TerrainLayer.TryGetValue(cell, out var tc) ? tc.Height : (byte)0;
+
+                // 세그먼트 내부 단차만 차단 (도로는 경사를 가로지를 수 없음).
+                // 단차 너머 기존 도로와는 "연결만" 안 됨(배치는 허용) → 여기서 막지 않는다.
+                if (first) { baseH = h; first = false; }
+                else if (h != baseH) return PreviewStatus.HeightMismatch;
+            }
+            return PreviewStatus.Valid;
+        }
+
+        // 세그먼트를 프리뷰 버퍼에 추가. 세그먼트 차단 사유가 있으면 전 셀을
+        // 그 사유로 표시(전체 빨강), 아니면 셀별 상태(환경철거/경고/가능)로 표시.
+        // 반환: 추가한 셀 수.
+        int AddSegmentPreview(DynamicBuffer<PreviewCell> buf, List<int2> seg,
+                              PreviewKind kind, int ownerSlot, GridLayers layers, bool hasLayers)
+        {
+            if (seg.Count == 0) return 0;
+
+            PreviewStatus segBlock = hasLayers
+                ? SegmentBlockStatus(seg, ownerSlot, layers) : PreviewStatus.Valid;
+            bool blocked = PreviewStatusOps.IsBlocking(segBlock);
+            RoadPlacedAxis axis = SegmentAxis(seg);
+
+            foreach (var cell in seg)
+            {
+                var st = blocked ? segBlock
+                       : (hasLayers ? EvaluateCell(cell, axis, ownerSlot, layers)
+                                    : PreviewStatus.Valid);
+                buf.Add(new PreviewCell { Cell = cell, Status = st, Kind = kind });
+            }
+            return seg.Count;
+        }
+
         // ───────────────────────────────────────────────────────────
         //  프리뷰 버퍼 갱신
         // ───────────────────────────────────────────────────────────
@@ -298,32 +413,46 @@ namespace CitySim
 
             var layers = GetLayers(out bool hasLayers);
 
+            // 프리뷰용 소유자 슬롯 해소 (실패해도 점유/범위 검사는 계속).
+            int ownerSlot = hasLayers && ResolvePlayerFaction(out int s, out _) ? s : -1;
+
             // 확정 대기 segment들
             int cellCount = 0;
             foreach (var seg in _segments)
-            {
-                foreach (var cell in seg)
-                {
-                    bool valid = !hasLayers || IsCellPlaceable(cell, layers);
-                    buf.Add(new PreviewCell { Cell = cell, Valid = valid, Kind = PreviewKind.Pending });
-                    cellCount++;
-                }
-            }
+                cellCount += AddSegmentPreview(buf, seg, PreviewKind.Pending, ownerSlot, layers, hasLayers);
 
             // 드래그 중이면 드래그 경로, 아니면 호버 셀 1개
             if (_dragging)
             {
-                foreach (var cell in _currentDrag)
-                {
-                    bool valid = !hasLayers || IsCellPlaceable(cell, layers);
-                    buf.Add(new PreviewCell { Cell = cell, Valid = valid, Kind = PreviewKind.Dragging });
-                }
+                AddSegmentPreview(buf, _currentDrag, PreviewKind.Dragging, ownerSlot, layers, hasLayers);
             }
             else if (_hasHover)
             {
-                bool valid = !hasLayers || IsCellPlaceable(_hoverCell, layers);
-                buf.Add(new PreviewCell { Cell = _hoverCell, Valid = valid, Kind = PreviewKind.Dragging });
+                _hoverList.Clear();
+                _hoverList.Add(_hoverCell);
+                AddSegmentPreview(buf, _hoverList, PreviewKind.Dragging, ownerSlot, layers, hasLayers);
+
+                // HUD 사유 표시용 호버 상태/점유 종류
+                if (hasLayers)
+                {
+                    var hb = SegmentBlockStatus(_hoverList, ownerSlot, layers);
+                    _hoverStatus = PreviewStatusOps.IsBlocking(hb)
+                        ? hb
+                        : EvaluateCell(_hoverCell, RoadPlacedAxis.Any, ownerSlot, layers);
+                }
+                else _hoverStatus = PreviewStatus.Valid;
+
+                _hoverOccupant = OccupantType.None;
+                if (_hoverStatus == PreviewStatus.Occupied && hasLayers)
+                {
+                    if (layers.OccupancyLayer.TryGetValue(_hoverCell, out var occ) && !occ.IsEmpty)
+                        _hoverOccupant = occ.Type;
+                    else if (layers.RoadLayer.ContainsKey(_hoverCell))
+                        _hoverOccupant = OccupantType.Road;
+                }
             }
+
+            if (!_hasHover) { _hoverStatus = PreviewStatus.Valid; _hoverOccupant = OccupantType.None; }
 
             _pendingCellCount = cellCount;
             _segmentCount = _segments.Count;
@@ -337,24 +466,94 @@ namespace CitySim
         }
 
         // ───────────────────────────────────────────────────────────
-        //  유효성 — 점유 여부 (도로 끼리 겹침은 허용: 모양만 갱신)
+        //  셀 상태 평가 — 점유/단차/연결 사유를 구분해 반환
+        //
+        //  비차단 셀의 셀별 상태(환경철거/경고/가능)만 판정한다.
+        //  차단 사유(건물/자원/범위/세그먼트 단차)는 SegmentBlockStatus가 담당.
+        //  단차 너머 이웃 도로는 "연결만" 안 함(여기선 막지도 경고하지도 않음).
+        //
+        //  axis  : 이 셀이 속한 드래그/세그먼트의 배치 축 (호버 단독이면 Any).
+        //  ownerSlot : 플레이어 슬롯 (-1 = 미해소 → 소유자 검사 생략).
         // ───────────────────────────────────────────────────────────
-        bool IsCellPlaceable(int2 cell, GridLayers layers)
+        PreviewStatus EvaluateCell(int2 cell, RoadPlacedAxis axis, int ownerSlot,
+                                   GridLayers layers)
         {
-            // 1×1 도로: 기존 도로 위 재배치 허용 (모양 갱신).
-            // 멀티셀 도로: 기존 도로와 겹치면 끼워넣기가 되므로 불허.
-            if (layers.RoadLayer.ContainsKey(cell))
-                return CurrentRoadSize() <= 1;
+            // 기존 도로 위?
+            if (layers.RoadLayer.TryGetValue(cell, out var hereRoad))
+            {
+                // 타 플레이어 도로 위에는 배치 불가.
+                if (ownerSlot >= 0 && hereRoad.OwnerLocalId != ownerSlot)
+                    return PreviewStatus.Occupied;
+                // 멀티셀 도로는 기존 도로와 겹치면 끼워넣기가 되므로 불가.
+                if (CurrentRoadSize() > 1)
+                    return PreviewStatus.Occupied;
+                // 같은 소유자 1×1: 재배치 허용 → 아래 연결 검사 계속.
+            }
+            bool willClear = false;   // 환경물 위 → 배치 시 철거됨(비차단, 프리뷰 강조)
 
-            // 그 외 점유(건물/유닛/지형)면 불가.
-            if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty)
-                return false;
+            // 기존 도로 위가 아니어도 환경물이 함께 있을 수 있음(겹쳐 등록).
+            if (layers.OccupancyLayer.TryGetValue(cell, out var hereOcc)
+                && hereOcc.Type == OccupantType.Environment)
+                willClear = true;
 
-            // 맵 범위 밖이면 불가 (TerrainLayer에 셀이 없으면 범위 밖으로 간주).
-            if (layers.TerrainLayer.IsCreated && !layers.TerrainLayer.ContainsKey(cell))
-                return false;
+            if (!layers.RoadLayer.ContainsKey(cell))
+            {
+                // 점유(건물 등)면 불가. 환경(나무/바위)은 배치 시 치우므로 막지 않음.
+                if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty
+                    && occ.Type != OccupantType.Environment)
+                    return PreviewStatus.Occupied;
 
-            return true;
+                // 채취 자원 위면 불가 (자원 보존 — ResourceLayer가 단일 소스).
+                if (layers.ResourceLayer.IsCreated
+                    && layers.ResourceLayer.TryGetValue(cell, out var res) && res.Amount > 0)
+                    return PreviewStatus.ResourceBlocked;
+
+                // 맵 범위 밖이면 불가 (TerrainLayer에 셀이 없으면 범위 밖).
+                if (layers.TerrainLayer.IsCreated && !layers.TerrainLayer.ContainsKey(cell))
+                    return PreviewStatus.OutOfBounds;
+            }
+
+            // ── 연결 검사 (단차 / 평행 / 소유자) ──
+            byte myHeight = layers.TerrainLayer.IsCreated
+                         && layers.TerrainLayer.TryGetValue(cell, out var tc)
+                ? tc.Height : (byte)0;
+
+            bool ownerKnown  = ownerSlot >= 0;
+            bool ownerWarn   = false;
+            bool parallelWarn = false;
+
+            for (int i = 0; i < 4; i++)
+            {
+                var n = cell + RoadDirOps.Offsets[i];
+                if (!layers.RoadLayer.TryGetValue(n, out var nc)) continue;
+
+                // 타 플레이어 도로 → 연결 안 됨 (경고). 단차 무관.
+                if (ownerKnown && nc.OwnerLocalId != ownerSlot) { ownerWarn = true; continue; }
+
+                // 단차 너머 도로 → 연결 안 됨(배치는 허용). 경고도 아님 — 그냥 안 이어짐.
+                byte nh = layers.TerrainLayer.IsCreated
+                       && layers.TerrainLayer.TryGetValue(n, out var nt)
+                    ? nt.Height : (byte)0;
+                if (nh != myHeight) continue;
+
+                // 축 필터: 평행 동축이라 연결 안 되는가? (둘 다 같은 평행 축, Any 아님)
+                bool isEW = RoadDirOps.Offsets[i].x != 0;
+                bool myAllows = axis == RoadPlacedAxis.Any
+                    || (axis == RoadPlacedAxis.EW && isEW)
+                    || (axis == RoadPlacedAxis.NS && !isEW);
+                bool nbAllows = nc.Axis == RoadPlacedAxis.Any
+                    || (nc.Axis == RoadPlacedAxis.EW && isEW)
+                    || (nc.Axis == RoadPlacedAxis.NS && !isEW);
+                if (!(myAllows || nbAllows))
+                    parallelWarn = true;
+            }
+
+            // 철거 예정(환경물)은 경고보다 우선 표시 — 어떤 오브젝트가 사라지는지
+            // 외곽선으로 강조해 보여주기 위함. (단차 등 차단은 위에서 이미 반환됨)
+            if (willClear)    return PreviewStatus.WillClear;
+            if (parallelWarn) return PreviewStatus.ParallelWarn;
+            if (ownerWarn)    return PreviewStatus.OwnerWarn;
+            return PreviewStatus.Valid;
         }
 
         // ───────────────────────────────────────────────────────────

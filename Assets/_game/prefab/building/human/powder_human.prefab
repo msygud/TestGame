@@ -50,7 +50,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
       propertyPath: m_Name
-      value: burger_shop_001
+      value: powder_human
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -59,6 +59,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
       insertIndex: -1
       addedObject: {fileID: 2679207804047727347}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 6413411754324162173}
   m_SourcePrefab: {fileID: 100100000, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
 --- !u!1 &6969019826408937393 stripped
 GameObject:
@@ -87,3 +90,18 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 1447963221395459135, guid: 6db8a7b77cdef7d40b43916b75d93af6, type: 3}
+--- !u!114 &6413411754324162173
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6969019826408937393}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1638d91c787904d498924eca75a1e671, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.ObstacleFootprintAuthoring
+  FootprintSize: {x: 4, y: 4}
+  FootprintRadius: 1
+  ExtraPadding: 0.25

@@ -38,8 +38,11 @@ namespace CitySim
             in NativeHashMap<int2, BlockCell>     blockLayer,
             in NativeHashMap<int2, OccupancyCell> occupancyLayer,
             in NativeHashMap<int2, TerrainCell>   terrainLayer,
+            in NativeHashMap<int2, ResourceCell>  resourceLayer,
             int2 blockPos, int2 blockSize)
         {
+            bool firstCell = true; byte baseHeight = 0;
+
             for (int bx = 0; bx < blockSize.x; bx++)
             for (int bz = 0; bz < blockSize.y; bz++)
             {
@@ -48,19 +51,36 @@ namespace CitySim
                 // (a) 이미 구획으로 등록된 저해상도 셀이면 불가
                 if (blockLayer.ContainsKey(bc)) return false;
 
-                // (b) 이 저해상도 셀이 덮는 실셀들이 전부 맵 안 + 비어있어야 함
-                if (!IsRealCellRangeFree(occupancyLayer, terrainLayer, bc))
+                // (b) 이 저해상도 셀이 덮는 실셀들이 전부 맵 안 + 배치 가능해야 함
+                //     (점유/자원 검사 — 건물 검증 ValidateCells와 일치시켜 유령 구획 방지)
+                if (!IsRealCellRangeFree(occupancyLayer, terrainLayer, resourceLayer, bc))
                     return false;
+
+                // (c) 단차 거부 — 구획 전체 실셀이 같은 지형 높이여야 함
+                //     (건물 ValidateCells의 HeightMismatch와 일치)
+                int2 ro = BlockGrid.ToReal(bc);
+                for (int dx = 0; dx < BlockGrid.UNIT; dx++)
+                for (int dz = 0; dz < BlockGrid.UNIT; dz++)
+                {
+                    byte h = terrainLayer.TryGetValue(ro + new int2(dx, dz), out var tc)
+                        ? tc.Height : (byte)0;
+                    if (firstCell) { baseHeight = h; firstCell = false; }
+                    else if (h != baseHeight) return false;
+                }
             }
             return true;
         }
 
         /// <summary>
-        /// 저해상도 셀 1칸(UNIT×UNIT 실셀)이 전부 맵 안이고 비어있는가.
+        /// 저해상도 셀 1칸(UNIT×UNIT 실셀)이 전부 맵 안이고 배치 가능한가.
+        /// 건물 배치 검증(BuildingPlacementSystem.ValidateCells)과 동일 기준:
+        ///   · 환경물(나무/바위)은 배치 시 치우므로 비어있는 것으로 본다.
+        ///   · 채취 자원(Amount>0)은 불가 (자원 보존).
         /// </summary>
         static bool IsRealCellRangeFree(
             in NativeHashMap<int2, OccupancyCell> occupancyLayer,
             in NativeHashMap<int2, TerrainCell>   terrainLayer,
+            in NativeHashMap<int2, ResourceCell>  resourceLayer,
             int2 blockCell)
         {
             int2 origin = BlockGrid.ToReal(blockCell);
@@ -72,28 +92,35 @@ namespace CitySim
                 // 맵 범위 밖 (지형이 정의돼 있어야 맵 내부)
                 if (!terrainLayer.ContainsKey(rc)) return false;
 
-                // 점유됨
-                if (occupancyLayer.TryGetValue(rc, out var occ) && !occ.IsEmpty)
+                // 점유됨 (환경물은 제외 — 건물이 치움)
+                if (occupancyLayer.TryGetValue(rc, out var occ) && !occ.IsEmpty
+                    && occ.Type != OccupantType.Environment)
+                    return false;
+
+                // 채취 자원 위 (자원 보존)
+                if (resourceLayer.IsCreated
+                    && resourceLayer.TryGetValue(rc, out var res) && res.Amount > 0)
                     return false;
             }
             return true;
         }
 
         // ──────────────────────────────────────────────────────────────
-        //  2. 후보 수집 — "도로의 특이점(끝/꺾임/분기)에 인접한 빈 저해상도 자리들"
+        //  2. 후보 수집 — "팀 도로의 옆면(인접)에 있는 빈 저해상도 자리들"
         //
-        //  직선 도로의 옆구리는 제외한다 (RoadDirOps.IsAnchor).
+        //  도로 옆면 전체가 건물 후보다 (특이점만이 아님). 이래야 도로 한 줄에
+        //  건물이 줄지어 붙어 도시가 조밀하게 차오른다.
+        //  같은 소유자(ownerLocalId) 도로만 본다 — 자기 도로변을 채움.
         //  반환: 빈 저해상도 셀 좌표 목록 (중복 제거됨).
         //  '어느 후보가 좋은가'는 판단하지 않는다 — 호출 시스템이 점수로 거른다.
-        //
-        //  비용: 도로 길이가 아니라 '특이점 수'에 비례
-        //        (직선 셀은 IsAnchor 에서 즉시 탈락).
         // ──────────────────────────────────────────────────────────────
-        public static void CollectAnchorCandidates(
+        public static void CollectRoadsideCandidates(
+            int ownerLocalId,
             in NativeHashMap<int2, RoadCell>      roadLayer,
             in NativeHashMap<int2, BlockCell>     blockLayer,
             in NativeHashMap<int2, OccupancyCell> occupancyLayer,
             in NativeHashMap<int2, TerrainCell>   terrainLayer,
+            in NativeHashMap<int2, ResourceCell>  resourceLayer,
             ref NativeList<int2>                  outCandidates)
         {
             // 중복 방지용 임시 집합
@@ -104,10 +131,10 @@ namespace CitySim
                 int2     roadCell = kv.Key;
                 RoadCell road     = kv.Value;
 
-                // 특이점이 아니면(직선/비도로) 건너뜀
-                if (!RoadDirOps.IsAnchor(road.Directions)) continue;
+                // 내 도로만 (다른 플레이어 도로변엔 안 지음)
+                if (road.OwnerLocalId != ownerLocalId) continue;
 
-                // 특이점 도로 셀의 4방향 인접 실셀 → 그 셀이 속한 저해상도 셀을 후보로
+                // 도로 셀의 4방향 인접 실셀 → 그 셀이 속한 저해상도 셀을 후보로
                 for (int d = 0; d < 4; d++)
                 {
                     int2 nReal  = roadCell + RoadDirOps.Offsets[d];
@@ -115,9 +142,9 @@ namespace CitySim
 
                     if (seen.Contains(nBlock)) continue;
 
-                    // 빈 저해상도 셀(미등록 + 실셀 비어있음)만 후보
+                    // 빈 저해상도 셀(미등록 + 실셀 배치가능)만 후보
                     if (!blockLayer.ContainsKey(nBlock) &&
-                        IsRealCellRangeFree(occupancyLayer, terrainLayer, nBlock))
+                        IsRealCellRangeFree(occupancyLayer, terrainLayer, resourceLayer, nBlock))
                     {
                         seen.Add(nBlock);
                         outCandidates.Add(nBlock);
@@ -235,5 +262,89 @@ namespace CitySim
                 blockLayer.Remove(bc);
             }
         }
+
+        // ──────────────────────────────────────────────────────────────
+        //  7. 도로 확장 후보 — "내 도로에서 빈 평지로 뻗을 수 있는 최선의 직선 stub"
+        //
+        //  팀 소유 도로 footprint 원점에서 4방향으로, 인접 footprint(같은 크기)가
+        //  비어있고 평탄(원점과 같은 높이)하면 그 방향으로 몇 칸까지 뻗을 수 있는지 잰다.
+        //  가장 길게 뻗는 방향을 best로 반환 (정책=발행은 호출 시스템이).
+        //
+        //  단차/자원/점유(환경 제외)/맵 경계를 만나면 거기서 정지 → 유기적 성장.
+        //  반환 found. outOrigin=첫 확장 footprint 원점, outDir=방향(0~3), outSteps=뻗을 footprint 수.
+        // ──────────────────────────────────────────────────────────────
+        public static bool FindRoadExtension(
+            in NativeHashMap<int2, RoadCell>      roadLayer,
+            in NativeHashMap<int2, OccupancyCell> occupancyLayer,
+            in NativeHashMap<int2, TerrainCell>   terrainLayer,
+            in NativeHashMap<int2, ResourceCell>  resourceLayer,
+            int ownerLocalId, byte roadSize, int maxSteps,
+            out int2 outOrigin, out int outDir, out int outSteps)
+        {
+            outOrigin = default; outDir = 0; outSteps = 0;
+            int bestSteps = 0;
+            int s = math.max(1, roadSize);
+
+            foreach (var kv in roadLayer)
+            {
+                var rc = kv.Value;
+                if (rc.OwnerLocalId != ownerLocalId) continue;
+                if (!kv.Key.Equals(rc.FootprintOrigin)) continue;  // footprint 원점만 (중복 제거)
+
+                int2 O   = rc.FootprintOrigin;
+                byte myH  = CellHeight(O, terrainLayer);
+
+                for (int d = 0; d < 4; d++)
+                {
+                    int2 off = RoadDirOps.Offsets[d];
+                    int2 cur = O + off * s;     // 첫 인접 footprint 원점
+                    int steps = 0;
+                    while (steps < maxSteps &&
+                           RoadFootprintFree(cur, s, myH,
+                               occupancyLayer, terrainLayer, resourceLayer, roadLayer))
+                    {
+                        steps++;
+                        cur += off * s;
+                    }
+                    if (steps > bestSteps)
+                    {
+                        bestSteps = steps;
+                        outOrigin = O + off * s;
+                        outDir    = d;
+                    }
+                }
+            }
+
+            outSteps = bestSteps;
+            return bestSteps > 0;
+        }
+
+        // 도로 footprint(size×size)가 비어있고 평탄(reqHeight)하며 맵 안인가.
+        // (도로 배치 규칙과 일치: 환경물은 비어있는 것으로 봄, 자원/점유/단차/경계는 막음)
+        static bool RoadFootprintFree(
+            int2 origin, int size, byte reqHeight,
+            in NativeHashMap<int2, OccupancyCell> occupancyLayer,
+            in NativeHashMap<int2, TerrainCell>   terrainLayer,
+            in NativeHashMap<int2, ResourceCell>  resourceLayer,
+            in NativeHashMap<int2, RoadCell>      roadLayer)
+        {
+            for (int dx = 0; dx < size; dx++)
+            for (int dz = 0; dz < size; dz++)
+            {
+                int2 c = origin + new int2(dx, dz);
+                if (!terrainLayer.ContainsKey(c)) return false;   // 맵 경계
+                if (roadLayer.ContainsKey(c))     return false;   // 이미 도로
+                if (occupancyLayer.TryGetValue(c, out var occ) && !occ.IsEmpty
+                    && occ.Type != OccupantType.Environment) return false;
+                if (resourceLayer.IsCreated
+                    && resourceLayer.TryGetValue(c, out var res) && res.Amount > 0) return false;
+                if (CellHeight(c, terrainLayer) != reqHeight) return false; // 단차
+            }
+            return true;
+        }
+
+        static byte CellHeight(int2 c, in NativeHashMap<int2, TerrainCell> terrainLayer)
+            => terrainLayer.IsCreated && terrainLayer.TryGetValue(c, out var tc)
+                ? tc.Height : (byte)0;
     }
 }

@@ -1151,14 +1151,9 @@ namespace Game.Unit
                 return;
 
             var commandStates = SystemAPI.GetComponentLookup<UnitCommandState>(true);
-            var ecb = SystemAPI
-                .GetSingleton<EndSimulationEntityCommandBufferSystem.Singleton>()
-                .CreateCommandBuffer(state.WorldUnmanaged)
-                .AsParallelWriter();
             var job = new UnitMovementArbiterJob
             {
                 CommandStates = commandStates,
-                Ecb = ecb,
                 DeltaTime = deltaTime,
             };
             state.Dependency = job.ScheduleParallel(state.Dependency);
@@ -1171,14 +1166,15 @@ namespace Game.Unit
     partial struct UnitMovementArbiterJob : IJobEntity
     {
         [ReadOnly] public ComponentLookup<UnitCommandState> CommandStates;
-        public EntityCommandBuffer.ParallelWriter Ecb;
         public float DeltaTime;
 
         public void Execute(
-            [EntityIndexInQuery] int sortKey,
             Entity entity,
+            in LocalTransform transform,
             ref CombatAttackTarget attackTarget,
             ref UnitMoveTarget moveTarget,
+            ref UnitMotionState motion,
+            DynamicBuffer<UnitPathWaypoint> waypoints,
             in CombatMoveIntent intent)
         {
             if (attackTarget.HasTarget == 0 ||
@@ -1196,14 +1192,43 @@ namespace Game.Unit
                 attackTarget.ApproachRefreshTime -= DeltaTime;
                 if (attackTarget.ApproachRefreshTime <= 0f)
                 {
-                    Entity request = Ecb.CreateEntity(sortKey);
-                    Ecb.AddComponent(sortKey, request, new MoveOrderRequest
+                    float stopDistance = math.max(0.1f, intent.StopDistance);
+                    float3 toTarget = intent.TargetPosition - transform.Position;
+                    toTarget.y = 0f;
+                    float distanceSq = math.lengthsq(toTarget);
+                    float inRangeDistance = math.max(0.1f, stopDistance - CombatWeaponUtility.RangeTolerance);
+                    if (distanceSq <= inRangeDistance * inRangeDistance)
                     {
-                        Unit = entity,
-                        Target = intent.TargetPosition,
-                        StopDistance = math.max(0.1f, intent.StopDistance),
+                        moveTarget.HasTarget = 0;
+                        motion.LastTargetDistance = float.MaxValue;
+                        motion.StuckTime = 0f;
+                        waypoints.Clear();
+                        attackTarget.ApproachRefreshTime = CombatWeaponUtility.ApproachRefreshInterval;
+                        return;
+                    }
+
+                    float3 approachPosition = intent.TargetPosition;
+                    if (distanceSq > 0.0001f)
+                    {
+                        float currentDistance = math.sqrt(distanceSq);
+                        float3 directionToTarget = toTarget * math.rsqrt(distanceSq);
+                        float desiredStandOffDistance = math.max(0.1f, stopDistance - CombatWeaponUtility.RangeTolerance * 0.5f);
+                        float standOffDistance = math.min(desiredStandOffDistance, math.max(0.1f, currentDistance - 0.25f));
+                        approachPosition = intent.TargetPosition - directionToTarget * standOffDistance;
+                    }
+
+                    moveTarget = new UnitMoveTarget
+                    {
+                        Position = approachPosition,
+                        StopDistance = math.max(0.1f, math.min(0.5f, stopDistance * 0.1f)),
                         RepathCount = 0,
-                    });
+                        PathStatus = UnitPathStatus.Direct,
+                        HasTarget = 1,
+                        RepathRequested = 0,
+                    };
+                    motion.LastTargetDistance = float.MaxValue;
+                    motion.StuckTime = 0f;
+                    waypoints.Clear();
                     attackTarget.ApproachRefreshTime = CombatWeaponUtility.ApproachRefreshInterval;
                 }
 

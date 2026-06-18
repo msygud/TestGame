@@ -15948,6 +15948,72 @@
             "OffsetZ": 0.0,
             "RotationY": 0.0,
             "Scale": 1.0
+        },
+        {
+            "MainKey": 5000,
+            "VariantKey": 0,
+            "CellX": 19,
+            "CellZ": 10,
+            "PositionY": 0.0,
+            "OffsetX": 0.0,
+            "OffsetZ": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 5000,
+            "VariantKey": 0,
+            "CellX": 20,
+            "CellZ": 10,
+            "PositionY": 0.0,
+            "OffsetX": 0.0,
+            "OffsetZ": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 5000,
+            "VariantKey": 0,
+            "CellX": 20,
+            "CellZ": 13,
+            "PositionY": 0.0,
+            "OffsetX": 0.0,
+            "OffsetZ": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 5000,
+            "VariantKey": 0,
+            "CellX": 19,
+            "CellZ": 13,
+            "PositionY": 0.0,
+            "OffsetX": 0.0,
+            "OffsetZ": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 5000,
+            "VariantKey": 0,
+            "CellX": 17,
+            "CellZ": 12,
+            "PositionY": 0.0,
+            "OffsetX": 0.0,
+            "OffsetZ": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 5000,
+            "VariantKey": 0,
+            "CellX": 19,
+            "CellZ": 12,
+            "PositionY": 0.0,
+            "OffsetX": 0.0,
+            "OffsetZ": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
         }
     ],
     "Multis": [],

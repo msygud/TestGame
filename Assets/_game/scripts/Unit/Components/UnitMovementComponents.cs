@@ -185,11 +185,65 @@ namespace Game.Unit
         public float StopDistance;
         public int RepathCount;
         public UnitCommandKind CommandKind;
+        public byte SkipPathfinding;
     }
 
     public struct MoveOrderPathWaypoint : IBufferElementData
     {
         public float3 Position;
+    }
+
+    public struct UnitDirectMoveOrderBatch : IComponentData
+    {
+    }
+
+    public struct UnitDirectMoveOrderElement : IBufferElementData
+    {
+        public Entity Unit;
+        public float3 Target;
+        public float StopDistance;
+        public UnitCommandKind CommandKind;
+    }
+
+    public struct SelectedUnitMoveOrderRequest : IComponentData
+    {
+        public float3 Target;
+        public float3 FormationForward;
+        public float StopDistance;
+        public float FormationSpacing;
+        public int UnitCount;
+        public UnitCommandKind CommandKind;
+    }
+
+    public struct SelectedUnitAttackOrderRequest : IComponentData
+    {
+        public Entity Target;
+        public UnitCommandKind CommandKind;
+    }
+
+    public struct UnitCommandGroupMember : IComponentData
+    {
+        public int GroupId;
+    }
+
+    public struct UnitGroupMoveOrderRequest : IComponentData
+    {
+        public int LocalId;
+        public int GroupId;
+        public float3 Target;
+        public float3 FormationForward;
+        public float StopDistance;
+        public float FormationSpacing;
+        public int UnitCount;
+        public UnitCommandKind CommandKind;
+    }
+
+    public struct UnitGroupAttackOrderRequest : IComponentData
+    {
+        public int LocalId;
+        public int GroupId;
+        public Entity Target;
+        public UnitCommandKind CommandKind;
     }
 
     [Flags]

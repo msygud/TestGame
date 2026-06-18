@@ -17,7 +17,7 @@ namespace CitySim
     //    - 즉각 반응이 아니라 관성 있는 성장 → 재미 + 성능.
     //
     //  단순 성장 정책(이번 단계):
-    //    - "무엇을 지을까"는 고정 (GrowthConfig.BuildingMainKey, 고정 구획 크기).
+    //    - "무엇을 지을까"는 건물 2종(GrowthConfig.BuildingKeyA/B). 구획 크기는 meta.Size에서 유도.
     //    - 후보 점수 = 공유 변 수(CountSharedEdges)만. 클수록 응집(빈틈부터 메움).
     //    - needs/자원/응집·자유 가중치는 추후 점수 항목으로 추가.
     //
@@ -41,6 +41,7 @@ namespace CitySim
             state.RequireForUpdate<FactionConfig>();
             state.RequireForUpdate<EntranceLookup>();
             state.RequireForUpdate<PrefabMetaLookup>();
+            state.RequireForUpdate<RoadKeyLookup>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -54,6 +55,7 @@ namespace CitySim
             var factionConfig = SystemAPI.GetSingleton<FactionConfig>();
             var entranceLookup = SystemAPI.GetSingleton<EntranceLookup>();
             var metaLookup = SystemAPI.GetSingleton<PrefabMetaLookup>();
+            var roadKeyLookup = SystemAPI.GetSingleton<RoadKeyLookup>();
             var cfg = GrowthConfig.Default;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -72,7 +74,7 @@ namespace CitySim
                 int ownerLocalId = team.LocalID;     // 소유는 LocalId 단위
                 int factionId = ResolveFactionId(in factionConfig, positionIndex);
 
-                TryGrowOneBlock(in layers, in entranceLookup, in metaLookup,
+                TryGrowOneBlock(in layers, in entranceLookup, in metaLookup, in roadKeyLookup,
                     ownerLocalId, factionId, in cfg, ref ecb);
             }
 
@@ -87,109 +89,202 @@ namespace CitySim
             in GridLayers layers,
             in EntranceLookup entranceLookup,
             in PrefabMetaLookup metaLookup,
+            in RoadKeyLookup roadKeyLookup,
             int ownerLocalId, int factionId,
             in GrowthConfig cfg,
             ref EntityCommandBuffer ecb)
         {
-            // 1) 후보 수집 (도로 특이점 인접 빈 저해상도 자리)
-            var candidates = new NativeList<int2>(64, Allocator.Temp);
-            BlockOps.CollectAnchorCandidates(
-                in layers.RoadLayer,
-                in layers.BlockLayer,
-                in layers.OccupancyLayer,
-                in layers.TerrainLayer,
-                ref candidates);
-
-            // 후보 없음 → 이 팀은 이번 턴 성장 안 함 (느슨하게 넘어감)
-            if (candidates.Length == 0)
-            {
-                candidates.Dispose();
+            // 건물 자리가 있으면 건물 1개. 없으면(공간 부족) 도로를 한 줄 연장해
+            // 새 공간(끝=특이점)을 연다 — 유기적 확장.
+            if (TryPlaceBuilding(in layers, in entranceLookup, in metaLookup,
+                    ownerLocalId, factionId, in cfg, ref ecb))
                 return;
-            }
 
-            int2 blockSize = cfg.BlockSize;   // 고정 크기 (저해상도 단위)
+            TryExtendRoad(in layers, in roadKeyLookup, ownerLocalId, factionId, in cfg, ref ecb);
+        }
 
-            // 2~3) 통과 후보 중 공유 변 최대 선택
-            int bestScore = -1;
-            int2 bestPos = default;
-            bool found = false;
+        // ──────────────────────────────────────────────────────────────────
+        //  건물 1개 배치 시도. 발행했으면 true.
+        // ──────────────────────────────────────────────────────────────────
+        static bool TryPlaceBuilding(
+            in GridLayers layers,
+            in EntranceLookup entranceLookup,
+            in PrefabMetaLookup metaLookup,
+            int ownerLocalId, int factionId,
+            in GrowthConfig cfg,
+            ref EntityCommandBuffer ecb)
+        {
+            // 내 도로 옆면(인접 빈 평지)에 건물 1격을 붙인다 — 실셀 단위.
+            //   · 후보 = 팀 도로 셀의 4방향 인접 빈 셀 n (방향 d = 도로 바깥쪽).
+            //   · footprint는 n을 도로 접면 가장자리로 두고 d 방향으로 뻗는다(접면 필수).
+            //   · 두 건물 모두 시도, 점수 = 응집(이웃 점유/도로) 우선 · 동률 시 큰 건물.
+            long  bestScore = -1;
+            int2  bestOrigin = default;
+            int   bestKey    = 0;
+            float bestRot    = 0f;
+            bool  found      = false;
 
-            for (int i = 0; i < candidates.Length; i++)
+            foreach (var kv in layers.RoadLayer)
             {
-                int2 pos = candidates[i];
+                if (kv.Value.OwnerLocalId != ownerLocalId) continue;
+                int2 r = kv.Key;
 
-                if (!BlockOps.CanPlaceBlock(
-                        in layers.BlockLayer,
-                        in layers.OccupancyLayer,
-                        in layers.TerrainLayer,
-                        pos, blockSize))
-                    continue;
-
-                int score = BlockOps.CountSharedEdges(in layers.BlockLayer, pos, blockSize);
-                if (score > bestScore)
+                for (int d = 0; d < 4; d++)
                 {
-                    bestScore = score;
-                    bestPos = pos;
-                    found = true;
+                    int2 off = RoadDirOps.Offsets[d];
+                    int2 n   = r + off;                  // 도로 바깥 인접 셀(건물 접면)
+                    if (!CellBuildable(n, in layers)) continue;
+
+                    for (int k = 0; k < 2; k++)
+                    {
+                        int key = k == 0 ? cfg.BuildingKeyA : cfg.BuildingKeyB;
+                        if (key <= 0) continue;
+                        if (!metaLookup.TryGetMeta(key, 0, out var meta)) continue;
+
+                        int2 sz = math.max(meta.Size, new int2(1, 1));
+
+                        // n을 도로 접면 가장자리로 두고 d 방향으로 뻗는 footprint 원점
+                        int2 origin = new int2(
+                            d == 3 ? n.x - (sz.x - 1) : n.x,   // W로 뻗으면 원점은 왼쪽
+                            d == 2 ? n.y - (sz.y - 1) : n.y);  // S로 뻗으면 원점은 아래
+
+                        if (!FootprintFreeFlat(origin, sz, in layers)) continue;
+
+                        float rot = 0f;
+                        if (meta.HasEntrance && entranceLookup.TryGet(key, out var ent))
+                        {
+                            int steps = EntranceOps.FindRoadFacingRotation(
+                                origin, sz, in ent, in layers.RoadLayer);
+                            if (steps < 0) continue;     // 입구가 도로를 못 향함 → 이 조합 포기
+                            rot = EntranceOps.StepsToRotationY(steps);
+                        }
+
+                        int  cohesion = Cohesion(origin, sz, in layers);
+                        long score    = (long)cohesion * 1000 + sz.x * sz.y;
+                        if (score > bestScore)
+                        {
+                            bestScore  = score;
+                            bestOrigin = origin;
+                            bestKey    = key;
+                            bestRot    = rot;
+                            found      = true;
+                        }
+                    }
                 }
             }
 
-            candidates.Dispose();
-
-            if (!found) return;   // 들어갈 자리 없음
-
-            // 구획 원점의 실셀 좌표 = 건물 배치 기준 셀
-            int2 realCell = BlockGrid.ToReal(bestPos);
-
-            // 3.5) 입구-도로 정렬 회전 탐색 ─────────────────────────────
-            //   작은 건물이 (큰 건물 기준으로 잡힌) 구획에 들어갈 때, 입구가
-            //   경계 도로를 향하도록 회전을 고른다. 헬퍼는 "어느 회전이면 닿는가"
-            //   라는 가능성만 반환하고, "그 회전으로 발행한다"는 결정은 여기서 한다.
-            //
-            //   입구 정의가 없는 건물(HasEntrance=false 또는 EntranceLookup 미등록)은
-            //   FindRoadFacingRotation이 0을 돌려주므로 기본 회전으로 발행된다.
-            //   어느 회전으로도 도로에 닿지 않으면(-1) 이번 턴 이 구획은 포기한다
-            //   (구획 등록도 하지 않음 → 다음 기회에 다른 자리/도로 확장 후 재시도).
-            //
-            //   ⚠ 현재 건물 footprint는 정사각(저해상도 1×1 = 실셀 2×2)이라 회전이
-            //     점유 셀 집합을 바꾸지 않으므로 입구만 보는 이 오버로드로 충분하다.
-            //     비정사각 건물(Size.x≠Size.y)로 확장하면 회전마다 footprint가 달라지므로
-            //     EntranceOps.FindRoadFacingRotation(origin, size, ..., footprintFree)
-            //     오버로드로 교체하고, footprintFree 콜백에 BlockOps의 점유/범위 판정을
-            //     연결해야 한다(입구 정렬 + footprint 적합을 함께 만족하는 회전 선택).
-            float rotationY = 0f;
-
-            if (metaLookup.TryGetMeta(cfg.BuildingMainKey, 0, out var meta) &&
-                meta.HasEntrance &&
-                entranceLookup.TryGet(cfg.BuildingMainKey, out var entrance))
-            {
-                int steps = EntranceOps.FindRoadFacingRotation(
-                    realCell, meta.Size, in entrance, in layers.RoadLayer);
-
-                if (steps < 0)
-                    return;   // 입구를 도로로 향하게 할 수 없음 → 이 자리 포기
-
-                rotationY = EntranceOps.StepsToRotationY(steps);
-            }
-
-            // 4) 구획 등록 + 건물 발행
-            //    RegisterBlock 은 BlockLayer(NativeHashMap)만 갱신 (구조 변경 아님).
-            //    layers 는 싱글톤 복사본이지만 NativeHashMap 핸들은 내부 버퍼를
-            //    공유하므로 쓰기가 원본에 반영된다.
-            var blockLayer = layers.BlockLayer;
-            BlockOps.RegisterBlock(ref blockLayer, bestPos, blockSize, ownerLocalId);
+            // 도로변 빈자리 없음 → 도로 연장으로 폴백.
+            if (!found) return false;
 
             var e = ecb.CreateEntity();
             ecb.AddComponent(e, new PlaceBuildingRequest
             {
-                MainKey = cfg.BuildingMainKey,
+                MainKey = bestKey,
                 VariantKey = 0,
-                Cell = realCell,
-                RotationY = rotationY,
+                Cell = bestOrigin,
+                RotationY = bestRot,
                 OwnerLocalId = ownerLocalId,
                 FactionId = factionId,
                 RequireRoadAccess = true,   // AI 자율 성장 → 입구-도로 정렬 강제
             });
+            return true;
+        }
+
+        // ── 실셀 배치 판정 헬퍼 ───────────────────────────────────────────
+
+        // 단일 셀을 건물로 쓸 수 있나: 맵 안 · 도로 아님 · 점유 비었거나 환경 · 자원 아님.
+        static bool CellBuildable(int2 c, in GridLayers layers)
+        {
+            if (!layers.TerrainLayer.ContainsKey(c)) return false;   // 맵 밖
+            if (layers.RoadLayer.ContainsKey(c))     return false;   // 도로
+            if (layers.OccupancyLayer.TryGetValue(c, out var occ) && !occ.IsEmpty
+                && occ.Type != OccupantType.Environment) return false;
+            if (layers.ResourceLayer.IsCreated
+                && layers.ResourceLayer.TryGetValue(c, out var res) && res.Amount > 0) return false;
+            return true;
+        }
+
+        // footprint 전체가 건물 가능 + 평탄(균일 높이)인가.
+        static bool FootprintFreeFlat(int2 origin, int2 sz, in GridLayers layers)
+        {
+            bool first = true; byte baseH = 0;
+            for (int dx = 0; dx < sz.x; dx++)
+            for (int dz = 0; dz < sz.y; dz++)
+            {
+                int2 c = origin + new int2(dx, dz);
+                if (!CellBuildable(c, in layers)) return false;
+                byte h = layers.TerrainLayer.TryGetValue(c, out var tc) ? tc.Height : (byte)0;
+                if (first) { baseH = h; first = false; }
+                else if (h != baseH) return false;
+            }
+            return true;
+        }
+
+        // 응집도: footprint 4변 바깥 인접 셀 중 점유(건물)·도로 수. 클수록 기존 덩어리에 밀착.
+        static int Cohesion(int2 origin, int2 sz, in GridLayers layers)
+        {
+            int count = 0;
+            for (int dx = -1; dx <= sz.x; dx++)
+            for (int dz = -1; dz <= sz.y; dz++)
+            {
+                bool inside = dx >= 0 && dx < sz.x && dz >= 0 && dz < sz.y;
+                if (inside) continue;
+                bool edge = (dx >= 0 && dx < sz.x) || (dz >= 0 && dz < sz.y); // 대각 제외, 변만
+                if (!edge) continue;
+
+                int2 c = origin + new int2(dx, dz);
+                if (layers.RoadLayer.ContainsKey(c)) { count++; continue; }
+                if (layers.OccupancyLayer.TryGetValue(c, out var occ) && !occ.IsEmpty
+                    && occ.Type != OccupantType.Environment) count++;
+            }
+            return count;
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        //  도로 1줄 연장 시도 (건물 자리 없을 때). 발행했으면 true.
+        //
+        //  내 도로 끝/가장자리에서 빈 평지로 직선 stub을 깐다. 새 끝(특이점)이
+        //  다음 턴 건물 후보(anchor)가 되어 도시가 그쪽으로 자란다.
+        //  도로 크기는 팩션 기본 크기(RoadKeyLookup) footprint 단위.
+        // ──────────────────────────────────────────────────────────────────
+        static bool TryExtendRoad(
+            in GridLayers layers,
+            in RoadKeyLookup roadKeyLookup,
+            int ownerLocalId, int factionId,
+            in GrowthConfig cfg,
+            ref EntityCommandBuffer ecb)
+        {
+            byte size = roadKeyLookup.GetSize(factionId);
+
+            if (!BlockOps.FindRoadExtension(
+                    in layers.RoadLayer,
+                    in layers.OccupancyLayer,
+                    in layers.TerrainLayer,
+                    in layers.ResourceLayer,
+                    ownerLocalId, size, cfg.MaxRoadExtendSteps,
+                    out int2 extOrigin, out int dir, out int steps))
+                return false;
+
+            int2 off  = RoadDirOps.Offsets[dir];
+            var  axis = off.x != 0 ? RoadPlacedAxis.EW : RoadPlacedAxis.NS;
+            int  s    = math.max(1, size);
+
+            int2 cur = extOrigin;
+            for (int k = 0; k < steps; k++)
+            {
+                var e = ecb.CreateEntity();
+                ecb.AddComponent(e, new PlaceRoadCommand
+                {
+                    Cell         = cur,
+                    OwnerLocalId = ownerLocalId,
+                    LaneCount    = 2,
+                    FactionId    = factionId,
+                    Size         = size,
+                    Axis         = axis,
+                });
+                cur += off * s;
+            }
+            return true;
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -207,18 +302,21 @@ namespace CitySim
     //  GrowthConfig — 단순 성장 단계의 설정값
     //
     //  지금은 고정 기본값. 추후 SO/싱글톤으로 팩션·난이도별 분리 가능.
-    //    - BuildingMainKey: 성장에 사용할 건물 프리팹 키 (PrefabLookup에 등록돼야 함).
-    //    - BlockSize: 한 번에 놓는 구획 크기 (저해상도 단위). {2,4,8} → {1,2,4}.
+    //    - BuildingKeyA/B: 성장에 사용할 건물 키 2종 (PrefabLookup에 등록돼야 함).
+    //      구획 크기는 각 건물 meta.Size에서 유도(회전 안전 정사각).
     // ══════════════════════════════════════════════════════════════════════════
     public struct GrowthConfig
     {
-        public int BuildingMainKey;
-        public int2 BlockSize;
+        // 성장에 쓸 건물 키 2종 (크기 달라도 됨 — 구획 크기는 meta.Size에서 유도).
+        public int BuildingKeyA;
+        public int BuildingKeyB;
+        public int MaxRoadExtendSteps;   // 한 번에 연장할 도로 footprint 최대 수
 
         public static GrowthConfig Default => new GrowthConfig
         {
-            BuildingMainKey = 1000,           // Building 범위(1000~4999). TODO: 실제 등록 키로 교체.
-            BlockSize = new int2(1, 1), // 저해상도 1×1 = 실셀 2×2
+            BuildingKeyA = 1004,        // 등록된 성장 건물 (크기 A)
+            BuildingKeyB = 1005,        // 등록된 성장 건물 (크기 B)
+            MaxRoadExtendSteps = 1,     // 도로는 한 번에 1 footprint만 — 뻗고 건물이 채운 뒤 다시 뻗음(난립 방지)
         };
     }
 }

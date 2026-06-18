@@ -50,7 +50,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: 734d316f521be8648b1f98c357971ca0, type: 3}
       propertyPath: m_Name
-      value: ice_cream_shop_001
+      value: farm_human
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -59,6 +59,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 734d316f521be8648b1f98c357971ca0, type: 3}
       insertIndex: -1
       addedObject: {fileID: 4806824106714234184}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 734d316f521be8648b1f98c357971ca0, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 9179914215499502316}
   m_SourcePrefab: {fileID: 100100000, guid: 734d316f521be8648b1f98c357971ca0, type: 3}
 --- !u!1 &3231845200399232809 stripped
 GameObject:
@@ -87,3 +90,18 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 6312169663464846508, guid: 734d316f521be8648b1f98c357971ca0, type: 3}
+--- !u!114 &9179914215499502316
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3231845200399232809}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1638d91c787904d498924eca75a1e671, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.ObstacleFootprintAuthoring
+  FootprintSize: {x: 4, y: 4}
+  FootprintRadius: 1
+  ExtraPadding: 0.25

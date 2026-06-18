@@ -71,6 +71,7 @@ namespace CitySim
         WrongTerrain   = 4,  // 지형 타입 불일치 (땅 건물 → 물 위 등)
         HeightMismatch = 5,  // 멀티셀 건물의 셀 높이가 다름
         NoRoadAccess   = 6,  // 입구가 도로에 닿지 않음 (RequireRoadAccess=true일 때만)
+        ResourceBlocked = 7, // 채취 자원이 있는 셀 (자원은 보존 — 갈아엎지 않음)
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -212,6 +213,10 @@ namespace CitySim
             else
                 EmitSingle(req, meta, prefab, baseHeight, rotSteps, entranceLookup, settings, ecb);
 
+            // ── 3.5. footprint 내 환경 오브젝트(나무/바위) 제거 ──
+            //   배치를 막지 않는 점유물 → 경고 없이 치운다(엔티티+점유 셀 제거).
+            ClearEnvironment(req.Cell, size, ref layers, ecb);
+
             // ── 4. OccupancyLayer 업데이트 (Road는 RoadSystem이 처리) ──
             if (!meta.IsRoad)
             {
@@ -246,9 +251,14 @@ namespace CitySim
                 if (!layers.TerrainLayer.TryGetValue(cell, out var terrain))
                     return PlacementFailCode.OutOfBounds;
 
-                // b. 점유 확인
-                if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty)
+                // b. 점유 확인 — 환경(나무/바위)은 배치 시 치우므로 막지 않는다.
+                if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty
+                    && occ.Type != OccupantType.Environment)
                     return PlacementFailCode.Occupied;
+
+                // b2. 자원 확인 — 채취 자원 위에는 건설 불가 (ResourceLayer가 단일 소스).
+                if (layers.ResourceLayer.TryGetValue(cell, out var res) && res.Amount > 0)
+                    return PlacementFailCode.ResourceBlocked;
 
                 // c. 지형 타입 확인
                 if (cellTypeLookup.TryGet(terrain.TypeId, out var typeInfo))
@@ -371,6 +381,27 @@ namespace CitySim
                 Size         = roadSize,
             });
             // Road 점유 및 (FactionId,dirMask)→MainKey→프리팹은 RoadSystem이 처리
+        }
+
+        // ── 환경 오브젝트 제거 ────────────────────────────────────────
+        //  footprint 내 OccupantType.Environment 점유 셀의 엔티티를 destroy하고
+        //  점유 셀을 비운다. (도로/건물 배치 공통 — 나무/바위는 경고 없이 치움)
+        static void ClearEnvironment(
+            int2 origin, int2 size, ref GridLayers layers, EntityCommandBuffer ecb)
+        {
+            for (int dx = 0; dx < size.x; dx++)
+            for (int dz = 0; dz < size.y; dz++)
+            {
+                var cell = origin + new int2(dx, dz);
+                if (layers.OccupancyLayer.TryGetValue(cell, out var occ)
+                    && occ.Type == OccupantType.Environment)
+                {
+                    // 직접 destroy하지 않고 셀 단위 요청 발행(EnvironmentClearSystem이 처리).
+                    var clr = ecb.CreateEntity();
+                    ecb.AddComponent(clr, new EnvironmentClearRequest { Cell = cell });
+                    layers.OccupancyLayer.Remove(cell);
+                }
+            }
         }
 
         // ── OccupancyLayer 점유 등록 ──────────────────────────────────

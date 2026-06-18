@@ -24,6 +24,11 @@ namespace Game.Unit
         public float WorldPickDistance = 2f;
         public float CombatTargetPickDistance = 2.5f;
 
+        [Header("Control")]
+        public bool RestrictControlToLocalId = true;
+        [Range(0, 7)]
+        public int ControllableLocalId = 0;
+
         [Header("Move Order")]
         public float MoveStopDistance = 0.25f;
         public float FormationSpacing = 1.4f;
@@ -31,6 +36,13 @@ namespace Game.Unit
         public bool PreserveRelativeFormation = true;
         public bool UseSharedGroupPath = true;
         public bool AvoidOccupiedSlots = true;
+        [Min(1)]
+        public int MaxUnitsForSharedGroupPath = 128;
+        [Min(1)]
+        public int MaxUnitsForOccupiedSlotSearch = 128;
+        public bool UseParallelLargeSelectionOrders = true;
+        [Min(1)]
+        public int MinUnitsForParallelSelectionOrders = 129;
         [Range(0, 8)]
         public int SlotSearchRings = 4;
 
@@ -51,17 +63,20 @@ namespace Game.Unit
         [Header("Debug")]
         public bool ShowDebugHud = true;
         public bool LogSelectionEvents;
-        public bool ShowUnitNames = true;
-        public bool UnitNamesSelectedOnly;
+        public bool ShowUnitNames;
+        public bool UnitNamesSelectedOnly = true;
         public bool ShowMovementDebug;
         public bool ShowCombatDebug;
         public bool DebugSelectedOnly = true;
         public bool CombatDebugSelectedOnly;
+        public bool ShowObstacleDebugBoxes = true;
+        public bool ShowObstacleDebugRadius;
         public Color DebugRadiusColor = new Color(1f, 0.85f, 0.15f, 0.85f);
         public Color DebugTargetLineColor = new Color(0.3f, 1f, 0.35f, 0.85f);
         public Color DebugPartialPathColor = new Color(1f, 0.55f, 0.15f, 0.9f);
         public Color DebugFailedPathColor = new Color(1f, 0.2f, 0.2f, 0.9f);
         public Color DebugWaypointColor = new Color(0.2f, 0.65f, 1f, 0.85f);
+        public Color DebugObstacleBoxColor = new Color(1f, 0.25f, 0.95f, 0.85f);
         public Color DebugObstacleRadiusColor = new Color(1f, 0.25f, 0.95f, 0.65f);
         public Color DebugCombatRangeColor = new Color(1f, 0.35f, 0.15f, 0.65f);
         public Color DebugCombatAttackLineColor = new Color(1f, 0.15f, 0.1f, 0.9f);
@@ -83,6 +98,7 @@ namespace Game.Unit
         EntityQuery _combatDebugQuery;
         EntityQuery _weaponQuery;
         EntityQuery _unitNameQuery;
+        EntityQuery _selectedUnitNameQuery;
 
         bool _hasWorld;
         bool _isDragging;
@@ -98,6 +114,7 @@ namespace Game.Unit
         readonly Dictionary<Entity, GameObject> _debugTargetLineObjects = new();
         readonly Dictionary<Entity, GameObject> _debugPathLineObjects = new();
         readonly Dictionary<Entity, GameObject> _debugStatusLabelObjects = new();
+        readonly Dictionary<Entity, GameObject> _debugObstacleBoxObjects = new();
         readonly Dictionary<Entity, GameObject> _debugObstacleRadiusObjects = new();
         readonly Dictionary<Entity, GameObject> _debugCombatRangeObjects = new();
         readonly Dictionary<Entity, GameObject> _debugCombatAttackLineObjects = new();
@@ -251,6 +268,14 @@ namespace Game.Unit
                     new Rect(12f, 178f, 180f, 22f),
                     CombatDebugSelectedOnly,
                     "Combat Selected");
+                ShowObstacleDebugBoxes = GUI.Toggle(
+                    new Rect(12f, 202f, 180f, 22f),
+                    ShowObstacleDebugBoxes,
+                    "Obstacle Boxes");
+                ShowObstacleDebugRadius = GUI.Toggle(
+                    new Rect(12f, 226f, 180f, 22f),
+                    ShowObstacleDebugRadius,
+                    "Obstacle Radius");
                 GUI.color = oldColor;
             }
 
@@ -324,6 +349,10 @@ namespace Game.Unit
             _unitNameQuery = _entityManager.CreateEntityQuery(
                 ComponentType.ReadOnly<UnitDisplayName>(),
                 ComponentType.ReadOnly<LocalTransform>());
+            _selectedUnitNameQuery = _entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<SelectedUnit>(),
+                ComponentType.ReadOnly<UnitDisplayName>(),
+                ComponentType.ReadOnly<LocalTransform>());
 
             _hasWorld = true;
             return true;
@@ -369,6 +398,9 @@ namespace Game.Unit
 
             for (int i = 0; i < entities.Length; i++)
             {
+                if (!IsControllableUnit(entities[i]))
+                    continue;
+
                 Vector3 screen = SelectionCamera.WorldToScreenPoint(ToVector3(transforms[i].Position));
                 if (screen.z <= 0f)
                     continue;
@@ -403,6 +435,9 @@ namespace Game.Unit
 
             for (int i = 0; i < entities.Length; i++)
             {
+                if (!IsControllableUnit(entities[i]))
+                    continue;
+
                 float3 delta = transforms[i].Position - worldPoint;
                 delta.y = 0f;
 
@@ -522,6 +557,9 @@ namespace Game.Unit
 
             for (int i = 0; i < entities.Length; i++)
             {
+                if (!IsControllableUnit(entities[i]))
+                    continue;
+
                 Vector3 screen = SelectionCamera.WorldToScreenPoint(ToVector3(transforms[i].Position));
                 if (screen.z > 0f && rect.Contains(new Vector2(screen.x, screen.y)))
                     SetSelected(entities[i], true);
@@ -549,11 +587,22 @@ namespace Game.Unit
         static bool IsAttackMovePressed()
         {
             var keyboard = Keyboard.current;
-            return keyboard != null && keyboard.aKey.isPressed;
+            return keyboard != null && keyboard.qKey.isPressed;
         }
 
         void IssueMoveOrders(float3 target, UnitCommandKind commandKind)
         {
+            int selectedCount = _selectedQuery.CalculateEntityCount();
+            if (selectedCount == 0)
+                return;
+
+            if (UseParallelLargeSelectionOrders &&
+                selectedCount >= math.max(1, MinUnitsForParallelSelectionOrders))
+            {
+                CreateSelectedMoveOrderRequest(target, commandKind, selectedCount);
+                return;
+            }
+
             var selected = _selectedQuery.ToEntityArray(Allocator.Temp);
             if (selected.Length == 0)
             {
@@ -563,12 +612,18 @@ namespace Game.Unit
 
             var transforms = _selectedQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
             var footprints = _selectedQuery.ToComponentDataArray<UnitFootprint>(Allocator.Temp);
-            var allUnits = _unitQuery.ToEntityArray(Allocator.Temp);
-            var allTransforms = _unitQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
-            var allFootprints = _unitQuery.ToComponentDataArray<UnitFootprint>(Allocator.Temp);
-            var allActivities = _unitQuery.ToComponentDataArray<UnitActivityState>(Allocator.Temp);
-            var obstacleTransforms = _obstacleQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
-            var obstacleFootprints = _obstacleQuery.ToComponentDataArray<ObstacleFootprint>(Allocator.Temp);
+            bool useSharedGroupPath = UseSharedGroupPath && selected.Length <= math.max(1, MaxUnitsForSharedGroupPath);
+            bool useOccupiedSlotSearch = AvoidOccupiedSlots && selected.Length <= math.max(1, MaxUnitsForOccupiedSlotSearch);
+            byte skipPerUnitPathfinding = !useSharedGroupPath && selected.Length > math.max(1, MaxUnitsForSharedGroupPath)
+                ? (byte)1
+                : (byte)0;
+            var allUnits = useOccupiedSlotSearch ? _unitQuery.ToEntityArray(Allocator.Temp) : default;
+            var allTransforms = useOccupiedSlotSearch ? _unitQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp) : default;
+            var allFootprints = useOccupiedSlotSearch ? _unitQuery.ToComponentDataArray<UnitFootprint>(Allocator.Temp) : default;
+            var allActivities = useOccupiedSlotSearch ? _unitQuery.ToComponentDataArray<UnitActivityState>(Allocator.Temp) : default;
+            bool needsObstacleSnapshots = useSharedGroupPath || useOccupiedSlotSearch;
+            var obstacleTransforms = needsObstacleSnapshots ? _obstacleQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp) : default;
+            var obstacleFootprints = needsObstacleSnapshots ? _obstacleQuery.ToComponentDataArray<ObstacleFootprint>(Allocator.Temp) : default;
             bool hasNavigationGrid = TryGetNavigationGrid(out var navigationGrid);
             float3 selectionCenter = CalculateSelectionCenter(transforms);
             ClearAttackTargets(selected);
@@ -587,7 +642,7 @@ namespace Game.Unit
             var rowDepths = new NativeArray<float>(rows, Allocator.Temp);
             int[] formationOrder = BuildFormationOrder(transforms, footprints, selectionCenter, right, forward, columns);
             var groupPath = new NativeList<float3>(Allocator.Temp);
-            bool hasSharedGroupPath = TryBuildSharedGroupPath(
+            bool hasSharedGroupPath = useSharedGroupPath && TryBuildSharedGroupPath(
                 hasNavigationGrid,
                 navigationGrid,
                 selectionCenter,
@@ -599,6 +654,14 @@ namespace Game.Unit
 
             CalculateFormationBounds(footprints, formationOrder, columns, columnWidths, rowDepths);
             _moveSlotReservations.Clear();
+            Entity directMoveBatch = Entity.Null;
+            DynamicBuffer<UnitDirectMoveOrderElement> directMoveOrders = default;
+            if (skipPerUnitPathfinding != 0)
+            {
+                directMoveBatch = _entityManager.CreateEntity(typeof(UnitDirectMoveOrderBatch));
+                directMoveOrders = _entityManager.AddBuffer<UnitDirectMoveOrderElement>(directMoveBatch);
+                directMoveOrders.EnsureCapacity(formationOrder.Length);
+            }
 
             for (int orderIndex = 0; orderIndex < formationOrder.Length; orderIndex++)
             {
@@ -609,7 +672,7 @@ namespace Game.Unit
                 float offsetX = GetSlotCenterOffset(columnWidths, x);
                 float offsetZ = GetSlotCenterOffset(rowDepths, z);
                 float3 desiredDestination = target + right * offsetX + forward * offsetZ;
-                float3 destination = AvoidOccupiedSlots
+                float3 destination = useOccupiedSlotSearch
                     ? FindAvailableMoveSlot(
                         desiredDestination,
                         transforms[unitIndex].Position,
@@ -632,6 +695,18 @@ namespace Game.Unit
                     Radius = math.max(0.01f, footprints[unitIndex].Radius),
                 });
 
+                if (skipPerUnitPathfinding != 0)
+                {
+                    directMoveOrders.Add(new UnitDirectMoveOrderElement
+                    {
+                        Unit = selected[unitIndex],
+                        Target = destination,
+                        StopDistance = MoveStopDistance,
+                        CommandKind = commandKind,
+                    });
+                    continue;
+                }
+
                 Entity request = _entityManager.CreateEntity(typeof(MoveOrderRequest));
                 _entityManager.SetComponentData(request, new MoveOrderRequest
                 {
@@ -639,6 +714,7 @@ namespace Game.Unit
                     Target = destination,
                     StopDistance = MoveStopDistance,
                     CommandKind = commandKind,
+                    SkipPathfinding = skipPerUnitPathfinding,
                 });
 
                 if (hasSharedGroupPath)
@@ -646,12 +722,20 @@ namespace Game.Unit
             }
 
             groupPath.Dispose();
-            obstacleFootprints.Dispose();
-            obstacleTransforms.Dispose();
-            allActivities.Dispose();
-            allFootprints.Dispose();
-            allTransforms.Dispose();
-            allUnits.Dispose();
+            if (needsObstacleSnapshots)
+            {
+                obstacleFootprints.Dispose();
+                obstacleTransforms.Dispose();
+            }
+
+            if (useOccupiedSlotSearch)
+            {
+                allActivities.Dispose();
+                allFootprints.Dispose();
+                allTransforms.Dispose();
+                allUnits.Dispose();
+            }
+
             rowDepths.Dispose();
             columnWidths.Dispose();
             footprints.Dispose();
@@ -677,22 +761,41 @@ namespace Game.Unit
 
         void IssueAttackOrders(Entity target)
         {
-            var selected = _selectedQuery.ToEntityArray(Allocator.Temp);
-            for (int i = 0; i < selected.Length; i++)
+            if (_selectedQuery.CalculateEntityCount() == 0)
+                return;
+
+            Entity request = _entityManager.CreateEntity(typeof(SelectedUnitAttackOrderRequest));
+            _entityManager.SetComponentData(request, new SelectedUnitAttackOrderRequest
             {
-                if (!_entityManager.HasComponent<CombatAttackTarget>(selected[i]))
-                    continue;
+                Target = target,
+                CommandKind = UnitCommandKind.ForceAttack,
+            });
+        }
 
-                Entity request = _entityManager.CreateEntity(typeof(AttackOrderRequest));
-                _entityManager.SetComponentData(request, new AttackOrderRequest
-                {
-                    Attacker = selected[i],
-                    Target = target,
-                    CommandKind = UnitCommandKind.ForceAttack,
-                });
-            }
+        void CreateSelectedMoveOrderRequest(float3 target, UnitCommandKind commandKind, int selectedCount)
+        {
+            Entity request = _entityManager.CreateEntity(typeof(SelectedUnitMoveOrderRequest));
+            _entityManager.SetComponentData(request, new SelectedUnitMoveOrderRequest
+            {
+                Target = target,
+                FormationForward = ResolveFastFormationForward(),
+                StopDistance = MoveStopDistance,
+                FormationSpacing = math.max(0.01f, FormationSpacing + FormationPadding),
+                UnitCount = selectedCount,
+                CommandKind = commandKind,
+            });
+        }
 
-            selected.Dispose();
+        float3 ResolveFastFormationForward()
+        {
+            float3 forward = SelectionCamera != null
+                ? ToFloat3(SelectionCamera.transform.forward)
+                : new float3(0f, 0f, 1f);
+            forward.y = 0f;
+
+            return math.lengthsq(forward) <= 0.0001f
+                ? new float3(0f, 0f, 1f)
+                : math.normalize(forward);
         }
 
         float3 CalculateSelectionCenter(NativeArray<LocalTransform> transforms)
@@ -963,16 +1066,6 @@ namespace Game.Unit
                     return false;
             }
 
-            if (hasNavigationGrid &&
-                !IsMoveSlotReachable(
-                    navigationGrid,
-                    startPosition,
-                    destination,
-                    radius,
-                    obstacleTransforms,
-                    obstacleFootprints))
-                return false;
-
             return true;
         }
 
@@ -985,28 +1078,6 @@ namespace Game.Unit
 
             grid = query.GetSingleton<UnitNavigationGrid>();
             return true;
-        }
-
-        static bool IsMoveSlotReachable(
-            UnitNavigationGrid grid,
-            float3 startPosition,
-            float3 destination,
-            float radius,
-            NativeArray<LocalTransform> obstacleTransforms,
-            NativeArray<ObstacleFootprint> obstacleFootprints)
-        {
-            var path = new NativeList<float3>(Allocator.Temp);
-            bool reachable = UnitPathfinding.TryBuildPath(
-                grid,
-                startPosition,
-                destination,
-                radius,
-                obstacleTransforms,
-                obstacleFootprints,
-                path,
-                out bool reachedTarget) && reachedTarget;
-            path.Dispose();
-            return reachable;
         }
 
         static float GetEffectiveObstacleRadius(ObstacleFootprint obstacle)
@@ -1070,10 +1141,10 @@ namespace Game.Unit
 
             EnsureRingAssets();
 
-            var entities = _unitQuery.ToEntityArray(Allocator.Temp);
-            var transforms = _unitQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
-            var radii = _unitQuery.ToComponentDataArray<UnitSelectionRadius>(Allocator.Temp);
-            var footprints = _unitQuery.ToComponentDataArray<UnitFootprint>(Allocator.Temp);
+            var entities = _selectedQuery.ToEntityArray(Allocator.Temp);
+            var transforms = _selectedQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+            var radii = _selectedQuery.ToComponentDataArray<UnitSelectionRadius>(Allocator.Temp);
+            var footprints = _selectedQuery.ToComponentDataArray<UnitFootprint>(Allocator.Temp);
 
             _removeBuffer.Clear();
             foreach (var pair in _rings)
@@ -1081,7 +1152,7 @@ namespace Game.Unit
                 bool stillSelected = false;
                 for (int i = 0; i < entities.Length; i++)
                 {
-                    if (pair.Key == entities[i] && IsSelected(entities[i]))
+                    if (pair.Key == entities[i])
                     {
                         stillSelected = true;
                         break;
@@ -1102,9 +1173,6 @@ namespace Game.Unit
 
             for (int i = 0; i < entities.Length; i++)
             {
-                if (!IsSelected(entities[i]))
-                    continue;
-
                 if (!_rings.TryGetValue(entities[i], out var ring))
                 {
                     ring = CreateRingObject();
@@ -1144,18 +1212,18 @@ namespace Game.Unit
                 return;
             }
 
-            var entities = _unitNameQuery.ToEntityArray(Allocator.Temp);
-            var transforms = _unitNameQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
-            var names = _unitNameQuery.ToComponentDataArray<UnitDisplayName>(Allocator.Temp);
+            EntityQuery nameQuery = UnitNamesSelectedOnly
+                ? _selectedUnitNameQuery
+                : _unitNameQuery;
+            var entities = nameQuery.ToEntityArray(Allocator.Temp);
+            var transforms = nameQuery.ToComponentDataArray<LocalTransform>(Allocator.Temp);
+            var names = nameQuery.ToComponentDataArray<UnitDisplayName>(Allocator.Temp);
 
             _debugNameActiveBuffer.Clear();
 
             for (int i = 0; i < entities.Length; i++)
             {
                 Entity entity = entities[i];
-                if (UnitNamesSelectedOnly && !IsSelected(entity))
-                    continue;
-
                 _debugNameActiveBuffer.Add(entity);
                 UpdateDebugNameLabel(entity, transforms[i].Position, names[i]);
             }
@@ -1505,10 +1573,22 @@ namespace Game.Unit
             if (!_entityManager.Exists(entity))
                 return;
 
+            if (selected && !IsControllableUnit(entity))
+                return;
+
             if (!_entityManager.HasComponent<SelectedUnit>(entity))
                 _entityManager.AddComponent<SelectedUnit>(entity);
 
             _entityManager.SetComponentEnabled<SelectedUnit>(entity, selected);
+        }
+
+        bool IsControllableUnit(Entity entity)
+        {
+            if (!RestrictControlToLocalId)
+                return true;
+
+            return _entityManager.HasComponent<TeamInfoData>(entity) &&
+                   _entityManager.GetComponentData<TeamInfoData>(entity).LocalID == ControllableLocalId;
         }
 
         bool TryGetAttackTargetPosition(Entity entity, out Entity target, out float3 targetPosition)
@@ -1764,13 +1844,58 @@ namespace Game.Unit
             for (int i = 0; i < entities.Length; i++)
             {
                 _debugObstacleActiveBuffer.Add(entities[i]);
-                float radius = GetEffectiveObstacleRadius(footprints[i]) + math.max(0f, footprints[i].ExtraPadding);
-                UpdateDebugObstacleRadius(entities[i], transforms[i].Position, radius);
+                if (ShowObstacleDebugBoxes)
+                    UpdateDebugObstacleBox(entities[i], transforms[i], footprints[i]);
+                else
+                    RemoveDebugObstacleBox(entities[i]);
+
+                if (ShowObstacleDebugRadius)
+                {
+                    float radius = GetEffectiveObstacleRadius(footprints[i]) + math.max(0f, footprints[i].ExtraPadding);
+                    UpdateDebugObstacleRadius(entities[i], transforms[i].Position, radius);
+                }
+                else
+                {
+                    RemoveDebugObstacleRadius(entities[i]);
+                }
             }
 
             footprints.Dispose();
             transforms.Dispose();
             entities.Dispose();
+        }
+
+        void UpdateDebugObstacleBox(Entity entity, LocalTransform transformData, ObstacleFootprint footprint)
+        {
+            if (!_debugObstacleBoxObjects.TryGetValue(entity, out var boxObject))
+            {
+                boxObject = CreateLineObject("Obstacle Box Debug", true);
+                _debugObstacleBoxObjects.Add(entity, boxObject);
+            }
+
+            var line = boxObject.GetComponent<LineRenderer>();
+            line.positionCount = 4;
+            line.loop = true;
+            line.startColor = DebugObstacleBoxColor;
+            line.endColor = DebugObstacleBoxColor;
+            line.startWidth = DebugLineWidth;
+            line.endWidth = DebugLineWidth;
+
+            float padding = math.max(0f, footprint.ExtraPadding);
+            float2 halfSize = math.max(new float2(0.01f), footprint.Size * 0.5f + padding);
+            float3 center = transformData.Position;
+            center.y += RingHeightOffset * 1.35f;
+
+            line.SetPosition(0, ToObstacleBoxCorner(center, transformData.Rotation, -halfSize.x, -halfSize.y));
+            line.SetPosition(1, ToObstacleBoxCorner(center, transformData.Rotation, halfSize.x, -halfSize.y));
+            line.SetPosition(2, ToObstacleBoxCorner(center, transformData.Rotation, halfSize.x, halfSize.y));
+            line.SetPosition(3, ToObstacleBoxCorner(center, transformData.Rotation, -halfSize.x, halfSize.y));
+        }
+
+        static Vector3 ToObstacleBoxCorner(float3 center, quaternion rotation, float x, float z)
+        {
+            float3 corner = center + math.rotate(rotation, new float3(x, 0f, z));
+            return new Vector3(corner.x, corner.y, corner.z);
         }
 
         void UpdateDebugObstacleRadius(Entity entity, float3 position, float radius)
@@ -1814,6 +1939,22 @@ namespace Game.Unit
             line.textureMode = LineTextureMode.Stretch;
 
             return lineObject;
+        }
+
+        void RemoveDebugObstacleBox(Entity entity)
+        {
+            if (_debugObstacleBoxObjects.TryGetValue(entity, out var boxObject))
+                Destroy(boxObject);
+
+            _debugObstacleBoxObjects.Remove(entity);
+        }
+
+        void RemoveDebugObstacleRadius(Entity entity)
+        {
+            if (_debugObstacleRadiusObjects.TryGetValue(entity, out var radiusObject))
+                Destroy(radiusObject);
+
+            _debugObstacleRadiusObjects.Remove(entity);
         }
 
         void RemoveInactiveDebugObjects()
@@ -1869,6 +2010,16 @@ namespace Game.Unit
             }
 
             _removeBuffer.Clear();
+            foreach (var pair in _debugObstacleBoxObjects)
+            {
+                if (!_debugObstacleActiveBuffer.Contains(pair.Key))
+                    _removeBuffer.Add(pair.Key);
+            }
+
+            for (int i = 0; i < _removeBuffer.Count; i++)
+                RemoveDebugObstacleBox(_removeBuffer[i]);
+
+            _removeBuffer.Clear();
             foreach (var pair in _debugObstacleRadiusObjects)
             {
                 if (!_debugObstacleActiveBuffer.Contains(pair.Key))
@@ -1876,12 +2027,7 @@ namespace Game.Unit
             }
 
             for (int i = 0; i < _removeBuffer.Count; i++)
-            {
-                if (_debugObstacleRadiusObjects.TryGetValue(_removeBuffer[i], out var radiusObject))
-                    Destroy(radiusObject);
-
-                _debugObstacleRadiusObjects.Remove(_removeBuffer[i]);
-            }
+                RemoveDebugObstacleRadius(_removeBuffer[i]);
         }
 
         void RemoveInactiveNameObjects()
@@ -2230,6 +2376,12 @@ namespace Game.Unit
                     Destroy(pair.Value);
             }
 
+            foreach (var pair in _debugObstacleBoxObjects)
+            {
+                if (pair.Value != null)
+                    Destroy(pair.Value);
+            }
+
             foreach (var pair in _debugObstacleRadiusObjects)
             {
                 if (pair.Value != null)
@@ -2240,6 +2392,7 @@ namespace Game.Unit
             _debugTargetLineObjects.Clear();
             _debugPathLineObjects.Clear();
             _debugStatusLabelObjects.Clear();
+            _debugObstacleBoxObjects.Clear();
             _debugObstacleRadiusObjects.Clear();
             _debugActiveBuffer.Clear();
             _debugObstacleActiveBuffer.Clear();

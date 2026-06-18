@@ -103,6 +103,57 @@
 - ❓ 물-육지 경계 삼거리 이슈 — `StampTestBootstrap`이 원인으로 추정, 미확인
 - ❓ 인접 평행 도로를 가로질러 수직 도로 연결 불가 — 점유 레이어가 막음. 설계 제약으로 수용 (최소 1셀 간격 필요)
 
+### 도로 프리뷰 사유 표시 + 단차 처리 (2026-06-18)
+- ✅ **프리뷰 사유별 상태 구분 (`PreviewStatus`)** — 기존 `bool Valid` → 6종 enum으로 교체
+  - `Valid`(초록) / `Occupied`(빨강+흰 외곽선, 건설불가) / `OutOfBounds`(어두운 빨강, 불가)
+  - `HeightMismatch`(주황, 불가) / `ParallelWarn`(노랑, 경고·건설가능) / `OwnerWarn`(자홍, 경고·가능)
+  - `PreviewStatusOps`: `IsBlocking`(차단 여부) / `ShowOutline`(점유 강조) / `ToText`(HUD 라벨용)
+  - `RoadBuildController.EvaluateCell(cell, axis, ownerSlot, layers)` — 점유/범위/단차/축/소유자 우선순위 평가
+  - `Confirm()`은 `IsBlocking`인 셀만 명령 발행 생략(경고는 발행 허용)
+- ✅ **#3 점유 대상 오브젝트 강조** — `RoadBuildPreviewRenderSystem`이 `Occupied` 셀에 GL.LINES 흰 외곽선 추가로 "무엇이 막는지" 식별
+- ✅ **#2 도로 높이 처리** — 시각 Y가 `0f` 하드코딩이라 height 1+ 지형 위 도로가 전부 0에 깔리던 버그 수정
+  - `RoadSystem` 시각 worldPos Y = `TerrainLayer[cell].Height * cellSize` (CellToWorld 규약 일치)
+  - 프리뷰 마커 Y도 지형 높이 추종 (`RoadBuildPreviewRenderSystem` OnUpdate)
+  - **단차 불일치 시 건설 불가**: `RoadSystem.HeightMatchesNeighbors` — 같은 소유자 인접 도로와 지형 높이가 다르면 배치 거부. 컨트롤러 프리뷰도 동일 판정(`HeightMismatch`)
+- ✅ **#4 Undo** — `OnRoadUndo`에 `RefreshRoadPanel()` 추가(즉시 피드백). (확정된 도로 철거는 범위 외 — 추후 RemoveRoadCommand 연동)
+  - ✅ **버튼 Undo 미작동 근본 원인 수정**: UI 버튼 클릭이 `HandleDragInput`에 그대로 흘러들어 유령 드래그→세그먼트 추가로 Undo와 상쇄됐음(Z 단축키는 마우스 무관이라 정상이었음). `EventSystem.IsPointerOverGameObject()` 가드로 UI 위에선 새 드래그 시작 차단(진행 중 드래그는 유지). → Confirm/모든 UI 버튼의 유령 입력도 동시 해결.
+- ✅ **호버 사유에 점유 종류 표기** — `OccupancyCell.Type` 읽어 "건설 불가: 건물 점유" 식으로 `HoverStatusText` 강화
+  - ✅ **버튼 클릭 시 유령 드래그 차단** — `EventSystem.IsPointerOverGameObject()` 가드(UI 위 새 드래그 시작 차단). Undo/Confirm 버튼이 동시에 세그먼트를 추가/상쇄하던 근본 원인
+
+### 점유/자원 레이어 모델 정리 (2026-06-18)
+- ✅ **`OccupantType` 정리** — `Unit`/`Terrain` 제거(쓰기 0건 데드값), `Environment` 추가
+  - 유닛=동적→spatial query 소관 / 통행불가지형=`CellType.Passable`+TerrainLayer 파생(이중소스 금지)
+  - `OccupancyLayer` 단일 책임 = "정적으로 셀을 점유하는 것"(Road/Building/Environment)
+- ✅ **자원 차단은 미러링 X, ResourceLayer 직접 조회** — 배치는 저빈도(비핫패스)라 조회 1회 추가 비용 무의미. 미러링 시 고갈 동기 부채 → 단일 소스 유지. 고갈 시 ResourceLayer에서 제거 = `ContainsKey`가 곧 차단
+  - `BuildingPlacement.ValidateCells`: 자원(Amount>0)→`ResourceBlocked`(신규 실패코드), 환경은 비차단
+  - `RoadSystem` 배치: 자원→거부, 환경→통과 후 제거, 단차→거부
+  - 프리뷰 `EvaluateCell`: `ResourceBlocked`(청록) 신규 / 환경 비차단(초록, 배치 시 제거)
+- ✅ **환경물(나무/바위) 경고 없이 제거** — 도로/건물 배치 시 footprint 내 `Environment` 점유 셀의 `Occupant` 엔티티 destroy + 셀 비움 (`ClearEnvironment` / RoadSystem 인라인)
+- ✅ **ResourceLayer 등록** — `MapLoadSystem.SpawnResources`가 `mapData.ResourceCells`(TypeId+Amount)를 `ResourceLayer`에 기록(Amount>0만). 기존엔 쓰기 0건이라 자원이 레이어에 없었음
+- ✅ **자원 테스트 비주얼** — `ResourceDebugVisualizer`(임시 MonoBehaviour, 에디터/개발빌드 자동생성). 자원 프리팹 없어서 ResourceLayer 셀을 화면에 종류별 색 + 양(숫자) 박스로 OnGUI 오버레이. 실제 프리팹 들어오면 삭제
+- ✅ **단차 건설 차단 (AI 대비)** — AI 도로는 평면(2D) 연결만 보므로 단차를 넘는 도로를 깔 수 있음. `RoadSystem.HeightMatchesNeighbors`가 같은 소유자 인접 도로와 지형 높이 불일치 시 배치 거부(PlaceRoadCommand 경로 = 유저·AI 공통). 건물은 `ValidateCells`가 이미 footprint 균일 높이 강제
+- ✅ **맵 스폰 오브젝트 → OccupancyLayer 런타임 점유 수집** — 기존엔 `SpawnSingles`가 `GridMap.BuildingCells`에만 등록(빌드 검증이 보는 `OccupancyLayer`엔 0건), `SpawnMultis`(환경 scatter)는 점유 미등록 → 환경요소가 점유로 안 잡히던 문제
+  - `OccupantFor(mainKey)` = `MainKeyRange.CategoryOf` → Building/Environment 분류(런타임 판단)
+  - `SpawnSingles`: 종류별로 `OccupancyLayer[cell]` 등록(Occupant=인스턴스). GridMap.BuildingCells는 시민 BFS용으로 병행 유지
+  - `SpawnMultis`/`SpawnSingles`: 환경물 인스턴스마다 `EnvironmentInstance{Cell}` 태그 + `OccupancyLayer`에 Environment 등록
+- ✅ **환경물 제거 = 셀 단위 요청 방식 (LEG 폐기)** — 도로가 환경물 직전까지만 깔리고 멈추던 버그 근본 수정
+  - 원인: ECB로 구성한 `LinkedEntityGroup` 부모를 `ecb.DestroyEntity`하면 RoadSystem playback이 그 환경 셀에서 예외 → 이후 도로 비주얼 생성·cmd 정리가 전부 중단(RoadLayer엔 등록됐지만 비주얼 없음)
+  - 해결: 직접 destroy 금지. 도로/건물은 `EnvironmentClearRequest{Cell}`만 발행, `EnvironmentClearSystem`(UpdateAfter Road/Building)이 해당 셀의 `EnvironmentInstance`를 단일 패스로 destroy. ECB playback 예외 위험 제거
+  - 환경 single은 `GridMap.BuildingCells` 등록 제외(철거 후 죽은 엔티티 참조 방지)
+- ✅ **프리뷰: 철거될 오브젝트 표시** — `PreviewStatus.WillClear`(갈색 + 흰 외곽선) 신규. 환경물 위 셀은 "환경물 철거 후 건설"로 표시(비차단), 외곽선으로 사라질 대상 강조
+- ✅ **단차 = 세그먼트 단위 무조건 건설불가** — 기존 단차 체크는 인접 기존 도로와만 비교 → 경사면에 처음 까는 새 도로는 비교 대상이 없어 단차를 못 잡던 문제
+  - `SegmentBlockStatus(seg)`: 한 드래그 구간에 건물/자원/단차가 하나라도 있으면 **구간 전체** 건설불가. 단차 판정 = 세그먼트 내 모든 셀 지형 높이 동일 + 연결될 기존 도로와도 높이 동일
+  - 프리뷰: 차단 구간은 전 셀을 그 사유 색으로(전체 빨강 등), 통과 구간만 셀별 상태(환경철거/경고/가능). `AddSegmentPreview`
+  - `Confirm()`: 차단 세그먼트는 통째로 명령 발행 생략(부분 배치 안 함)
+  - `RoadSystem`: footprint 내부 단차도 거부(멀티셀·AI 경로 대비)
+- ✅ **단차 = "연결 차단"이지 "배치 차단"이 아님 (정책 정정)** — 아래 0층 도로를 깔고, 위 1층에서 이어 깔 때 경계에서 막히던 문제. 두 평지 도로는 각자 깔 수 있어야 하고 절벽 너머로 연결만 안 되면 됨
+  - 연결 함수 높이 인식: `ComputeDirections`/`ComputeMacroDirections`/`ComputeAxisFilteredMacroDirections`에 `TerrainLayer` 인자 추가 → **같은 소유자 + 같은 지형 높이** 이웃만 연결(비주얼·BFS 공통). 단차 경계는 자동으로 끊김
+  - `RoadSystem` 배치: 인접 도로 단차로 인한 배치 거부 제거(`HeightMatchesNeighbors` 삭제). footprint **내부** 단차만 거부 유지
+  - 컨트롤러 `SegmentBlockStatus`: 세그먼트 **내부** 단차만 차단. 기존 도로와의 단차는 차단 안 함
+  - `EvaluateCell`: 단차 너머 이웃은 막지도 경고하지도 않고 그냥 연결만 스킵
+- ✅ **HUD 호버 사유 라벨** — `GameHUD._lblHoverStatus`(옵션) ← `RoadBuildController.HoverStatusText`
+  - ⬜ Unity 에디터에서 `_lblHoverStatus` 라벨 와이어링(옵션)
+
 ### 다음 단계
 - ⬜ 그라운드 큐브 같은 중심-피벗 프리팹들의 `RegistryItem.Offset` 일괄 점검/설정
 - ⬜ 시민 초기 스폰 트리거 (여전히 미착수)
@@ -112,11 +163,58 @@
 ---
 
 ## City Expansion AI (자율 다중 팀)
-- ✅ `NativeHashMap<int2, CellData>` 싱글톤 셀
-- ✅ 팀 단위 `DynamicBuffer<BuildRequest/Response>`
-- ✅ `CityCellManagerSystem`
-- ✅ 불변식: 도로는 항상 닫힌 사각형 / 볼록 정점만 확장 후보 (사분면 압축) / `ClaimedTeam` = 점유와 무관한 영구 영토 소유 / 유효 정점 쌍 없을 때 U자 폴백
-- ⬜ (다음 단계 기입)
+> ⚠️ (2026-06-18 정정) 아래 옛 설계 메모(`CityCellManagerSystem`/`CellData`/`BuildRequest`/
+> 닫힌 사각형 도로/사분면 압축/U자 폴백)는 **현재 코드에 존재하지 않음**(grep 0건). 제거됐거나
+> 미구현. 실제 구현은 아래 "현행" 참조.
+
+### 현행 (실제 코드)
+- `AiCityGrowthSystem`: `GameClock.DayChanged`마다 AI팀당 **건물 1개** 배치 (결정 예산 1/일).
+  - 후보 = `BlockOps.CollectAnchorCandidates`(도로 특이점=끝/꺾임/분기 인접 빈 저해상도 셀)
+  - 선택 = `CountSharedEdges` 최대(응집). `RegisterBlock` 후 `PlaceBuildingRequest` 발행.
+  - **AI는 도로를 깔지 않음** → 도시가 초기 둘레(베이스 외곽선) 밖으로 못 자람.
+- `BlockOps`: 구획 가능성/후보/공유변 순수 함수.
+- ✅ **(2026-06-18) 새 도로/배치 규칙과 정합화** — `BlockOps`가 건물 검증(`ValidateCells`)과 같은 기준을 보도록 수정. 안 그러면 `RegisterBlock`이 먼저 실행되고 건물 검증이 나중에 실패해 **유령 구획**(등록만 되고 빈 칸)이 영구히 남음
+  - `CanPlaceBlock`/`IsRealCellRangeFree`/`CollectAnchorCandidates`에 `ResourceLayer` 추가
+  - 환경물(Environment)은 비어있는 것으로 간주(건물이 치움) / 채취 자원(Amount>0)은 불가 / 구획 전체 단차 거부
+
+### AI 성장 규칙 — 확정 (2026-06-19, 도로변 모델)
+> "길만 깔던" 근본 원인: 건물이 도로 **특이점(끝/코너)에만** 붙어 도로 길이당 건물 1~2개뿐 →
+> 도로가 건물보다 빨리 자라 건물 땅까지 도로로 덮음. 아래 규칙으로 재정립.
+
+- **R1. 하루 1행동, 건물 우선** — 건물 자리 있으면 건물, 전혀 없을 때만 도로 연장.
+- **R2. 건물 자리 = 내 도로 옆면 전체** — 도로에 인접한 빈 평지면 모두 후보(특이점 한정 폐기).
+- **R3. 깊이 1격, 도로 접면 필수** — footprint가 도로 접면 가장자리에 붙고 바깥으로 뻗음. 입구가 도로를 향해야 발행.
+- **R4. 응집 우선·큰 건물 우선** — 점수=이웃 점유/도로 수×1000 + footprint 넓이.
+- **R5. 도로는 간격 둔 평행 확장** (자리 다 찰 때만) — ⬜ 평행 간격 로직은 다음 단계. 현재는 끝/옆 1 footprint 연장(연결 유지).
+- **R6. 겹침 금지·평탄·환경 철거** — 기존 규칙 유지.
+
+- ✅ **(2026-06-19) `TryPlaceBuilding` 실셀 도로변 모델로 재작성** — 저해상도 `BlockGrid`(2×2)는 "1격 접면" 정밀도에 안 맞아 폐기(1칸 건물이 블록 안에서 도로 반대 구석에 앉아 접면 실패). 이제 실셀 단위로 팀 도로 4방향 인접 빈 셀에 footprint를 접면시켜 배치. 헬퍼: `CellBuildable`/`FootprintFreeFlat`/`Cohesion`. BlockLayer/RegisterBlock 미사용(점유는 OccupancyLayer 단일 소스)
+  - ⬜ `BlockOps`의 성장용 헬퍼(`CollectRoadsideCandidates`/`CanPlaceBlock`/`CountSharedEdges`/`RegisterBlock` 등) 이제 미사용 → 정리 대상
+  - ❓ 도로변 1격이라 도로에서 2칸 떨어진 곳은 도로가 가까이 와야 채워짐 → R5(평행 간격 도로)로 해결 예정
+
+- 🐞 **(2026-06-19 미해결, 기록만) 큰 건물 1개 후 무한 셀검증실패 + 도로 폴백 안 됨**
+  - 증상: AI가 큰 건물 1개 짓고 나선 계속 큰 건물만 시도. 도로를 더 깔아 다른 해법을 찾지 못하고 `BuildingPlacementSystem` "셀검증실패(ValidateCells)" 로그만 반복.
+  - 추정 원인 1 — **회전 footprint 불일치**: `TryPlaceBuilding`은 **비회전** `meta.Size`로 origin/footprint를 검증(`FootprintFreeFlat`)하지만, 발행 시 `RotationY`(입구가 도로 향하게)를 같이 넘김. `BuildingPlacementSystem.ValidateCells`는 **회전된** 크기(`RotateSize`)로 다른 셀 집합을 검증 → 비정사각 큰 건물에서 AI가 안 본 셀이 점유/범위 밖이라 실패.
+  - 추정 원인 2 — **점수 고착**: 점수=응집×1000 + 넓이라 큰 건물(넓이 큼)이 항상 최고점. 같은 자리·같은 큰 건물을 매일 다시 골라 계속 실패. 게다가 `found=true`로 반환되어(발행은 했으니) **도로 연장 폴백이 안 일어남** → 영구 교착.
+  - 추정 원인 3 — **WrongTerrain 미검사**: AI는 지형 타입(`BuildableOn`)을 안 봐서, 물/불가지형 도로변을 골라 발행하면 ValidateCells가 `WrongTerrain`으로 실패(원인1과 겹쳐 교착 심화).
+  - 해결 방향(미착수): ① AI가 회전을 footprint 검증에 반영(회전된 size로 검사하거나 입구-도로 정렬을 footprintFree 콜백 오버로드로) ② 발행 전 ValidateCells와 동치 검증(지형 타입 포함)으로 "성공 보장된 것만" 발행 ③ 실패/미배치 시 `found=false`로 도로 연장 폴백 보장 ④ 큰 건물 고착 완화(넓이 가중 축소 또는 자리 적합도 우선).
+
+### AI 도로 확장 — 유기적 연장 (2026-06-19, 1번 스타일)
+- ✅ **건물 자리 부족 시 도로 1줄 연장** — `AiCityGrowthSystem`: 하루에 건물 1개 시도 → 자리 없으면 `TryExtendRoad`로 도로 stub 연장. 새 끝(특이점)이 다음 턴 건물 anchor가 됨 → 유기적 펄스 성장
+- ✅ `BlockOps.FindRoadExtension` (fact 헬퍼) — 팀 소유 도로 footprint 원점에서 4방향 중 빈 평지로 **가장 길게** 뻗을 수 있는 직선 stub 반환. 단차/자원/점유(환경 제외)/맵경계 만나면 정지
+  - 도로 크기 = 팩션 `RoadKeyLookup.GetSize` footprint 단위 (베이스 외곽선과 일치)
+  - 연장 축(EW/NS) 자동 설정 → 새 연결 규칙(높이·축·소유자)과 정합. 단차 너머로는 자동 비연결
+  - `GrowthConfig.MaxRoadExtendSteps`(기본 3) = 하루 최대 연장 footprint 수
+- ❓ 유령 구획 잔여: `WrongTerrain`(물 위 등)은 `BlockOps`가 지형 타입을 안 봐서 여전히 누수 가능(기존 이슈). AI에 `CellTypeLookup`+`BuildableOn` 검사 추가하면 해소
+- ⬜ 향후 다듬기: 직선 도로 옆구리는 anchor가 아니라 건물이 도로 끝/코너에만 붙음(현 정책). 도로변 채우려면 anchor 정책 확장 / 연장 방향 분산(한 곳만 길게 뻗는 경향 완화)
+- ✅ **(2026-06-19) "변화 없음" 원인 2개 처리**
+  - 시간 인지: 하루=현실 20분(`SecondsPerDay=1200`)이라 AI 성장(하루 1회)이 안 보였음 → `GameClockHud`(임시 IMGUI, 자동생성) 추가: Day/시:분 표시 + 배속(0/1/3/10/60x) 버튼으로 `GameClock.TimeScale` 조절
+  - `GrowthConfig.BuildingMainKey=1000`이 placeholder라 미등록이면 건물 요청이 조용히 실패 + 도로 연장도 안 되던 버그 → `TryPlaceBuilding`이 meta 없으면 **구획 등록·발행 없이 false 반환 → 도로 연장 폴백**. (유령 구획도 방지)
+  - ✅ **성장 건물 2종(1004/1005) 적용** — `GrowthConfig.BuildingKeyA/B`. 크기가 달라 구획 크기는 각 `meta.Size`에서 유도(회전 안전: 한 변=ceil(max변/UNIT) 정사각). 둘 다 미등록/자리없음이면 도로 연장 폴백
+  - ✅ **(2026-06-19) 큰 건물 0개 + 도로 난립 수정** — 원인: 구획이 anchor를 원점으로 +X/+Z로만 자라 큰 구획은 빈자리를 못 찾음 → 건물 실패 잦음 → 매일 도로만 뻗음
+    - 구획이 anchor 셀을 **포함하되 빈 쪽으로 미끄러지는** L×L 원점 후보 전체를 시도(`origin = c-(ox,oy)`)
+    - 점수 = 공유 변(응집) 우선, 동률 시 footprint 큰 건물 우선 → 큰 건물도 지어짐
+    - `MaxRoadExtendSteps` 3→1: 도로는 1 footprint씩만 뻗고 건물이 채운 뒤 재연장(난립 방지). 건물 성공률↑로 도로 연장 자체가 드물어짐
 
 ---
 

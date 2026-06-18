@@ -77,6 +77,9 @@ namespace Game.Unit
         public bool IsPlayerTeam;
         public bool IsPlayer;
 
+        [Header("Command Group")]
+        public int CommandGroupId;
+
         [Header("Combat")]
         public CombatTargetMask TargetType = CombatTargetMask.Ground;
         [Min(0.01f)]
@@ -192,6 +195,10 @@ namespace Game.Unit
                 teamInfo.TeamID = ResolveTeamId(authoring.TeamId, authoring.LocalId);
                 teamInfo.LocalID = authoring.LocalId;
                 AddComponent(entity, teamInfo);
+                AddComponent(entity, new UnitCommandGroupMember
+                {
+                    GroupId = math.max(0, authoring.CommandGroupId),
+                });
                 AddComponent(entity, new CombatTargetable
                 {
                     TargetType = authoring.TargetType,

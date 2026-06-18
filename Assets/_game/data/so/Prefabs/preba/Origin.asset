@@ -402,7 +402,7 @@ MonoBehaviour:
     BuildableOn: 1
     RoadMask: 0
     MultiCountPerCell: 5
-    MultiItemSize: 0.5
+    MultiItemSize: 1
     IsSupplier: 0
     ReliefRaw: 0
     SupplyMaxDist: 0

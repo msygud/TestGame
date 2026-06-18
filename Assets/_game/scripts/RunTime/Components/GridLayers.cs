@@ -221,12 +221,19 @@ namespace CitySim
         Cross      = 2,  // 교차로
     }
 
+    // ──────────────────────────────────────────────────────────────
+    //  OccupantType — OccupancyLayer 셀의 정적 점유 종류
+    //
+    //  OccupancyLayer는 "정적으로 셀을 점유하는 것"이라는 단일 책임만 가진다.
+    //    - 동적 객체(유닛)는 여기 넣지 않는다 → spatial query(radar/vision) 소관.
+    //    - 통행 불가 지형은 TerrainLayer/CellType.Passable에서 파생 (이중 소스 금지).
+    //    - 채취 자원(양 개념)은 ResourceLayer가 단일 소스 (배치 검증이 따로 조회).
+    // ──────────────────────────────────────────────────────────────
     public enum OccupantType : byte
     {
-        None     = 0,
-        Road     = 1,
-        Building = 2,
-        Unit     = 3,
-        Terrain  = 4,  // 이동 불가 지형 (산/절벽 등)
+        None        = 0,
+        Road        = 1,
+        Building    = 2,
+        Environment = 3,  // 나무/바위 등 — 배치를 막지 않고 경고 없이 제거(Occupant destroy)
     }
 }
