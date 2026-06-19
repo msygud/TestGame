@@ -264,11 +264,44 @@ namespace CitySim
         }
 
         // ──────────────────────────────────────────────────────────────
-        //  7. 도로 확장 후보 — "내 도로에서 빈 평지로 뻗을 수 있는 최선의 직선 stub"
+        //  7a. 매크로 연결 — footprint 원점 O의 4방향 인접 footprint 중 같은 소유자 도로.
         //
-        //  팀 소유 도로 footprint 원점에서 4방향으로, 인접 footprint(같은 크기)가
-        //  비어있고 평탄(원점과 같은 높이)하면 그 방향으로 몇 칸까지 뻗을 수 있는지 잰다.
-        //  가장 길게 뻗는 방향을 best로 반환 (정책=발행은 호출 시스템이).
+        //  도로는 size×size footprint 단위로 step=size 격자에 정렬되므로,
+        //  인접 footprint 원점 = O + Offsets[d]*size. 그 셀이 같은 소유자 도로면 연결.
+        //  반환: RoadDir 비트마스크(연결된 방향). 끝점/직선/분기 판정에 쓴다.
+        // ──────────────────────────────────────────────────────────────
+        public static RoadDir MacroConnections(
+            int2 origin, int size, int ownerLocalId,
+            in NativeHashMap<int2, RoadCell> roadLayer)
+        {
+            int s = math.max(1, size);
+            RoadDir mask = RoadDir.None;
+            for (int d = 0; d < 4; d++)
+            {
+                int2 nb = origin + RoadDirOps.Offsets[d] * s;
+                if (roadLayer.TryGetValue(nb, out var rc) && rc.OwnerLocalId == ownerLocalId)
+                    mask |= RoadDirOps.FromIndex(d);
+            }
+            return mask;
+        }
+
+        /// <summary>단일 연결 비트의 반대 방향 인덱스(직선 연장 방향). 비단일이면 -1.</summary>
+        public static int OppositeOfSingle(RoadDir single)
+        {
+            if (RoadDirOps.PopCount(single) != 1) return -1;
+            for (int d = 0; d < 4; d++)
+                if ((single & RoadDirOps.FromIndex(d)) != RoadDir.None)
+                    return RoadDirOps.OppositeIndex(d);
+            return -1;
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        //  7. 도로 확장 후보 — "내 도로에서 바깥 개방지로 뻗을 최선의 직선 stub"
+        //
+        //  방향성 정책(닫힌 루프가 안쪽을 감싸며 자가-포위되는 것을 방지):
+        //    · 끝점(연결 1개) : 직선 계속(연결의 반대 방향)만 — 거리·축 유지.
+        //    · 그 외(루프 변/분기): 도로가 없는 방향 중 바깥(무게중심에서 멀어지는)으로 분기.
+        //  점수 = 바깥 방향(최우선) → 뻗는 길이 → 바깥 정도. 도시 바깥 프런티어를 향한다.
         //
         //  단차/자원/점유(환경 제외)/맵 경계를 만나면 거기서 정지 → 유기적 성장.
         //  반환 found. outOrigin=첫 확장 footprint 원점, outDir=방향(0~3), outSteps=뻗을 footprint 수.
@@ -282,8 +315,12 @@ namespace CitySim
             out int2 outOrigin, out int outDir, out int outSteps)
         {
             outOrigin = default; outDir = 0; outSteps = 0;
-            int bestSteps = 0;
             int s = math.max(1, roadSize);
+
+            if (!TeamRoadCentroid(roadLayer, ownerLocalId, out double2 centroid))
+                return false;
+
+            long bestScore = long.MinValue;
 
             foreach (var kv in roadLayer)
             {
@@ -291,14 +328,25 @@ namespace CitySim
                 if (rc.OwnerLocalId != ownerLocalId) continue;
                 if (!kv.Key.Equals(rc.FootprintOrigin)) continue;  // footprint 원점만 (중복 제거)
 
-                int2 O   = rc.FootprintOrigin;
-                byte myH  = CellHeight(O, terrainLayer);
+                int2    O    = rc.FootprintOrigin;
+                byte    myH  = CellHeight(O, terrainLayer);
+                RoadDir cons = MacroConnections(O, s, ownerLocalId, in roadLayer);
+                int     pop  = RoadDirOps.PopCount(cons);
+                int     cont = pop == 1 ? OppositeOfSingle(cons) : -1;
 
                 for (int d = 0; d < 4; d++)
                 {
-                    int2 off = RoadDirOps.Offsets[d];
-                    int2 cur = O + off * s;     // 첫 인접 footprint 원점
-                    int steps = 0;
+                    if ((cons & RoadDirOps.FromIndex(d)) != RoadDir.None) continue; // 이미 도로
+
+                    int2   off     = RoadDirOps.Offsets[d];
+                    double outward = off.x * (O.x - centroid.x) + off.y * (O.y - centroid.y);
+
+                    // 끝점은 직선 계속만. 그 외(루프/분기)는 바깥 방향만 분기.
+                    if (pop == 1) { if (d != cont) continue; }
+                    else          { if (outward <= 0) continue; }
+
+                    int2 cur = O + off * s;
+                    int  steps = 0;
                     while (steps < maxSteps &&
                            RoadFootprintFree(cur, s, myH,
                                occupancyLayer, terrainLayer, resourceLayer, roadLayer))
@@ -306,17 +354,40 @@ namespace CitySim
                         steps++;
                         cur += off * s;
                     }
-                    if (steps > bestSteps)
+                    if (steps == 0) continue;
+
+                    // 바깥 방향(최우선) → 뻗는 길이. '가장 먼 spur' 가산점은 빼서
+                    // 한 도로만 계속 뻗는 쏠림을 줄인다(동률은 순회 순서로 분산).
+                    long isOut = outward > 0 ? 1 : 0;
+                    long score = isOut * 1_000_000 + (long)steps * 1000;
+                    if (score > bestScore)
                     {
-                        bestSteps = steps;
+                        bestScore = score;
                         outOrigin = O + off * s;
                         outDir    = d;
+                        outSteps  = steps;
                     }
                 }
             }
 
-            outSteps = bestSteps;
-            return bestSteps > 0;
+            return outSteps > 0;
+        }
+
+        /// <summary>팀 도로 footprint 원점들의 무게중심. 도로 없으면 false.</summary>
+        public static bool TeamRoadCentroid(
+            in NativeHashMap<int2, RoadCell> roadLayer, int ownerLocalId, out double2 centroid)
+        {
+            double2 sum = default; int cnt = 0;
+            foreach (var kv in roadLayer)
+            {
+                var rc = kv.Value;
+                if (rc.OwnerLocalId != ownerLocalId) continue;
+                if (!kv.Key.Equals(rc.FootprintOrigin)) continue;
+                sum += new double2(kv.Key.x, kv.Key.y);
+                cnt++;
+            }
+            centroid = cnt > 0 ? sum / cnt : default;
+            return cnt > 0;
         }
 
         // 도로 footprint(size×size)가 비어있고 평탄(reqHeight)하며 맵 안인가.

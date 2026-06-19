@@ -64,13 +64,15 @@ namespace CitySim
                 _label);
 
             // 배속 버튼
+            const int nBtn = 6;
             float bw = 56f, by = 6f + h + 4f;
-            float bx = (Screen.width - bw * 5f - 4f * 4f) * 0.5f;
+            float bx = (Screen.width - bw * nBtn - 4f * (nBtn - 1)) * 0.5f;
             DrawSpeed(em, clockEntity, clock, ref bx, by, bw, "⏸ 0",  0f);
             DrawSpeed(em, clockEntity, clock, ref bx, by, bw, "1x",   1f);
             DrawSpeed(em, clockEntity, clock, ref bx, by, bw, "3x",   3f);
             DrawSpeed(em, clockEntity, clock, ref bx, by, bw, "10x",  10f);
             DrawSpeed(em, clockEntity, clock, ref bx, by, bw, "60x",  60f);
+            DrawSpeed(em, clockEntity, clock, ref bx, by, bw, "120x", 120f);
         }
 
         void DrawSpeed(EntityManager em, Entity e, GameClock clock,

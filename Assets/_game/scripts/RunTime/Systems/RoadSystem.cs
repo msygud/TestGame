@@ -7,6 +7,7 @@ namespace CitySim
 {
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(GridInitSystem))]
+    [UpdateBefore(typeof(BuildingPlacementSystem))]   // AI가 한 턴에 발행한 도로가 건물 검증 전에 깔리도록
     public partial struct RoadSystem : ISystem
     {
         public struct DirtyRoadTag : IComponentData { }
@@ -17,6 +18,7 @@ namespace CitySim
             state.RequireForUpdate<PrefabLookup>();
             state.RequireForUpdate<RoadKeyLookup>();
             state.RequireForUpdate<GridSettings>();
+            state.RequireForUpdate<CellTypeLookup>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -24,6 +26,7 @@ namespace CitySim
             var layers = SystemAPI.GetSingleton<GridLayers>();
             var lookup = SystemAPI.GetSingleton<PrefabLookup>();
             var roadKeys = SystemAPI.GetSingleton<RoadKeyLookup>();
+            var cellTypeLookup = SystemAPI.GetSingleton<CellTypeLookup>();
             var cellSize = SystemAPI.GetSingleton<GridSettings>().CellSize;
             var em = state.EntityManager;
             var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -71,10 +74,19 @@ namespace CitySim
                     else if (layers.ResourceLayer.TryGetValue(c, out var res) && res.Amount > 0)
                         blocked = true;
 
-                    // footprint 내부 단차 거부 (모든 셀 지형 높이 동일해야 함)
-                    byte ch = layers.TerrainLayer.TryGetValue(c, out var ct) ? ct.Height : (byte)0;
-                    if (firstCell) { baseHeight = ch; firstCell = false; }
-                    else if (ch != baseHeight) blocked = true;
+                    // 지형 타입 거부 — 도로는 물 위에 못 깐다 (다리 미지원). Land 전용.
+                    if (!layers.TerrainLayer.TryGetValue(c, out var ct))
+                        blocked = true;          // 맵 밖
+                    else
+                    {
+                        if (cellTypeLookup.TryGet(ct.TypeId, out var ti)
+                            && ti.TerrainCategory == TerrainCategory.Water)
+                            blocked = true;
+
+                        // footprint 내부 단차 거부 (모든 셀 지형 높이 동일해야 함)
+                        if (firstCell) { baseHeight = ct.Height; firstCell = false; }
+                        else if (ct.Height != baseHeight) blocked = true;
+                    }
                 }
                 if (blocked) { ecb.DestroyEntity(cmdEntity); continue; }
 

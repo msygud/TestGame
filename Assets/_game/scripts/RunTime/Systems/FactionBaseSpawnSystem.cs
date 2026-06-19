@@ -89,10 +89,10 @@ namespace CitySim
             // ── 팀 엔티티 순회 ────────────────────────────────────
             int requestCount = 0;
 
-            foreach (var (teamInfo, startPoint) in
+            foreach (var (teamInfo, startPoint, teamEntity) in
                      SystemAPI.Query<
                          RefRO<TeamInfoData>,
-                         RefRO<TeamStartPoint>>())
+                         RefRO<TeamStartPoint>>().WithEntityAccess())
             {
                 int teamIndex    = startPoint.ValueRO.TeamIndex;
                 int ownerLocalId = teamInfo.ValueRO.LocalID;
@@ -139,6 +139,18 @@ namespace CitySim
 
                 requestCount += EmitPerimeterRoads(
                     ref ecb, originCell, campSize, roadSize, ownerLocalId, slot.FactionId);
+
+                // ── 블록 그리드 정의 부착 (AI 도시 성장이 이걸 따라 블록식으로 자람) ──
+                //   Anchor=originCell, Block=campSize, Road=roadSize → 베이스=블록(0,0).
+                ecb.AddComponent(teamEntity, new CityGrid
+                {
+                    Anchor    = originCell,
+                    Block     = campSize,
+                    Road      = roadSize,
+                    FactionId = slot.FactionId,
+                    // 게임 시작마다 다른 시드(UnityEngine.Random은 세션별 자동 시드).
+                    Seed      = (uint)UnityEngine.Random.Range(1, int.MaxValue),
+                });
 
                 // ── 건물·유닛 배치 요청 발행 ──────────────────────────
                 for (int i = 0; i < bakedBuf.Length; i++)
