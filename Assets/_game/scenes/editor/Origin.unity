@@ -174,7 +174,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 430247246}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 1c41110d79fe6ed459658b2574db5c8e, type: 3}
   m_Name: 
@@ -306,15 +306,15 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.CombatInstanceTestAuthoring
   AttackerPrefab: {fileID: 2552510462277219759, guid: 2eb65bd6b700c7046b1bc428e85eb70b, type: 3}
   AttackerPrefabs: []
-  AttackerCount: 1
-  AttackerOrigin: {x: 50, y: 0, z: 50}
+  AttackerCount: 500
+  AttackerOrigin: {x: 100, y: 0, z: 100}
   AttackerLocalId: 0
   AttackerTeamId: 0
   AttackerNamePrefix: A
   TargetPrefab: {fileID: 4355038132074908174, guid: 5237d7bdd782716478c407d7c0013089, type: 3}
   TargetPrefabs: []
-  TargetCount: 1
-  TargetOrigin: {x: 200, y: 0, z: 200}
+  TargetCount: 500
+  TargetOrigin: {x: 300, y: 0, z: 300}
   TargetLocalId: 1
   TargetTeamId: 1
   TargetNamePrefix: T

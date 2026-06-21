@@ -5,6 +5,23 @@
 
 ---
 
+## 맵에디터 개선 (2026-06-20)
+- ✅ **Shift+드래그 연속 배치**: 배치 탭에서 Shift+좌드래그 시 드래그 시작 셀 기준
+  오브젝트 크기(`ValidSize`) 격자에 스냅해 겹치지 않게 연속 배치 (`PlaceSnappedDuringDrag`).
+  size=1(도로)이면 매 셀 연속 드로잉. `TryPlace`가 점유/경계 재검증.
+- ✅ **높이 0 미표시**: `TerrainLayerPainter.TryGetHeightLabel` — `Height>0`일 때만 라벨 출력.
+- ✅ **자원 카탈로그 SO**: `ResourceCatalog`(RunTime/Registry) — 자원 종류/이름/색을 데이터로 정의.
+  에디터(`ResourceLayerPainter`)는 팔레트·색을 카탈로그에서 읽고 셀엔 **양만** 칠함.
+  `MapResourceDefs`는 카탈로그 우선 + enum 폴백. `ResourceDebugVisualizer`도 카탈로그 색 사용
+  (`Resources/ResourceCatalog` 자동 로드, 없으면 HSV 폴백).
+  - ⬜ Unity에서 `Create > CitySim > Resource Catalog`로 에셋 생성 + 항목 채우기.
+    런타임 디버그 색까지 쓰려면 에셋을 `Resources/` 폴더에 이름 `ResourceCatalog`로 둘 것.
+- ✅ **Debug 폴드아웃 로그 뷰어**: 접힘 기본(클릭 시 펼침) + Application.logMessageReceived
+  캡처를 **고정 높이(120px) 스크롤 박스**에 누적 → 메시지가 쌓여도 창 레이아웃이 안 밀림.
+  (캡 200줄, 자동 최신 스크롤, Clear 버튼)
+
+---
+
 ## Spatial Query (Radar / Vision / Minimap)
 아키텍처: **단일 position/index 업데이트 시스템**이 독립적인 백그라운드 HashMap들에 공급, 결과는 사전 계산해 캐싱.
 
@@ -100,8 +117,16 @@
   - 이웃 셀 `OwnerLocalId` 불일치 시 연결 무시 → 다른 플레이어 도로와 시각적·비트마스크 모두 분리
   - `UpdateFootprintBoundaryDirections`: 이웃 갱신 시 그 이웃 자신의 `OwnerLocalId` 사용
   - BFS(`CivilianBFS`)는 원래부터 `OwnerLocalId` 체크 → 경로 탐색은 이미 분리돼 있었음
-- ❓ 물-육지 경계 삼거리 이슈 — `StampTestBootstrap`이 원인으로 추정, 미확인
-- ❓ 인접 평행 도로를 가로질러 수직 도로 연결 불가 — 점유 레이어가 막음. 설계 제약으로 수용 (최소 1셀 간격 필요)
+- ❓ 물-육지 경계 삼거리 이슈 — `StampTestBootstrap`(이미 삭제됨)이 원인으로 추정, 미확인
+- ✅ **(2026-06-20) 도로 연결 모델 = 셀 축(axis) 기반 통일 — 평행 분리 + 의도적 교차** (이전 "평행 도로 가로지르기 불가" 미결 해결)
+  - **원칙**: 각 셀은 자기를 지나는 세그먼트의 축을 가짐(`RoadCell.Axis`: EW / NS / Any=교차). **인접 두 셀은 공통으로 가진 축 방향으로만 연결**(축-AND). → 평행 도로(둘 다 NS)는 1칸 옆이어도 영원히 분리, 가로지른 셀만 4방향.
+  - **`RoadSystem.ComputeDirections` 축-AND로 교체** — `myAxis` 인자 추가. `AxisAllows`(축이 그 방향 허용?), `CombineAxis`(겹치면 Any로 승격) 헬퍼. 이게 권위 데이터 `RoadCell.Directions`를 결정 → 시각·보행·물류 전부 자동 일관.
+  - **도로 위 도로 = 거부가 아니라 병합(교차로 승격)** — `RoadSystem` 배치: footprint 1×1 + 같은 소유자 도로 셀이면 그 셀 축에 새 축 `|=`(→Any), 기존 엔티티 dirty, 새 엔티티 안 만듦(`originFresh`). 다른 소유자/건물/물/단차는 기존대로 거부. (size>1 부분 겹침은 모델 한계로 미지원 — roadSize=1이라 무관.)
+  - **시각**: size==1은 셀 `Directions` 그대로 사용(매크로 축-OR 함수 은퇴, size>1만 사용).
+  - **`StampRebuildSystem` BFS가 `Directions` 따름** — 기존엔 4-이웃 존재만 봐 평행 도로로 물류가 새어나감. 이제 `cell.Directions` 비트 + 이웃 반대 비트(양방향)를 확인 → 물류 도달이 보행과 동일.
+  - **AI 링/유저 드래그 둘 다 지원**: AI 링은 변=EW/NS·코너=Any(직전 수정), 유저는 `RoadBuildController`가 드래그축으로 EW/NS 부여 + 같은소유자·1×1 교차를 이미 허용(`SegmentBlockStatus`/`EvaluateCell`). → 두 평행 도로를 가로지르면 양쪽 다 사거리 + 데이터 정확.
+  - ✅ **원클릭 도로 = 무효** — `RoadBuildController.Confirm`이 2칸 미만 세그먼트는 발행 생략. 이유: 원클릭은 축(방향)이 없어 세그먼트를 정의 못 하고, "인접만으로 연결 예단 안 함" 원칙과 일관(예외 두면 (0,0) 옆 클릭 같은 모호한 연결 판정 발생). 연결하려면 도로→도로로 드래그(통과). 1칸 틈 메우기·교차도 짧은 겹침 드래그로 표현 가능.
+  - ⬜ **교차로 철거 의미는 근사(가)**: 한 셀에 두 축이 겹친 교차로에서 한 세그먼트만 철거해도 셀 통째 제거(남은 축 복구 안 함). 정확한 (나)(축별 카운트로 남은 축 유지)는 추후. AI는 철거 안 써 현재 무영향.
 
 ### 도로 프리뷰 사유 표시 + 단차 처리 (2026-06-18)
 - ✅ **프리뷰 사유별 상태 구분 (`PreviewStatus`)** — 기존 `bool Valid` → 6종 enum으로 교체
@@ -153,6 +178,12 @@
   - `EvaluateCell`: 단차 너머 이웃은 막지도 경고하지도 않고 그냥 연결만 스킵
 - ✅ **HUD 호버 사유 라벨** — `GameHUD._lblHoverStatus`(옵션) ← `RoadBuildController.HoverStatusText`
   - ⬜ Unity 에디터에서 `_lblHoverStatus` 라벨 와이어링(옵션)
+
+### 테스트 부트스트랩 정리 (2026-06-20)
+- ✅ **유령(안 보이는) 도로 원인 제거** — `LogisticsTestBootstrap.cs`가 `RoadSystem`을 우회해 `RoadLayer`에 `(10,10)→(14,10)` 5칸을 직접 등록(owner=0, 비주얼 없음). 게이트가 `GridLayers`/`StampLayers`뿐이라 **매 에디터 플레이마다 자동 실행** → slot 0 도로 확장 시 안 보이는 도로에 연결되던 근본 원인. 파일 삭제(+.meta).
+- ✅ `ProductionTestBootstrap.cs`도 삭제 — 잉여 방앗간 엔티티 + GameClock 없을 때 `TimeScale=1000` 생성(시간 오염) + 활성 `Debug.Log`. 게이트 `GameClock`뿐이라 자동 실행.
+- ✅ `StampTestBootstrap.cs`는 이미 삭제돼 있었음(코드 0건) — CLAUDE.md 디렉토리 트리에서 세 항목 모두 정리.
+- 참고: `RoadLayer` **쓰기는 `RoadSystem` 단 한 곳**이 정상. 테스트용으로 레이어를 직접 쓰는 부트스트랩은 자동 실행되지 않게 게이트하거나 확인 후 즉시 삭제할 것.
 
 ### 다음 단계
 - ⬜ 그라운드 큐브 같은 중심-피벗 프리팹들의 `RegistryItem.Offset` 일괄 점검/설정
@@ -327,13 +358,21 @@
 > 위 긴 트레일은 디버깅 과정. **현재 코드의 동작은 이 블록만 읽으면 됨.** (`AiCityGrowthSystem.cs` 전면이 이 모델)
 
 - **모델**: 매 게임일(`DayChanged`) AI팀마다 블록 1개 성장. 블록 = 건물을 담는 {4,6,8}셀 정사각형 + 도로 링(roadSize). 크기 균일 강제 없음(건물별 가변).
-- **앵커 = 기존 도로 모서리(특이점)**: 각 팀 도로 셀의 연결 형태로 판정(`RoadNeighborMask`).
-  - 직선 통과(마주보는 2연결, `IsStraightThrough`) → 앵커 제외.
+- **앵커 = 모든 프런티어 도로 셀**(빈 이웃 보유): 연결 형태(`RoadNeighborMask`)로 후보 종류 결정.
   - 끝점(1)·L자 꺾임(직각 2) → 볼록·오목 둘 다 가능.
   - 삼거리(3)·사거리(4)=`junction` → **오목만 가능, 볼록 불가**(통과축 있어 외부 안 꺾임).
+  - 직선 통과(마주보는 2연결, `IsStraightThrough`) → **오목이면 OK(직선변 포켓 채움), 볼록은 T분기 폴백 전용**.
+- ✅ **(2026-06-20) 직선 앵커 도입 + 건물 크기 폴백** — 두 증상 수정:
+  - ① **오목 부족**: 직선 도로 중간에 생긴 포켓(notch)은 그 변에 직선 셀뿐이라 예전엔 앵커 0 → 못 메움. 이제 직선 셀도 앵커에 포함하되 **오목(닿는 변 ≥2)이면 발행** → 직선변 노치 채움.
+  - ② **긴 직선+최악 지형 교착**: 굴곡 없는 직선은 앵커가 양 끝 2개뿐 → 끝이 막히면 정지. 이제 직선 셀 **T분기(볼록 1변)** 를 `bestSt` 버킷에 모아 **폴백 전용**으로 발행(오목·코너볼록 전부 실패 시만). 평소엔 안 쓰여 빗살 난립 없음 + 한 번 분기하면 새 코너 생겨 자기-제한.
+  - ② **건물 크기 폴백**: 그날 뽑은 건물(`PickBuilding`)이 안 들어가면 다른 키(보통 더 작은 K)로 한 번 더 `GrowOneBlock` 시도 → 큰 블록만 막히는 빡빡한 지형 완화.
+  - 세 버킷 분리 수집: `bestCc`(오목, 모서리+직선) / `bestEx`(볼록 코너) / `bestSt`(직선 T분기 폴백). 선택: 오목/코너볼록(ConvexBias) → 직선 T분기 폴백.
 - **앵커에서 4사분면 블록**(`QuadrantOrigin`): 근접 링이 모서리 도로와 정확히 일치 → 어긋남 없는 삼거리/사거리. 공유변 길이는 달라도 됨(겹치는 만큼 공유).
 - **오목/볼록 판정**(`SideMassMask`+`IsConcave`): 블록 4변이 도시(팀 도로/건물)에 닿는지 **내부 폭 K만** 스캔(코너 돌출 제외 → 오판 방지). 닿는 변 ≥2 = 오목(노치), ≤1 = 볼록.
-- **선택**: 기본 오목 우선(노치 먼저 메움) → 닿는 변 多 → 베이스 근접. `GrowthConfig.ConvexBias`(0.3) 확률로 볼록 먼저(자연스러운 불규칙). `ConvexBias=0`이면 가능한 한 항상 오목.
+- **선택**: 기본 오목 우선(노치 먼저 메움). 후보 점수(`Better`): ① **링 share**(블록 도로 링이 기존 팀 도로와 겹치는 셀 수 — `RingShareScore`) → ② 닿는 변 多 → ③ 베이스 근접. `GrowthConfig.ConvexBias`(0.3) 확률로 볼록 먼저. `ConvexBias=0`이면 가능한 한 항상 오목.
+  - ✅ **(2026-06-20) 평행 도로 사거리 떡칠 수정 — AI 링 도로에 축 부여** — seam(블록 격자가 1칸 어긋나 평행 도로가 생기는 것) 자체는 수용. 문제는 AI가 링 도로를 전부 `Axis=Any`로 발행해 평행 도로가 셀마다 자동 연결돼 사거리 폭발. → `CollectRingRoads`가 셀별 축 부여: 위/아래 행=EW, 좌/우 열=NS, 코너=Any. 평행 도로는 축이 안 맞아 시각적으로 연결 안 됨(`ComputeAxisFilteredMacroDirections`가 막음). 실제 공유변은 같은 셀이라 정상 연결. (베이스캠프 외곽 도로 축 부여와 동일 원리.) ※ BFS 보행 연결(`ComputeDirections`)은 축 무관이라 영향 없음 — 시각 문제만 해결.
+  - ✅ **(2026-06-20) '한 칸 밀림' 근본 수정 — 앵커를 도로 footprint 원점으로** — `QuadrantOrigin`이 도로 **셀 하나(`kv.Key`)** 기준이라, roadSize≥2일 때 그 셀이 footprint 안에서 밀린 만큼(최대 roadSize-1칸) 어긋났음(roadSize=2 → 한 칸 밀림, 모서리/오목 무관). 이제 `kv.Value.FootprintOrigin` 기준 + footprint당 1회(`seenRoad` dedup) + 매크로 이웃 마스크(`RoadFootprintMask`)·프런티어(`HasEmptyNeighborFootprint`)도 footprint 단위로 판정. 셀 단위 `RoadNeighborMask`/`HasEmptyNeighbor`/`DirOff` 제거.
+  - ✅ **(2026-06-20) 오목 확장 '밀림' 수정** — 선택 1순위를 링 share로. 예전엔 `닿는 변+거리`로만 골라 도로 링이 기존 도로 옆에 평행하게 어긋나는 자리가 자주 선택됨(밀림). 이제 기존 도로를 최대한 재사용(공유)하는 자리를 우선 → 삼거리/사거리로 깔끔히 맞물림. 세 버킷(Cc/Ex/St) 공통 적용.
 - **유효성**(`BlockValid`): footprint(내부 K + 도로 링) 전체가 맵 안·같은 높이(단차 거부)·Land(물 거부)·내부 빈땅·링은 빈땅/기존 팀 도로. → **해변·단차·자원 위엔 안 깖**(자원은 `CellBuildable`이 차단).
 - **랜덤 시드**: `CityGrid.Seed`(베이스 생성 시 `UnityEngine.Random`으로 세션마다 다름)를 RNG에 XOR → **새 게임마다 다른 패턴**, 한 게임 내 결정적.
 - **시스템 순서**: `AiCityGrowth → RoadSystem → BuildingPlacement`(같은 프레임, 도로 먼저 깔린 뒤 건물 입구 검증).

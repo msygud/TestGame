@@ -61,27 +61,47 @@ namespace CitySim.MapEditor
     }
 
     // ── 자원 색상·이름 헬퍼 ────────────────────────────────────────
+    //  자원의 "종류 / 이름 / 색"은 ResourceCatalog(SO)에서 읽는다.
+    //  카탈로그 에셋이 없으면 아래 enum 기본값으로 폴백.
+    //  (에디터는 셀에 "양"만 칠하고, 종류·색은 카탈로그가 정의)
     public sealed class MapResourceDefs
     {
         MapResourceDefs() { }
 
-        public static readonly MapResourceKind[] All =
+        // ── 카탈로그 캐시 (주기적 재탐색으로 신규 생성 반영) ──────
+        static ResourceCatalog _catalog;
+        static double _nextScan;
+        static ResourceCatalog Catalog()
+        {
+            if (_catalog == null && EditorApplication.timeSinceStartup > _nextScan)
+            {
+                _nextScan = EditorApplication.timeSinceStartup + 2.0;
+                var guids = AssetDatabase.FindAssets("t:ResourceCatalog");
+                if (guids.Length > 0)
+                    _catalog = AssetDatabase.LoadAssetAtPath<ResourceCatalog>(
+                        AssetDatabase.GUIDToAssetPath(guids[0]));
+            }
+            return _catalog;
+        }
+
+        // ── enum 폴백 기본값 ──────────────────────────────────────
+        static readonly MapResourceKind[] Fallback =
         {
             MapResourceKind.Coal, MapResourceKind.Iron, MapResourceKind.Gold,
             MapResourceKind.Oil,  MapResourceKind.Crystal,
         };
 
-        public static string NameOf(MapResourceKind r) => r switch
+        static string FallbackName(int id) => (MapResourceKind)id switch
         {
             MapResourceKind.Coal => "석탄",
             MapResourceKind.Iron => "철광석",
             MapResourceKind.Gold => "금",
             MapResourceKind.Oil => "석유",
             MapResourceKind.Crystal => "수정",
-            _ => r.ToString(),
+            _ => $"#{id}",
         };
 
-        public static Color ColorOf(MapResourceKind r) => r switch
+        static Color FallbackColor(int id) => (MapResourceKind)id switch
         {
             MapResourceKind.Coal => new Color(0.20f, 0.20f, 0.20f, 0.80f),
             MapResourceKind.Iron => new Color(0.45f, 0.55f, 0.70f, 0.80f),
@@ -91,15 +111,42 @@ namespace CitySim.MapEditor
             _ => Color.grey,
         };
 
-        public static Color ColorWithAmount(MapResourceKind r, int amount)
+        // ── 공개 API (정수 TypeId 기반, 카탈로그 우선) ────────────
+        public static int[] AllIds()
         {
-            var c = ColorOf(r);
-            float b = 0.40f + Mathf.Clamp01(amount / 1000f) * 0.60f;
-            return new Color(c.r * b, c.g * b, c.b * b, c.a);
+            var c = Catalog();
+            if (c != null && c.Entries.Count > 0)
+            {
+                var ids = new int[c.Entries.Count];
+                for (int i = 0; i < ids.Length; i++) ids[i] = c.Entries[i].TypeId;
+                return ids;
+            }
+            var ids2 = new int[Fallback.Length];
+            for (int i = 0; i < ids2.Length; i++) ids2[i] = (int)Fallback[i];
+            return ids2;
         }
 
-        public static int TypeIdOf(MapResourceKind r) => (int)r;
-        public static MapResourceKind FromId(int id) => (MapResourceKind)id;
+        public static string NameOf(int id)
+        {
+            var c = Catalog();
+            if (c != null && c.TryGet(id, out var e) && !string.IsNullOrEmpty(e.DisplayName))
+                return e.DisplayName;
+            return FallbackName(id);
+        }
+
+        public static Color ColorOf(int id)
+        {
+            var c = Catalog();
+            if (c != null && c.TryGet(id, out var e)) return e.EditorColor;
+            return FallbackColor(id);
+        }
+
+        public static Color ColorWithAmount(int id, int amount)
+        {
+            var col = ColorOf(id);
+            float b = 0.40f + Mathf.Clamp01(amount / 1000f) * 0.60f;
+            return new Color(col.r * b, col.g * b, col.b * b, col.a);
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -322,7 +369,8 @@ namespace CitySim.MapEditor
 
         public bool TryGetHeightLabel(Vector2Int cell, MapData map, out string label)
         {
-            if (map.TerrainDict.TryGetValue(cell, out var data))
+            // 높이 0은 오버레이에 표시하지 않음 (시각적 노이즈 감소)
+            if (map.TerrainDict.TryGetValue(cell, out var data) && data.Height > 0)
             { label = data.Height.ToString(); return true; }
             label = null;
             return false;
@@ -337,31 +385,47 @@ namespace CitySim.MapEditor
         public string LayerName => "Resource";
         public bool WantsHeightOverlay => false;
 
-        MapResourceKind _selectedType = MapResourceKind.Coal;
+        int _selectedTypeId = (int)MapResourceKind.Coal;
         int _selectedAmount = 300;
 
         public void DrawToolbar()
         {
             EditorGUILayout.LabelField("지하 자원 선택", EditorStyles.miniBoldLabel);
-            int cols = 3;
-            var all = MapResourceDefs.All;
-            for (int i = 0; i < all.Length; i += cols)
+
+            var ids = MapResourceDefs.AllIds();
+            if (ids.Length == 0)
             {
-                EditorGUILayout.BeginHorizontal();
-                for (int c = 0; c < cols && i + c < all.Length; c++)
+                EditorGUILayout.HelpBox(
+                    "ResourceCatalog 에 자원이 없습니다.\n" +
+                    "Create > CitySim > Resource Catalog 로 종류·색을 정의하세요.",
+                    MessageType.Info);
+            }
+            else
+            {
+                // 현재 선택이 목록에 없으면 첫 항목으로 보정 (카탈로그 변경 대응)
+                bool found = false;
+                foreach (var id in ids) if (id == _selectedTypeId) { found = true; break; }
+                if (!found) _selectedTypeId = ids[0];
+
+                int cols = 3;
+                for (int i = 0; i < ids.Length; i += cols)
                 {
-                    var r = all[i + c];
-                    var col = MapResourceDefs.ColorOf(r);
-                    var prevBg = GUI.backgroundColor;
-                    GUI.backgroundColor = _selectedType == r
-                        ? new Color(col.r * 1.5f, col.g * 1.5f, col.b * 1.5f)
-                        : new Color(col.r * 0.75f, col.g * 0.75f, col.b * 0.75f);
-                    if (GUILayout.Button(MapResourceDefs.NameOf(r), GUILayout.Height(32)))
-                        _selectedType = r;
-                    GUI.backgroundColor = prevBg;
+                    EditorGUILayout.BeginHorizontal();
+                    for (int c = 0; c < cols && i + c < ids.Length; c++)
+                    {
+                        int id = ids[i + c];
+                        var col = MapResourceDefs.ColorOf(id);
+                        var prevBg = GUI.backgroundColor;
+                        GUI.backgroundColor = _selectedTypeId == id
+                            ? new Color(col.r * 1.5f, col.g * 1.5f, col.b * 1.5f)
+                            : new Color(col.r * 0.75f, col.g * 0.75f, col.b * 0.75f);
+                        if (GUILayout.Button(MapResourceDefs.NameOf(id), GUILayout.Height(32)))
+                            _selectedTypeId = id;
+                        GUI.backgroundColor = prevBg;
+                    }
+                    GUILayout.FlexibleSpace();
+                    EditorGUILayout.EndHorizontal();
                 }
-                GUILayout.FlexibleSpace();
-                EditorGUILayout.EndHorizontal();
             }
 
             EditorGUILayout.Space(6);
@@ -378,7 +442,7 @@ namespace CitySim.MapEditor
                 {
                     X = c.x,
                     Y = c.y,
-                    TypeId = MapResourceDefs.TypeIdOf(_selectedType),
+                    TypeId = _selectedTypeId,
                     Amount = _selectedAmount,
                 };
         }
@@ -392,8 +456,7 @@ namespace CitySim.MapEditor
         {
             if (map.ResourceDict.TryGetValue(cell, out var data))
             {
-                color = MapResourceDefs.ColorWithAmount(
-                    MapResourceDefs.FromId(data.TypeId), data.Amount);
+                color = MapResourceDefs.ColorWithAmount(data.TypeId, data.Amount);
                 return true;
             }
             color = Color.clear;

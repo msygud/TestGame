@@ -203,12 +203,23 @@ namespace CitySim
                 if (maxDist > 0 && dist >= maxDist)
                     continue;
 
+                // 현재 셀의 연결 비트(Directions)를 따라서만 확산.
+                //   보행/시각과 동일 권위 데이터를 사용 → 평행 도로는 물류도 안 건너감,
+                //   교차 셀에서만 가로질러 전파(축-AND 결과 그대로 반영).
+                if (!roadLayer.TryGetValue(cell, out var curRc))
+                    continue;
+
                 for (int d = 0; d < 4; d++)
                 {
+                    if ((curRc.Directions & RoadDirOps.FromIndex(d)) == 0)
+                        continue;                                  // 이 방향으로 안 이어짐
                     int2 next = cell + dirs[d];
                     if (visited.ContainsKey(next))
                         continue;
-                    if (!IsOwnedRoad(next, owner, in roadLayer))
+                    if (!roadLayer.TryGetValue(next, out var nextRc) || nextRc.OwnerLocalId != owner)
+                        continue;
+                    // 이웃이 반대 방향으로 되받아 연결돼야 함(양방향 일치).
+                    if ((nextRc.Directions & RoadDirOps.FromIndex((d + 2) & 3)) == 0)
                         continue;
 
                     visited[next] = dist + 1;

@@ -36,7 +36,9 @@ namespace CitySim
                      SystemAPI.Query<RefRO<PreviewRoadCommand>>().WithEntityAccess())
             {
                 var cell = cmd.ValueRO.Cell;
-                var dirs = ComputeDirections(cell, cmd.ValueRO.OwnerLocalId, layers.RoadLayer, layers.TerrainLayer);
+                // 프리뷰는 축 미정(드래그 방향 확정 전)이라 Any로 최대 연결을 보여준다.
+                var dirs = ComputeDirections(cell, cmd.ValueRO.OwnerLocalId, RoadPlacedAxis.Any,
+                    layers.RoadLayer, layers.TerrainLayer);
 
                 var oldQ = SystemAPI.QueryBuilder().WithAll<RoadPreview>().Build();
                 ecb.DestroyEntity(oldQ, EntityQueryCaptureMode.AtPlayback);
@@ -62,6 +64,9 @@ namespace CitySim
                 //   · footprint 내부 단차              → 거부 (도로는 경사에 못 앉음)
                 // 환경(나무/바위)은 막지 않고 통과 후 제거한다.
                 // 단차 너머 인접 도로와는 "연결만" 안 함(ComputeDirections 높이 필터). 배치는 허용.
+                // 교차(도로 위 도로) 허용 조건: footprint 1×1(size==1)이고 같은 소유자 도로일 때만.
+                //   → 가로지르는 도로가 기존 도로 셀을 '통과(공유)'해 교차로로 승격.
+                //   size>1은 footprint/엔티티 모델이 부분 겹침을 못 다뤄 기존대로 거부.
                 bool blocked = false;
                 bool firstCell = true; byte baseHeight = 0;
                 for (int dx = 0; dx < size && !blocked; dx++)
@@ -70,7 +75,11 @@ namespace CitySim
                     var c = origin + new int2(dx, dz);
                     if (layers.OccupancyLayer.TryGetValue(c, out var occ) && !occ.IsEmpty
                         && occ.Type != OccupantType.Environment)
-                        blocked = true;
+                    {
+                        bool sameOwnerRoad = size == 1
+                            && occ.Type == OccupantType.Road && occ.OwnerLocalId == ownerLocalId;
+                        if (!sameOwnerRoad) blocked = true;   // 교차 허용 외엔 거부
+                    }
                     else if (layers.ResourceLayer.TryGetValue(c, out var res) && res.Amount > 0)
                         blocked = true;
 
@@ -107,58 +116,77 @@ namespace CitySim
 
                 var placedAxis = cmd.ValueRO.Axis;
 
-                // footprint 전체 셀을 RoadLayer + OccupancyLayer에 등록
+                // footprint 전체 셀 등록. 기존 같은-소유자 도로 셀은 '교차'로 축 병합(신규 등록 X).
+                //   originFresh = origin 셀이 새 도로인가(아니면 = 기존 도로 위 교차 → 새 엔티티 안 만듦).
+                bool originFresh = !(layers.RoadLayer.TryGetValue(origin, out var oc)
+                                     && oc.OwnerLocalId == ownerLocalId);
                 for (int dx = 0; dx < size; dx++)
                 for (int dz = 0; dz < size; dz++)
                 {
-                    var c    = origin + new int2(dx, dz);
-                    var dirs = ComputeDirections(c, ownerLocalId, layers.RoadLayer, layers.TerrainLayer);
-                    layers.RoadLayer.Add(c, new RoadCell
+                    var c = origin + new int2(dx, dz);
+                    if (layers.RoadLayer.TryGetValue(c, out var existing)
+                        && existing.OwnerLocalId == ownerLocalId)
                     {
-                        Directions      = dirs,
-                        FlowAxis        = ComputeFlowAxis(dirs),
-                        LaneCount       = laneCount,
-                        OwnerLocalId    = ownerLocalId,
-                        RoadEntity      = Entity.Null,
-                        FootprintOrigin = origin,
-                        Size            = size,
-                        Axis            = placedAxis,
-                    });
-                    layers.OccupancyLayer[c] = new OccupancyCell
+                        // 교차: 기존 셀 축에 새 축 병합 → 교차로 승격. 기존 엔티티는 dirty.
+                        existing.Axis = CombineAxis(existing.Axis, placedAxis);
+                        layers.RoadLayer[c] = existing;
+                        if (existing.RoadEntity != Entity.Null
+                            && !em.HasComponent<DirtyRoadTag>(existing.RoadEntity))
+                            ecb.AddComponent<DirtyRoadTag>(existing.RoadEntity);
+                    }
+                    else
                     {
-                        Type         = OccupantType.Road,
-                        Occupant     = Entity.Null,
-                        OwnerLocalId = ownerLocalId,
-                    };
+                        layers.RoadLayer[c] = new RoadCell
+                        {
+                            Directions      = RoadDir.None,   // 아래 재계산 루프에서 채움
+                            FlowAxis        = default,
+                            LaneCount       = laneCount,
+                            OwnerLocalId    = ownerLocalId,
+                            RoadEntity      = Entity.Null,
+                            FootprintOrigin = origin,
+                            Size            = size,
+                            Axis            = placedAxis,
+                        };
+                        layers.OccupancyLayer[c] = new OccupancyCell
+                        {
+                            Type         = OccupantType.Road,
+                            Occupant     = Entity.Null,
+                            OwnerLocalId = ownerLocalId,
+                        };
+                    }
                 }
 
-                // footprint 내부 셀들의 방향 비트를 이웃 포함해 재계산
+                // footprint 셀들의 방향 비트를 이웃 포함해 재계산 (각 셀의 병합된 축 사용)
                 // (먼저 전체 등록이 끝난 뒤 재계산해야 내부 연결이 올바름)
                 for (int dx = 0; dx < size; dx++)
                 for (int dz = 0; dz < size; dz++)
                 {
                     var c = origin + new int2(dx, dz);
                     if (!layers.RoadLayer.TryGetValue(c, out var rc)) continue;
-                    rc.Directions = ComputeDirections(c, ownerLocalId, layers.RoadLayer, layers.TerrainLayer);
+                    rc.Directions = ComputeDirections(c, ownerLocalId, rc.Axis, layers.RoadLayer, layers.TerrainLayer);
                     rc.FlowAxis   = ComputeFlowAxis(rc.Directions);
                     layers.RoadLayer[c] = rc;
                 }
 
-                // Road 엔티티는 origin 셀 기준 1개 (FixupRoadLayer가 전체 셀에 참조를 채움)
-                var road = ecb.CreateEntity();
-                ecb.AddComponent(road, new GridPosition { Value = origin });
-                ecb.AddComponent(road, new Road
+                // origin이 새 도로일 때만 Road 엔티티 1개 생성(FixupRoadLayer가 셀에 참조 채움).
+                // origin이 기존 도로 위 교차면 새 엔티티 없이 기존 엔티티만 dirty(위에서 처리됨).
+                if (originFresh)
                 {
-                    Directions               = layers.RoadLayer[origin].Directions,
-                    FactionId                = factionId,
-                    LaneCount                = laneCount,
-                    Size                     = size,
-                    FootprintOrigin          = origin,
-                    VisualDirectionsOverride = cmd.ValueRO.VisualDirectionsOverride,
-                    Axis                     = placedAxis,
-                });
-                ecb.AddComponent(road, new RoadVisualInstance { Instance = Entity.Null });
-                ecb.AddComponent(road, new DirtyRoadTag());
+                    var road = ecb.CreateEntity();
+                    ecb.AddComponent(road, new GridPosition { Value = origin });
+                    ecb.AddComponent(road, new Road
+                    {
+                        Directions               = layers.RoadLayer[origin].Directions,
+                        FactionId                = factionId,
+                        LaneCount                = laneCount,
+                        Size                     = size,
+                        FootprintOrigin          = origin,
+                        VisualDirectionsOverride = cmd.ValueRO.VisualDirectionsOverride,
+                        Axis                     = layers.RoadLayer[origin].Axis,
+                    });
+                    ecb.AddComponent(road, new RoadVisualInstance { Instance = Entity.Null });
+                    ecb.AddComponent(road, new DirtyRoadTag());
+                }
 
                 // footprint 외곽 이웃 셀 방향 비트 갱신
                 UpdateFootprintBoundaryDirections(origin, size, layers, em, ecb);
@@ -269,18 +297,23 @@ namespace CitySim
 
                 var cell = gp.ValueRO.Value;
                 int visualOwner = -1;
+                RoadDir cellDirs = RoadDir.None;
                 if (layers.RoadLayer.TryGetValue(cell, out var roadCell))
                 {
                     road.ValueRW.Directions = roadCell.Directions;
                     road.ValueRW.LaneCount  = roadCell.LaneCount;
+                    road.ValueRW.Axis       = roadCell.Axis;   // 교차 병합된 축 반영
                     visualOwner             = roadCell.OwnerLocalId;
+                    cellDirs                = roadCell.Directions;
                 }
 
-                // 비주얼 방향: 축 필터링된 매크로 방향으로 항상 재계산.
-                // 소유자 필터도 포함 — 다른 플레이어의 도로에 시각적으로 연결되지 않도록.
+                // 비주얼 방향: size==1은 셀의 권위 Directions(축-AND·교차 병합 반영)를 그대로 사용
+                //   → 데이터=시각 일치(평행 분리/교차 사거리). size>1 블록만 매크로 경로.
                 byte macroSize = road.ValueRO.Size <= 1 ? (byte)1 : road.ValueRO.Size;
-                var dirs2 = ComputeAxisFilteredMacroDirections(
-                    cell, macroSize, road.ValueRO.Axis, visualOwner, layers.RoadLayer, layers.TerrainLayer);
+                var dirs2 = macroSize == 1
+                    ? cellDirs
+                    : ComputeAxisFilteredMacroDirections(
+                        cell, macroSize, road.ValueRO.Axis, visualOwner, layers.RoadLayer, layers.TerrainLayer);
                 var factionId = road.ValueRO.FactionId;
                 Entity prefabEntity = Entity.Null;
 
@@ -330,10 +363,17 @@ namespace CitySim
 
         // ── 헬퍼 ──────────────────────────────────────────────────
 
-        // 셀 단위 — BFS/점유 계산용 (Size=1일 때 MacroDirections와 동일).
-        // 같은 소유자 + 같은 지형 높이의 도로만 연결 (단차 너머로는 연결 안 됨).
+        // 셀 단위 — BFS/물류/시각의 권위 데이터(RoadCell.Directions) 계산.
+        //   연결 규칙(축-AND): 방향 d로 이으려면
+        //     ① 같은 소유자 ② 같은 지형 높이(단차 너머 X)
+        //     ③ '두 셀이 그 방향 축을 모두 허용'해야 한다.
+        //        E/W 연결 = 두 셀 다 EW(또는 Any=교차) 보유.
+        //        N/S 연결 = 두 셀 다 NS(또는 Any) 보유.
+        //   → 평행 도로(둘 다 NS)는 E/W로 안 이어짐(인접해도 분리).
+        //     가로지른 교차 셀(Any=EW+NS)만 4방향으로 이어짐.
+        //   myAxis = 이 셀의 배치 축(레이어에 아직 없을 수 있어 인자로 받음).
         public static RoadDir ComputeDirections(
-            int2 cell, int ownerLocalId,
+            int2 cell, int ownerLocalId, RoadPlacedAxis myAxis,
             NativeHashMap<int2, RoadCell> roadLayer,
             NativeHashMap<int2, TerrainCell> terrainLayer)
         {
@@ -341,14 +381,26 @@ namespace CitySim
             RoadDir dirs = RoadDir.None;
             for (int i = 0; i < 4; i++)
             {
+                bool isEW = i == 1 || i == 3;          // E/W = 동서, N/S = 남북
+                if (!AxisAllows(myAxis, isEW)) continue;
                 var nCell = cell + RoadDirOps.Offsets[i];
                 if (roadLayer.TryGetValue(nCell, out var nc)
                     && nc.OwnerLocalId == ownerLocalId
-                    && CellHeight(nCell, terrainLayer) == myH)
+                    && CellHeight(nCell, terrainLayer) == myH
+                    && AxisAllows(nc.Axis, isEW))
                     dirs |= RoadDirOps.FromIndex(i);
             }
             return dirs;
         }
+
+        // 축이 그 방향(isEW=동서 / else 남북) 연결을 허용하는가.
+        //   Any = 둘 다 허용(교차 셀). EW = 동서만. NS = 남북만.
+        public static bool AxisAllows(RoadPlacedAxis axis, bool isEW)
+            => axis == RoadPlacedAxis.Any || (isEW ? axis == RoadPlacedAxis.EW : axis == RoadPlacedAxis.NS);
+
+        // 같은 셀에 두 세그먼트가 겹치면(가로지름) 축을 합쳐 교차(Any)로 승격.
+        public static RoadPlacedAxis CombineAxis(RoadPlacedAxis a, RoadPlacedAxis b)
+            => a == b ? a : RoadPlacedAxis.Any;
 
         static byte CellHeight(int2 cell, NativeHashMap<int2, TerrainCell> terrainLayer)
             => terrainLayer.IsCreated && terrainLayer.TryGetValue(cell, out var t)
@@ -462,7 +514,7 @@ namespace CitySim
                     if (!visited.Add(nCell)) continue;
                     if (!layers.RoadLayer.TryGetValue(nCell, out var nRoadCell)) continue;
 
-                    var newDirs = ComputeDirections(nCell, nRoadCell.OwnerLocalId, layers.RoadLayer, layers.TerrainLayer);
+                    var newDirs = ComputeDirections(nCell, nRoadCell.OwnerLocalId, nRoadCell.Axis, layers.RoadLayer, layers.TerrainLayer);
                     nRoadCell.Directions = newDirs;
                     nRoadCell.FlowAxis   = ComputeFlowAxis(newDirs);
                     layers.RoadLayer[nCell] = nRoadCell;

@@ -72,6 +72,11 @@ namespace CitySim.MapEditor
         bool foldPrefabList = true;
         bool foldDebug = false;
 
+        // ── Debug 로그 버퍼 (고정 높이 스크롤 — 레이아웃 밀림 방지) ──
+        readonly List<string> _debugLog = new();
+        Vector2 _debugScroll;
+        const int DebugLogMax = 200;
+
         // 셀 오버레이 메시 (셀 전체 = 단일 Mesh, DrawMeshNow 1회)
         Mesh _overlayMesh;
         Material _overlayMat;
@@ -102,6 +107,12 @@ namespace CitySim.MapEditor
         // ── 배치 프리뷰 GO ────────────────────────────────────────
         GameObject _previewGo;
         Vector2Int? _previewCell;
+
+        // ── Shift+드래그 연속 배치 상태 ───────────────────────────
+        //  드래그 시작 셀 기준 오브젝트 크기(size) 격자에 스냅해
+        //  겹치지 않게 연속 배치한다. (size=1이면 매 셀 = 도로 연속 드로잉)
+        bool _dragPlacing = false;
+        Vector2Int _dragOrigin;
 
         // ── 선택된 배치물 셀 (인스펙터 표시용) ──────────────────
         Vector2Int? _selectedCell = null;
@@ -152,11 +163,13 @@ namespace CitySim.MapEditor
             RebuildOccupancy();
 
             SceneView.duringSceneGui += OnSceneGUI;
+            Application.logMessageReceived += OnLogMessage;
         }
 
         void OnDisable()
         {
             SceneView.duringSceneGui -= OnSceneGUI;
+            Application.logMessageReceived -= OnLogMessage;
             isPlacingStartPoint = false;
             isPainting = false;
             ClearPreview();
@@ -861,13 +874,49 @@ namespace CitySim.MapEditor
         // ══════════════════════════════════════════════════════════
         //  Debug
         // ══════════════════════════════════════════════════════════
+        // ── 로그 캡처: 고정 높이 박스에만 누적 (레이아웃 밀림 방지) ──
+        void OnLogMessage(string condition, string stackTrace, LogType type)
+        {
+            string prefix = type switch
+            {
+                LogType.Error or LogType.Exception => "✖ ",
+                LogType.Warning => "▲ ",
+                _ => "· ",
+            };
+            _debugLog.Add(prefix + condition);
+            if (_debugLog.Count > DebugLogMax)
+                _debugLog.RemoveRange(0, _debugLog.Count - DebugLogMax);
+            // 최신 메시지로 자동 스크롤
+            _debugScroll.y = float.MaxValue;
+            Repaint();
+        }
+
         void DrawDebugSection()
         {
             foldDebug = EditorGUILayout.Foldout(
-                foldDebug, "Debug", true, EditorStyles.foldoutHeader);
+                foldDebug, $"Debug  ({_debugLog.Count})", true, EditorStyles.foldoutHeader);
             if (!foldDebug) return;
 
             EditorGUI.indentLevel++;
+
+            // ── 로그 뷰어 (고정 높이 스크롤 — 메시지가 쌓여도 창이 안 밀림) ──
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("로그", EditorStyles.miniBoldLabel, GUILayout.Width(40));
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Clear", EditorStyles.miniButton, GUILayout.Width(54)))
+            { _debugLog.Clear(); _debugScroll = Vector2.zero; }
+            EditorGUILayout.EndHorizontal();
+
+            _debugScroll = EditorGUILayout.BeginScrollView(
+                _debugScroll, GUILayout.Height(120));
+            if (_debugLog.Count == 0)
+                EditorGUILayout.LabelField("(로그 없음)", EditorStyles.centeredGreyMiniLabel);
+            else
+                for (int i = 0; i < _debugLog.Count; i++)
+                    EditorGUILayout.LabelField(_debugLog[i], EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.EndScrollView();
+
+            EditorGUILayout.Space(4);
 
             bool newGrid = EditorGUILayout.Toggle("Show Grid", showGrid);
             if (newGrid != showGrid) { showGrid = newGrid; SceneView.RepaintAll(); }
@@ -1561,7 +1610,15 @@ namespace CitySim.MapEditor
                 if (selectedMainKey != int.MinValue)
                 {
                     ClearPreview();
-                    TryPlace(cell.Value);
+                    if (e.shift)
+                    {
+                        // Shift+드래그 연속 배치 시작: 시작 셀을 원점 격자 기준으로 삼음
+                        _dragPlacing = true;
+                        _dragOrigin = cell.Value;
+                        TryPlace(cell.Value);
+                    }
+                    else
+                        TryPlace(cell.Value);
                 }
                 else
                     _selectedCell = (_occupancy.ContainsKey(cell.Value) || _otherCells.Contains(cell.Value))
@@ -1571,6 +1628,41 @@ namespace CitySim.MapEditor
                 sceneView.Repaint();
                 Repaint();
             }
+
+            // ── Shift+드래그: 오브젝트 크기 격자에 스냅해 연속 배치 ──
+            if (e.type == EventType.MouseDrag && e.button == 0 &&
+                _dragPlacing && selectedMainKey != int.MinValue)
+            {
+                PlaceSnappedDuringDrag(cell.Value);
+                e.Use();
+                sceneView.Repaint();
+                Repaint();
+            }
+
+            if (e.type == EventType.MouseUp && e.button == 0 && _dragPlacing)
+            {
+                _dragPlacing = false;
+                e.Use();
+            }
+        }
+
+        // ── 드래그 중 스냅 배치 ──────────────────────────────────
+        //  현재 셀을 드래그 시작 셀(_dragOrigin) 기준 size 칸 격자에
+        //  스냅한 원점에 배치. TryPlace가 점유/경계를 재검증하므로
+        //  겹침 없이 빈 칸에만 채워진다.
+        void PlaceSnappedDuringDrag(Vector2Int cell)
+        {
+            var item = FindItem(selectedMainKey, selectedVariantKey);
+            if (item == null) return;
+            var size = ValidSize(item);
+            int sx = Mathf.Max(1, size.x);
+            int sy = Mathf.Max(1, size.y);
+
+            // 시작 원점 기준 size 간격으로 스냅 (음수 안전한 내림 나눗셈)
+            int snapX = _dragOrigin.x + Mathf.FloorToInt((cell.x - _dragOrigin.x) / (float)sx) * sx;
+            int snapY = _dragOrigin.y + Mathf.FloorToInt((cell.y - _dragOrigin.y) / (float)sy) * sy;
+
+            TryPlace(new Vector2Int(snapX, snapY));
         }
 
         // ── 배치 ────────────────────────────────────────────────

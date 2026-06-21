@@ -40,9 +40,6 @@ Assets/_game/scripts/
 │   ├── MapEditor/               # MapEditorWindow — 지형/자원 레이어 편집
 │   ├── PrefabRegister/          # GamePrefabRegistryEditor, PrefabRegistryWindow
 │   ├── AddressableGroupUtility.cs
-│   ├── LogisticsTestBootstrap.cs
-│   ├── ProductionTestBootstrap.cs
-│   ├── StampTestBootstrap.cs
 │   ├── MapBoundaryGizmo.cs
 │   └── VariantSelectionWindow.cs
 │

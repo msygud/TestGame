@@ -196,7 +196,9 @@ namespace CitySim
 
             foreach (var seg in _segments)
             {
-                if (seg.Count == 0) continue;
+                // 2칸 미만(원클릭·제자리)은 무효 — 축이 없어 방향을 정의할 수 없고,
+                // 인접만으로 연결을 예단하지 않는다는 원칙과 일관. 연결하려면 도로→도로로 드래그.
+                if (seg.Count < 2) continue;
 
                 // 중간에 건물/자원/단차가 하나라도 있으면 이 구간 전체를 건설하지 않음.
                 if (hasLayers &&

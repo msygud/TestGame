@@ -74,9 +74,18 @@ namespace CitySim
             keys.Dispose();
         }
 
-        // TypeId → 결정적 색상 (HSV hue 회전). 종류별로 구분되게.
+        // TypeId → 색상. ResourceCatalog(Resources/ResourceCatalog) 가 있으면
+        // 거기 정의된 색을 쓰고, 없으면 HSV hue 회전 폴백.
         static Color TypeColor(int typeId)
         {
+            var catalog = ResourceCatalog.LoadRuntime();
+            if (catalog != null && catalog.TryGet(typeId, out var e))
+            {
+                var col = e.EditorColor;
+                col.a = 0.9f;
+                return col;
+            }
+
             float hue = (typeId * 0.137f) % 1f;
             if (hue < 0f) hue += 1f;
             var c = Color.HSVToRGB(hue, 0.65f, 0.95f);
