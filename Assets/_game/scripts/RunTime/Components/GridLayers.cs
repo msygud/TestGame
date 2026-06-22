@@ -189,8 +189,15 @@ namespace CitySim
         /// <summary>footprint 한 변 셀 수 (항상 정사각형). 1 = 1×1.</summary>
         public byte Size;
 
-        /// <summary>배치 축 — 평행 도로 간 자동 연결 차단용.</summary>
+        /// <summary>배치 축 — 평행 도로 간 자동 연결 차단용. (레거시 축 모델 전용)</summary>
         public RoadPlacedAxis Axis;
+
+        /// <summary>
+        /// 그린-방향(연속성) 모델로 배치된 셀인가. true면 Directions가 드래그 경로의
+        /// 권위 값(겹침 OR 누적) — 축 재계산(ComputeDirections)과 경계 전파에서 제외해
+        /// 그린 값을 보존한다. false = 레거시 축 모델(AI 링/베이스/맵 도로).
+        /// </summary>
+        public bool Explicit;
     }
 
     // ══════════════════════════════════════════════════════════════

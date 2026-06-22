@@ -128,6 +128,42 @@
   - ✅ **원클릭 도로 = 무효** — `RoadBuildController.Confirm`이 2칸 미만 세그먼트는 발행 생략. 이유: 원클릭은 축(방향)이 없어 세그먼트를 정의 못 하고, "인접만으로 연결 예단 안 함" 원칙과 일관(예외 두면 (0,0) 옆 클릭 같은 모호한 연결 판정 발생). 연결하려면 도로→도로로 드래그(통과). 1칸 틈 메우기·교차도 짧은 겹침 드래그로 표현 가능.
   - ⬜ **교차로 철거 의미는 근사(가)**: 한 셀에 두 축이 겹친 교차로에서 한 세그먼트만 철거해도 셀 통째 제거(남은 축 복구 안 함). 정확한 (나)(축별 카운트로 남은 축 유지)는 추후. AI는 철거 안 써 현재 무영향.
 
+### 도로 연결 모델 = "그린-방향(연속성)"으로 전환 — 유저 드래그 (2026-06-21)
+> **확정 원칙(영구)**: 도로 연결은 **셀이 겹쳐야만** 일어난다. 인접만 한 도로는 영원히 분리
+> → 의도적으로 끊어진 도로를 만들 수 있다. 유저 드래그는 **연속성**이 기본(한 번 꺾는 ㄴ).
+> 기존 도로 위로 겹쳐 지나가면 진입/탈출 방향이 그 셀에 OR로 추가돼 기존 모양이 바뀐다
+> (직선→T/사거리). BFS·물류는 이미 비트 상호일치 모델이라 무수정 호환.
+
+- ✅ **모델**: 각 도로 셀 `Directions` = 드래그 경로가 실제로 이어준 방향 비트.
+  각 셀 = (이전 셀 방향 if 있음) | (다음 셀 방향 if 있음). 시작=다음만, 끝=이전만,
+  중간/코너=둘 다. → **경로 이웃을 향한 비트만 담겨 상호 비트 불변식이 자동 성립**
+  → 경계 전파(`UpdateFootprintBoundaryDirections`)·축 스캔 불필요(그린 셀에 한해).
+- ✅ **레거시 축(Axis) 모델과 무누수 공존 (브리지)** — AI 링/베이스/맵 도로는 아직 축 모델.
+  `RoadCell.Explicit`(신규 bool) = 그린-방향 셀 표식. 축 재계산(`ComputeDirections`)과
+  경계 전파가 Explicit 셀을 **건너뛰어** 그린 권위값을 보존. `ComputeDirections`의 이웃
+  판정을 `NeighborAllows`로 교체: Explicit 이웃은 "그 셀에 반대 비트가 있나"(그린 비트),
+  레거시 이웃은 기존 `AxisAllows`. → 그린 도로 옆에 레거시 도로가 와도 **겹치지 않으면
+  연결 안 됨**(평행 분리 일관). `PlaceRoadCommand.Directions`(신규) 비-None = 명시 모델.
+- ✅ **RoadSystem 배치 분기**: `cmd.Directions != None`이면 새 셀 set / 기존 같은-소유자 셀
+  OR(겹침=교차/T 승격), `Explicit=true`, FlowAxis 갱신, 경계 전파 생략, dirty 발행 후 continue.
+  레거시(Directions=None, AI/베이스/맵)는 기존 축 경로 그대로.
+- ✅ **`RoadBuildController`**: `BuildPath`를 한 번 꺾는 ㄴ(L)로 교체(X 다리→Z 다리, 코너=(ex,start.y)).
+  `EmitDrawnDirections`가 경로 인접에서 셀별 비트 산출(여러 세그먼트 겹치면 OR 누적) →
+  `Confirm`이 셀당 `PlaceRoadCommand{Directions}` 1개 발행. 비주얼은 무수정(Directions→프리팹).
+- ✅ **정책 유지**: 2칸 미만(원클릭) 무효 / **한 셀이라도 무효면 세그먼트 전체 무효**.
+- ✅ **(2026-06-21) AI 블록 링도 그린-방향 전환** — 증상: AI 블록이 **겹친 교차로에서만**
+  연결되고(축 `CombineAxis`), 이음매·T 등 비교차 접점은 축 불일치로 분리됨. 원인: AI 링이
+  레거시 축 모델. 해결: `AiCityGrowthSystem.DevelopBlock`이 Road==1(기본 `DefaultSize`=1)일 때
+  `CollectRingRoadsDrawn`로 **연속 루프 그린-방향** 발행 — 각 링 셀 Directions = 같은 링 4-이웃
+  비트(코너=수직2, 변=직선2). 링 전체(새+공유 셀)를 모두 발행 → RoadSystem이 새 셀 set/기존 OR.
+  `QuadrantOrigin` 정렬로 새 블록의 근접 두 변이 기존 도로와 **셀 공유(겹침)** → OR 병합으로
+  교차로 아닌 곳도 연결. 멀티셀(Road>1)은 명시 분기가 1×1만 다뤄 기존 축 폴백 유지.
+- ⬜ **다음 단계(전체 은퇴)**: 베이스 외곽(`FactionBaseSpawnSystem.EmitPerimeterRoads`)·맵 로드
+  도로를 그린-방향으로 전환(현재는 AI 링이 겹침 OR로 베이스와 연결되므로 동작은 함) →
+  `RoadPlacedAxis`/`AxisAllows`/`CombineAxis`/`ComputeAxisFilteredMacroDirections`·구 `CollectRingRoads`
+  은퇴. 멀티셀(roadSize>1) 그린-방향 처리도 그때(유저 드래그·기본 AI는 1×1이라 현재 무관).
+- ⬜ 프리뷰 색칠은 아직 `SegmentAxis`(축) 기반 — ㄴ 코너 경고색이 약간 부정확(비차단·미관). 추후 정리.
+
 ### 도로 프리뷰 사유 표시 + 단차 처리 (2026-06-18)
 - ✅ **프리뷰 사유별 상태 구분 (`PreviewStatus`)** — 기존 `bool Valid` → 6종 enum으로 교체
   - `Valid`(초록) / `Occupied`(빨강+흰 외곽선, 건설불가) / `OutOfBounds`(어두운 빨강, 불가)
@@ -352,9 +388,17 @@
   - 오목/볼록 모호성: 코너 앵커는 볼록도 두 변에 닿아 오목처럼 보임 → ~30% 볼록 오선택(비의도 랜덤). → `GetMasks`가 **4 대각 코너(diagMask)** 도 봐서 `IsConcave`로 진짜 노치(3변↑/마주보는 변/직각변+대각 점유) vs 외곽 코너 구분.
   - 의도적 랜덤: 오목/볼록 후보를 분리 수집 후 기본 오목 우선, `GrowthConfig.ConvexBias`(기본 0.3) 확률로 볼록 먼저. day+owner 시드 RNG라 결정적·재현 가능·튜닝 가능(0=완전 계획, ↑=불규칙).
 
+- ✅ **(2026-06-22) 확장 편향(expansion bias) 최우선 도입 + 평행 seam 거부 — 오목 끌개 / 단일 방향 쏠림 수정**
+  - 증상(사용자 관찰): ① 오목 우선이 **하드 버킷 우선순위**라 도시 반대편 작은 노치가 평탄 프런티어 전진보다 항상 이김 → 거친 구역이 끌개가 되고(오목→오목 자기강화) "우연히 평평해진 곳"은 영영 밀려 **확장이 한쪽으로 쏠림**. ② 드물게 기존 도로와 공유 없이 한 칸 평행으로 깔리는 블록(seam).
+  - 해결 ①: **확장 편향을 선택 최우선 키로.** 고정 `CityGrid.Anchor` 기준 축별 확장량(`extX/extZ`) 측정 → 덜 자란 축(`lagIsX`)을 최우선으로 키움. `Bal = min(밀린 축 reach, leadExt)`(따라잡으면 cap, 스파이크/오버슈트 방지). `|extX-extZ| ≤ BalanceDeadband`면 균형으로 보고 편향 끄고 품질로 densify(데드밴드로 좌우 thrash 방지). **이동 centroid 아닌 고정 Anchor**라 양의 피드백 회피.
+  - **3버킷(오목/코너볼록/직선T) 하드 우선순위 폐지** → 유효 후보 전부 한 풀(`Cand`)에 모아 단일 비교자 `Better`로 랭크. 오목은 절대 우선이 아니라 **카테고리 2차 키**(오목2>코너볼록1>직선T0)로 강등 → 편향이 요구하면 평탄/볼록 프런티어도 발전(끌개 해소). 우선순위: **편향 → 카테고리 → share → 닿는 변 → 근접**. DevelopBlock 실패 시 차선 후보로 폴백(기존 다중버킷 폴백 의미 보존).
+  - 해결 ②: **`IsParallelSeam`** — 블록 '새' 도로 변 바로 바깥에 같은 팀 도로가 평행하게 붙으면(공유 없이 한 칸 어긋남) 후보 거부. 변이 이미 공유면 '새 변' 아니라 제외(정상 삼거리/사거리 통과), 바깥이 빈 땅인 프런티어 확장도 통과(편향 교정과 양립). 코너 오판 방지로 내부 폭 K만 스캔. `RejectParallelSeam` 노브(기본 on).
+  - `GrowthConfig`: `ConvexBias` 제거(끌개 해소로 불필요) → `BalanceDeadband`(기본 8), `RejectParallelSeam`(기본 true) 추가.
+  - ⬜ **실측 튜닝 필요**: `BalanceDeadband`(반응성↔thrash), seam 거부 과도 시 "성장 자리 없음" 빈도 관찰(건물크기 폴백 + 그날 스킵 안전장치 있음).
+
 ---
 
-### 🟢 현재 확정 동작 (2026-06-20 세이브) — AI 도시 성장 = 모서리 앵커 가변 블록
+### 🟢 현재 확정 동작 (2026-06-22 세이브) — AI 도시 성장 = 확장 편향 우선 + 모서리 앵커 가변 블록
 > 위 긴 트레일은 디버깅 과정. **현재 코드의 동작은 이 블록만 읽으면 됨.** (`AiCityGrowthSystem.cs` 전면이 이 모델)
 
 - **모델**: 매 게임일(`DayChanged`) AI팀마다 블록 1개 성장. 블록 = 건물을 담는 {4,6,8}셀 정사각형 + 도로 링(roadSize). 크기 균일 강제 없음(건물별 가변).
@@ -366,10 +410,11 @@
   - ① **오목 부족**: 직선 도로 중간에 생긴 포켓(notch)은 그 변에 직선 셀뿐이라 예전엔 앵커 0 → 못 메움. 이제 직선 셀도 앵커에 포함하되 **오목(닿는 변 ≥2)이면 발행** → 직선변 노치 채움.
   - ② **긴 직선+최악 지형 교착**: 굴곡 없는 직선은 앵커가 양 끝 2개뿐 → 끝이 막히면 정지. 이제 직선 셀 **T분기(볼록 1변)** 를 `bestSt` 버킷에 모아 **폴백 전용**으로 발행(오목·코너볼록 전부 실패 시만). 평소엔 안 쓰여 빗살 난립 없음 + 한 번 분기하면 새 코너 생겨 자기-제한.
   - ② **건물 크기 폴백**: 그날 뽑은 건물(`PickBuilding`)이 안 들어가면 다른 키(보통 더 작은 K)로 한 번 더 `GrowOneBlock` 시도 → 큰 블록만 막히는 빡빡한 지형 완화.
-  - 세 버킷 분리 수집: `bestCc`(오목, 모서리+직선) / `bestEx`(볼록 코너) / `bestSt`(직선 T분기 폴백). 선택: 오목/코너볼록(ConvexBias) → 직선 T분기 폴백.
+  - (2026-06-22 갱신) 세 버킷 하드 우선순위 폐지 → **단일 풀(`Cand`) + 단일 비교자**. 오목/코너볼록/직선T는 카테고리 키(2/1/0)로만 구분. 선택 최우선은 **확장 편향**(아래).
 - **앵커에서 4사분면 블록**(`QuadrantOrigin`): 근접 링이 모서리 도로와 정확히 일치 → 어긋남 없는 삼거리/사거리. 공유변 길이는 달라도 됨(겹치는 만큼 공유).
 - **오목/볼록 판정**(`SideMassMask`+`IsConcave`): 블록 4변이 도시(팀 도로/건물)에 닿는지 **내부 폭 K만** 스캔(코너 돌출 제외 → 오판 방지). 닿는 변 ≥2 = 오목(노치), ≤1 = 볼록.
-- **선택**: 기본 오목 우선(노치 먼저 메움). 후보 점수(`Better`): ① **링 share**(블록 도로 링이 기존 팀 도로와 겹치는 셀 수 — `RingShareScore`) → ② 닿는 변 多 → ③ 베이스 근접. `GrowthConfig.ConvexBias`(0.3) 확률로 볼록 먼저. `ConvexBias=0`이면 가능한 한 항상 오목.
+- **선택 (2026-06-22, 편향 최우선)**: 단일 비교자 `Better` 우선순위 = ① **확장 편향**(고정 Anchor 기준 덜 자란 축을 키우는가, `Bal=min(reach,leadExt)`, `|extX-extZ|≤BalanceDeadband`면 off) → ② **카테고리**(오목2>코너볼록1>직선T0) → ③ **링 share**(`RingShareScore`, 기존 도로 재사용=정렬) → ④ 닿는 변 多 → ⑤ 베이스 근접. 균형 상태에선 편향 off → 오목/share 우선으로 densify. `ConvexBias` 제거됨(끌개 해소로 불필요).
+  - **평행 seam 거부**(`IsParallelSeam`, `RejectParallelSeam` 기본 on): 공유 없이 한 칸 평행으로 깔리는 블록 후보 차단(정상 공유 삼거리/사거리·빈 땅 프런티어 확장은 통과).
   - ✅ **(2026-06-20) 평행 도로 사거리 떡칠 수정 — AI 링 도로에 축 부여** — seam(블록 격자가 1칸 어긋나 평행 도로가 생기는 것) 자체는 수용. 문제는 AI가 링 도로를 전부 `Axis=Any`로 발행해 평행 도로가 셀마다 자동 연결돼 사거리 폭발. → `CollectRingRoads`가 셀별 축 부여: 위/아래 행=EW, 좌/우 열=NS, 코너=Any. 평행 도로는 축이 안 맞아 시각적으로 연결 안 됨(`ComputeAxisFilteredMacroDirections`가 막음). 실제 공유변은 같은 셀이라 정상 연결. (베이스캠프 외곽 도로 축 부여와 동일 원리.) ※ BFS 보행 연결(`ComputeDirections`)은 축 무관이라 영향 없음 — 시각 문제만 해결.
   - ✅ **(2026-06-20) '한 칸 밀림' 근본 수정 — 앵커를 도로 footprint 원점으로** — `QuadrantOrigin`이 도로 **셀 하나(`kv.Key`)** 기준이라, roadSize≥2일 때 그 셀이 footprint 안에서 밀린 만큼(최대 roadSize-1칸) 어긋났음(roadSize=2 → 한 칸 밀림, 모서리/오목 무관). 이제 `kv.Value.FootprintOrigin` 기준 + footprint당 1회(`seenRoad` dedup) + 매크로 이웃 마스크(`RoadFootprintMask`)·프런티어(`HasEmptyNeighborFootprint`)도 footprint 단위로 판정. 셀 단위 `RoadNeighborMask`/`HasEmptyNeighbor`/`DirOff` 제거.
   - ✅ **(2026-06-20) 오목 확장 '밀림' 수정** — 선택 1순위를 링 share로. 예전엔 `닿는 변+거리`로만 골라 도로 링이 기존 도로 옆에 평행하게 어긋나는 자리가 자주 선택됨(밀림). 이제 기존 도로를 최대한 재사용(공유)하는 자리를 우선 → 삼거리/사거리로 깔끔히 맞물림. 세 버킷(Cc/Ex/St) 공통 적용.
@@ -378,6 +423,81 @@
 - **시스템 순서**: `AiCityGrowth → RoadSystem → BuildingPlacement`(같은 프레임, 도로 먼저 깔린 뒤 건물 입구 검증).
 - ⬜ **다음 단계 후보**: 진단 `Debug.Log` 제거 / `BlockOps.cs` 미사용 정리 / 블록 내부 여백(yard) 활용 / 수요(시민) 연동으로 건물 선택 대체 / 큰 블록 내부 alley 세분화.
 - ⚠ **미사용 정리 대상**: `BlockOps.cs` 전체(grep 0 호출), `GrowthConfig`에 남은 옛 필드 없음 확인.
+
+---
+
+## 특수 목적 도로 연장 (Destination Road) — 재사용 라우터 (2026-06-23)
+> 목적(항구·자원 등) 무관한 **재사용 메커니즘만** 구현. 목적/타겟 선정·물 위 건물은 다음 세션.
+
+- ✅ **`RoadPathRequest`** (단발 이벤트, [RoadComponents.cs](Assets/_game/scripts/RunTime/Components/RoadComponents.cs)): `{Target, OwnerLocalId, FactionId, StopAdjacent}`. 항구/자원 등 목적 로직(미구현) 또는 테스트가 발행.
+- ✅ **`BlockOps.FindRoadPath`** (순수 fact, 다중 소스 BFS): 모든 팀 도로 셀을 시작점으로 **같은 높이·Land(물 제외)·빈땅(환경물 치움)·자원/건물/도로 아님**으로만 4방향 확장 → Target(또는 인접) **셀 최단 경로**. 반환 경로 = `[소스 도로 셀, c1, …, goal]`. 단차/물은 자동 회피(그린 모델 연결성 보존 — 경로가 한 평지에 머묾).
+- ✅ **`RoadPathSystem`** (`[UpdateBefore(RoadSystem)]`, `RequireForUpdate<RoadPathRequest>` → 요청 있을 때만 가동): 경로를 **그린-방향 `PlaceRoadCommand`**로 발행. **소스(기존 도로) 셀에도 그린 비트 발행 → RoadSystem이 OR 병합**(교차/T 승격)으로 기존 네트워크에 연결(상호 비트 성립). 전부 기존 도로면(이미 연결) 발행 생략.
+- ✅ 유저 드래그·AI 링과 **동일 그린-방향 모델** → BFS·물류·비주얼 자동 호환. **현재 1×1 전용**(멀티셀 추후).
+- ⬜ **다음 세션**: 목적 로직(항구=물가 접근지 선정+물 위 건물 / 자원=최근접 미연결 자원), 멀티셀(roadSize>1) 경로, 도메인 모델 1단계.
+- 테스트: `RoadPathRequest` 엔티티 1개 생성으로 확인(디버그 키/스니펫).
+
+---
+
+## 도로/도시 파괴 (Raze & Orphan Prune) — 2026-06-23
+> 적의 공격으로 도로 파괴 가능(AI는 의도적 철거 안 함). **플레이어·적·AI 동일 적용(공평).**
+
+- ✅ **`RemoveRoadCommand.Forced`** — 1이면 소유자 일치 가드 우회(비소유 강제 철거). RoadSystem이 **실제 도로 소유자** 기준으로 footprint/시각/이웃/StampDirty 정리. 평소 철거(Forced=0)는 소유자만.
+- ✅ **`RazeAreaCommand {Min,Max}`** — 영역 광역 파괴(소유 무관=공평). [`RazeSystem`](Assets/_game/scripts/RunTime/Systems/RazeSystem.cs)이 처리:
+  - ① 사각형과 겹친 건물 파괴 — 엔티티 destroy + `OccupancyLayer`/`GridMap` 점유 해제(**땅 재사용 가능**).
+  - ② orphan 도로 수집 → ③ 강제 `RemoveRoadCommand` 발행(RoadSystem이 실행).
+- ✅ **`BlockOps.CollectOrphanRoads`** — **파괴 건물 인접 셀에서 시드 → 파면 leaf-prune**:
+  - 시드: 파괴된 건물(`razedCells`)에 인접한 도로 중 **(다른) 라이브 건물에 안 닿는** 셀 = 그 건물만 쓰던 링. degree 무관 제거(닫힌 링을 끊음). 공유 변(라이브 이웃에 닿음)은 시드 제외 → 유지.
+  - 파면 leaf-prune: 시드 절단면에서 전파, 라이브 미접촉 + 연결 ≤1 말단만. **★ 연결 ≥2(살아있는 통과/교차로) 보존**, 파괴 건물과 무관한 도로는 시드에 안 잡혀 안전.
+  - 전제: AI **블록당 건물 1개** → 건물 죽으면 블록이 빔 → 프런티어 블록 링은 풀리고, 공유/통과 도로는 유지.
+  - ✅ **(2026-06-23) 두 차례 수정**: ① rect 기반 Pass A가 통과 교차로까지 지움(과다 제거) → 폐기. ② 전역 leaf-prune은 링 도시에서 막단이 없어 **아무것도 안 지움** → **파괴 건물 인접 시드 방식**으로 교체(링을 끊어 풀어냄).
+  - ⬜ 블록당 건물 여러 개가 되면 "마지막 건물 죽을 때만 링 해체"는 건물 카운트/블록 추적 필요(현재는 1건물=1블록 전제).
+- ✅ **시스템 순서**: `RazeSystem [UpdateBefore RoadSystem]` — 같은 프레임에 도로 철거 실행.
+- ✅ **(2026-06-23 수정) 철거 시 살아남은 경계 도로 모양 갱신** — 증상: 비워진 블록 경계의 T(3거리)가 가지(branch)를 향한 비트를 그대로 가져 **직선이 안 됨**(비주얼도 안 바뀜). 원인: `UpdateFootprintBoundaryDirections`가 그린(Explicit) 셀을 무조건 스킵(배치용 권위값 보존 규칙). 해결: `removing` 파라미터 추가 — **철거 시** 그린 이웃의 **제거된 footprint 쪽 비트만 제거**(T→직선) + `DirtyRoadTag`로 비주얼 교체. 배치는 기존대로 보존. 레거시 이웃은 `ComputeDirections` 재계산으로 자동.
+- 테스트: [Test.cs](Assets/_game/scripts/Test.cs) — **마우스 좌클릭으로 가리킨 건물 1개 파괴**(클릭 셀 포함 footprint → RazeAreaCommand). 한 구역 건물을 하나씩 부수며 도로가 라이브 건물에 안 닿는 순간 풀려 사라지는지 점진 관찰. (이전 키 R bbox 1/4 raze 폐지.)
+- ⬜ **다음**: 전투(건물 `CombatDeadTag` 사망)에서 **자동** orphan-prune 트리거(현재는 `RazeAreaCommand` 명시 발행). 멀티셀 도로 orphan(현재 cell 단위 판정, size>1은 footprint 통째 제거로 근사). CombatDeathSystem 사망 시 점유 정리(현재 RazeSystem 경로만 정리).
+
+---
+
+## 도메인 통합 모델 (Domain) — 로드맵 (2026-06-23 설계 확정, 구현은 단계별·다른 세션)
+
+> 배치·이동·타겟을 **하나의 `Domain` 비트마스크**로 통일. 모든 관계 = `maskA & maskB != 0`.
+> 이번 세션은 "특수 목적 도로 연장 라우터"까지만. 본 모델 구현은 다른 세션.
+
+### Domain enum (현 `TerrainMask` 확장)
+```csharp
+[Flags] enum Domain : byte {
+    Ground=1<<0, WaterSurface=1<<1, Underwater=1<<2, Mountain=1<<3, Air=1<<4,
+}
+```
+- 기존 `TerrainMask{Land,Water,Any}` 대체. byte(5비트 사용, 3비트 여유).
+
+### 셀: `TerrainCategory`(단일) → `DomainMask`(다중)  ★핵심 마이그레이션
+- 한 셀이 여러 도메인 동시 보유: 물=`WaterSurface|Underwater|Air`, 땅=`Ground|Air`, 산=`Mountain|Air`.
+- `CellTypeDefinition.TerrainCategory` → `DomainMask`. `CellTypeInfo`/`CellTypeLookup`도 마스크로.
+- Air는 거의 모든 셀 → 저장 대신 **계산** 고려(높은 장애물만 차단).
+
+### 한 어휘, 분리된 소비 필드 (규칙 = `mask & mask != 0`)
+| 소비자 | 필드 | 규칙 |
+|---|---|---|
+| 건물 | `BuildableOn` (기존 확장) | footprint 전 셀 `& cell.DomainMask` |
+| 유닛 이동 | `Locomotion`(신규) | `& cell.DomainMask` |
+| 유닛 피탐 | `Presence`(신규) | 표적 시그니처 |
+| 무기 | `CanTarget`(신규) | `& target.Presence` |
+- **Presence ≠ Locomotion**: 부상 잠수함(이동 Underwater / 피탐 WaterSurface), 수륙양용 등 → 필드 분리, enum 공유.
+- 도로 = `Ground` 인프라. 다리 = 물 위에 Ground 부여(미래).
+
+### 직교 축 (도메인에 넣지 말 것)
+- 탐지/은신(잠수함은 탐지 유닛만 타겟), 사거리·시야·명중/회피 = 도메인 밖 별도 축. 도메인은 "어느 레이어를 때릴 수 있나" 게이트만.
+
+### 자원 — 두 채취 모델
+- **덮는(overlay)**: 추출 건물이 자원 셀 위에 앉음 → 현재 `ResourceBlocked` 규칙에 `RequiresResource` 예외 필요. 고갈 시 유휴/철거.
+- **채취소+일꾼(post)**: 채취소 근처 자원을 시민이 경로이동→수집→운반. 기존 시민 직업+물류+stamp/BFS 재사용.
+
+### 구현 단계 (순서)
+1. `Domain` enum + 셀 `DomainMask` + 건물 `BuildableOn` 검증 교체 (기존 동작 보존; 항구/시추선 물 위 배치 가능)
+2. 유닛 `Locomotion` + 도메인 인지 길찾기(`UnitPathfinding.BuildBlockedGrid` 도메인화)
+3. 유닛 `Presence` + 무기 `CanTarget` (타겟 획득 게이트)
+4. 자원 두 채취 모델 + 항구/시추선 건물
 
 ---
 

@@ -187,43 +187,39 @@ namespace CitySim
                 return;
             }
 
-            // 모든 segment의 셀을 합치고 중복 제거.
-            // 모양은 RoadSystem이 알아서 계산하므로 순서는 무관하지만,
-            // 한 셀당 한 번만 명령 발행되도록 집합으로 정리.
-            var placed = new HashSet<int2>(new Int2Comparer());
+            // 셀별 그린 방향 비트를 누적(여러 세그먼트가 한 셀에서 겹치면 OR).
+            // 모양(코너/교차)은 비트가 곧 권위 — RoadSystem이 set/OR로 직접 반영.
+            var drawn  = new Dictionary<int2, RoadDir>(new Int2Comparer());
             var layers = GetLayers(out bool hasLayers);
             byte roadSize = 1;
 
             foreach (var seg in _segments)
             {
-                // 2칸 미만(원클릭·제자리)은 무효 — 축이 없어 방향을 정의할 수 없고,
-                // 인접만으로 연결을 예단하지 않는다는 원칙과 일관. 연결하려면 도로→도로로 드래그.
+                // 2칸 미만(원클릭·제자리)은 무효 — 한 셀은 이전/다음이 없어 방향이 0.
+                // 연결하려면 도로 위로 겹쳐 드래그.
                 if (seg.Count < 2) continue;
 
-                // 중간에 건물/자원/단차가 하나라도 있으면 이 구간 전체를 건설하지 않음.
+                // 한 셀이라도 무효(건물/자원/단차/범위)면 이 구간 전체를 건설하지 않음.
                 if (hasLayers &&
                     PreviewStatusOps.IsBlocking(SegmentBlockStatus(seg, slot, layers)))
                     continue;
 
-                RoadPlacedAxis segAxis = SegmentAxis(seg);
+                EmitDrawnDirections(seg, drawn);
+            }
 
-                foreach (var cell in seg)
+            foreach (var kv in drawn)
+            {
+                var e = _em.CreateEntity();
+                _em.AddComponentData(e, new PlaceRoadCommand
                 {
-                    if (!placed.Add(cell)) continue;
-
-                    RoadPlacedAxis axis = segAxis;
-
-                    var e = _em.CreateEntity();
-                    _em.AddComponentData(e, new PlaceRoadCommand
-                    {
-                        Cell         = cell,
-                        OwnerLocalId = slot,
-                        LaneCount    = LaneCount,
-                        FactionId    = faction,
-                        Size         = roadSize,
-                        Axis         = axis,
-                    });
-                }
+                    Cell         = kv.Key,
+                    OwnerLocalId = slot,
+                    LaneCount    = LaneCount,
+                    FactionId    = faction,
+                    Size         = roadSize,
+                    Axis         = RoadPlacedAxis.Any,   // 명시 모델: 미사용
+                    Directions   = kv.Value,
+                });
             }
 
             // 확정 후 pending 비움. 모드는 유지(계속 더 그릴 수 있게).
@@ -281,40 +277,60 @@ namespace CitySim
         }
 
         // ───────────────────────────────────────────────────────────
-        //  경로 계산 — 단일 축 직선
+        //  경로 계산 — 한 번 꺾는 ㄴ(L) 경로
         //
-        //  드래그 이동량이 큰 축 하나만 사용 (L자 없음).
-        //  동점이면 수평(X) 우선.
-        //  → 코너 셀(Axis=Any) 생성을 원천 차단.
+        //  X 다리 먼저(start→ex) → Z 다리(ex,start.y → ex,ez). 코너 = (ex, start.y).
+        //  한 축만 움직였으면 직선. 코너 셀의 방향(진입+진출 2비트)은 경로 인접에서
+        //  파생되므로(EmitDrawnDirections) 여기선 "어느 칸을 채울지"만 정한다.
+        //  연속 셀(순서 보존, 중복 없음)을 반환.
         // ───────────────────────────────────────────────────────────
         static List<int2> BuildPath(int2 start, int2 end, int step)
         {
             var path = new List<int2>();
 
-            int dx = end.x - start.x;
-            int dz = end.y - start.y;
+            int ex = start.x + ((end.x - start.x) / step) * step;
+            int ez = start.y + ((end.y - start.y) / step) * step;
+            int sx = (int)math.sign(ex - start.x);
+            int sz = (int)math.sign(ez - start.y);
 
-            // 더 많이 움직인 축 하나만 사용
-            if (math.abs(dx) >= math.abs(dz))
-            {
-                // 수평(X) 직선
-                int ex = start.x + (dx / step) * step;
-                int sx = (int)math.sign(ex - start.x);
-                int x  = start.x;
-                path.Add(new int2(x, start.y));
-                while (x != ex) { x += sx; path.Add(new int2(x, start.y)); }
-            }
-            else
-            {
-                // 수직(Z) 직선
-                int ez = start.y + (dz / step) * step;
-                int sz = (int)math.sign(ez - start.y);
-                int z  = start.y;
-                path.Add(new int2(start.x, z));
-                while (z != ez) { z += sz; path.Add(new int2(start.x, z)); }
-            }
+            // X 다리 (코너 포함)
+            int x = start.x;
+            path.Add(new int2(x, start.y));
+            while (x != ex) { x += sx * step; path.Add(new int2(x, start.y)); }
+
+            // Z 다리 (코너 다음부터)
+            int z = start.y;
+            while (z != ez) { z += sz * step; path.Add(new int2(ex, z)); }
 
             return path;
+        }
+
+        // 경로 인접에서 셀별 그린 방향 비트 산출.
+        //   각 셀 = (이전 셀 방향 if 있음) | (다음 셀 방향 if 있음).
+        //   시작=다음만, 끝=이전만, 중간/코너=둘 다. → 상호 비트 불변식 자동 성립.
+        //   같은 셀이 다른 세그먼트에도 나오면 OR 누적(acc).
+        static void EmitDrawnDirections(List<int2> path, Dictionary<int2, RoadDir> acc)
+        {
+            for (int i = 0; i < path.Count; i++)
+            {
+                RoadDir bits = RoadDir.None;
+                if (i > 0)               bits |= BitToward(path[i], path[i - 1]);
+                if (i < path.Count - 1)  bits |= BitToward(path[i], path[i + 1]);
+                if (bits == RoadDir.None) continue;
+                acc.TryGetValue(path[i], out var prev);
+                acc[path[i]] = prev | bits;
+            }
+        }
+
+        // from 셀에서 to 셀(인접)을 향한 단일 방향 비트.
+        static RoadDir BitToward(int2 from, int2 to)
+        {
+            int2 d = to - from;
+            if (d.x > 0) return RoadDir.E;
+            if (d.x < 0) return RoadDir.W;
+            if (d.y > 0) return RoadDir.N;
+            if (d.y < 0) return RoadDir.S;
+            return RoadDir.None;
         }
 
         // 세그먼트(셀 목록)의 배치 축. 단일 축 직선이므로 양 끝으로 판정.

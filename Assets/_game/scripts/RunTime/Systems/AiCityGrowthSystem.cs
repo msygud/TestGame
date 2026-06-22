@@ -13,7 +13,7 @@ namespace CitySim
     //    · 시작 모서리에 닿는 링이 기존 도로와 정확히 일치 → 어긋남 없는 삼거리/사거리.
     //    · 블록 크기는 건물에서 {4,6,8} 자동. 이웃과 크기/변 길이 달라도 됨
     //      (공유변은 겹치는 만큼만 공유, 나머지는 새 도로).
-    //    · 점유에 닿는 변이 많은 자리(오목/노치) 우선 → 빈틈부터 메워 자연스럽게.
+    //    · 확장 편향(덜 자란 축) 최우선 → 한쪽 쏠림 방지. 동률 시 오목/노치 우선(빈틈 메움).
     //    · footprint(내부 K + 도로 링) 전체를 평탄·Land·맵안 검증 → 해변/단차엔 안 깖.
     //
     //  배치 후보: 각 팀 도로 셀 R의 4개 사분면(NE/NW/SE/SW)에 블록을 앵커.
@@ -101,18 +101,22 @@ namespace CitySim
             { Debug.LogWarning($"[AiCityGrowth] team{owner}: 팀 도로 없음"); return false; }
             float2 baseC = new float2((rmin.x + rmax.x) * 0.5f, (rmin.y + rmax.y) * 0.5f);
 
-            // 각 팀 도로 셀의 4사분면에 블록 앵커. 세 버킷으로 분리 수집:
-            //   · 오목(Cc): 닿는 변 ≥2 노치 — 모서리/직선 앵커 모두 허용(빈틈부터 메움).
-            //   · 볼록 코너(Ex): 모서리(끝/L자) 앵커의 외곽 확장.
-            //   · 직선 T분기(St): 직선 통과 셀에서 옆으로 뻗는 분기 — '폴백 전용'.
-            //     (긴 직선 도로가 양 끝 막혔을 때 옆으로 자랄 유일한 길. 평소엔 코너
-            //      후보가 있어 안 쓰이고, 한 번 분기하면 새 코너가 생겨 자기-제한됨.)
-            //   선택 기준(공통, 우선순위): ① 링 share(기존 도로 재사용=정렬) 多
-            //   ② 닿는 변 多(조밀) ③ 베이스 근접. ①이 밀림(평행 오프셋 도로)을 막는 핵심.
-            var seen = new NativeHashSet<int2>(256, Allocator.Temp);
-            int2 bestCc = default; int bestCcShare = -1; int bestCcScore = -1; float bestCcDist = 0f; bool foundCc = false;  // 오목
-            int2 bestEx = default; int bestExShare = -1; int bestExScore = -1; float bestExDist = 0f; bool foundEx = false;  // 볼록 코너
-            int2 bestSt = default; int bestStShare = -1; int bestStScore = -1; float bestStDist = 0f; bool foundSt = false;  // 직선 T분기(폴백)
+            // 확장 편향(expansion bias) — 고정 Anchor 기준 축별 확장량. 덜 자란 축을 최우선으로
+            //   키워 한쪽 쏠림을 능동 교정한다(오목→오목 끌개 문제도 같이 해소). 이동 centroid가
+            //   아니라 고정 Anchor라 양의 피드백에 안 휘말림. |extX-extZ|가 데드밴드 이하이면
+            //   균형으로 보고 편향 교정을 끄고 품질(오목/공유)로 채운다.
+            int extX = rmax.x - grid.Anchor.x;
+            int extZ = rmax.y - grid.Anchor.y;
+            int diff = extX - extZ;
+            bool balanceActive = math.abs(diff) > cfg.BalanceDeadband;
+            bool lagIsX  = diff < 0;              // extX < extZ → X가 덜 자람(키워야 함)
+            int  leadExt = lagIsX ? extZ : extX;  // 앞선 축 확장량(여기까지 따라잡으면 균형)
+
+            // 모든 유효 후보를 한 풀에 모아 단일 비교자(Better)로 랭크.
+            //   우선순위: ① 편향(밀린 축) ② 카테고리(오목>코너볼록>직선T) ③ 링 share ④ 닿는 변 ⑤ 근접.
+            //   오목을 '버킷 하드 우선'에서 카테고리 2차 키로 강등 → 평탄 프런티어도 편향이 요구하면 발전.
+            var seen  = new NativeHashSet<int2>(256, Allocator.Temp);
+            var cands = new NativeList<Cand>(256, Allocator.Temp);
             int nValid = 0;
 
             // 앵커는 도로 footprint(roadSize×roadSize) '원점' 기준 — 셀 하나로 잡으면
@@ -134,66 +138,71 @@ namespace CitySim
                     int2 O = QuadrantOrigin(fo, q, K, Road);
                     if (!seen.Add(O)) continue;
                     if (!BlockValid(in layers, in cellTypeLookup, O, K, Road, owner)) continue;
+                    if (cfg.RejectParallelSeam && IsParallelSeam(O, K, Road, owner, in layers)) continue;
 
                     // 연결성은 앵커 도로 footprint(fo)가 링에 포함되어 보장됨 → 별도 게이트 불필요.
                     int massMask = SideMassMask(O, K, Road, owner, in layers);
+
+                    // 카테고리: 오목(2) > 코너볼록(1) > 직선 T분기(0). 삼거리/사거리는 볼록 불가 → 오목만.
+                    int category;
+                    if (IsConcave(massMask)) category = 2;
+                    else if (junction)       continue;
+                    else if (straight)       category = 0;
+                    else                     category = 1;
+
                     nValid++;
-
-                    int sides = math.countbits(massMask);
-                    int share = RingShareScore(O, K, Road, owner, in layers);
-                    float dist = math.abs(O.x + K * 0.5f - baseC.x) + math.abs(O.y + K * 0.5f - baseC.y);
-
-                    if (IsConcave(massMask))                            // 닿는 변 ≥2 = 오목(노치): 모든 앵커 OK
+                    int reach = lagIsX ? (O.x + K - grid.Anchor.x) : (O.y + K - grid.Anchor.y);
+                    cands.Add(new Cand
                     {
-                        if (!foundCc || Better(share, sides, dist, bestCcShare, bestCcScore, bestCcDist))
-                        { foundCc = true; bestCc = O; bestCcShare = share; bestCcScore = sides; bestCcDist = dist; }
-                    }
-                    else if (junction) continue;                        // 삼거리/사거리는 볼록 될 수 없음
-                    else if (straight)                                  // 직선에서 외곽 1변만 닿음 = T분기 후보(폴백)
-                    {
-                        if (!foundSt || Better(share, sides, dist, bestStShare, bestStScore, bestStDist))
-                        { foundSt = true; bestSt = O; bestStShare = share; bestStScore = sides; bestStDist = dist; }
-                    }
-                    else                                                // 모서리 볼록 외곽 확장
-                    {
-                        if (!foundEx || Better(share, sides, dist, bestExShare, bestExScore, bestExDist))
-                        { foundEx = true; bestEx = O; bestExShare = share; bestExScore = sides; bestExDist = dist; }
-                    }
+                        O     = O,
+                        Bal   = balanceActive ? math.min(reach, leadExt) : 0,
+                        Cat   = category,
+                        Share = RingShareScore(O, K, Road, owner, in layers),
+                        Sides = math.countbits(massMask),
+                        Dist  = math.abs(O.x + K * 0.5f - baseC.x) + math.abs(O.y + K * 0.5f - baseC.y),
+                    });
                 }
             }
             seen.Dispose();
             seenRoad.Dispose();
 
-            // 기본은 오목 우선. ConvexBias 확률로 의도적으로 볼록 먼저(자연스러운 불규칙).
-            bool convexFirst = rng.NextFloat() < cfg.ConvexBias;
-            if (!convexFirst)
+            // 랭크 순으로 시도 — DevelopBlock(건물 입구-도로 정렬 등)이 실패하면 차선 후보로 폴백.
+            bool grew = false;
+            while (cands.Length > 0)
             {
-                if (foundCc && DevelopBlock(in layers, in grid, bestCc, K, Road, owner, chosenKey,
-                        sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup, ref ecb)) return true;
-                if (foundEx && DevelopBlock(in layers, in grid, bestEx, K, Road, owner, chosenKey,
-                        sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup, ref ecb)) return true;
+                int bi = 0;
+                for (int i = 1; i < cands.Length; i++)
+                    if (Better(cands[i], cands[bi])) bi = i;
+                int2 pick = cands[bi].O;
+                cands.RemoveAtSwapBack(bi);
+                if (DevelopBlock(in layers, in grid, pick, K, Road, owner, chosenKey,
+                        sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup, ref ecb))
+                { grew = true; break; }
             }
-            else
-            {
-                if (foundEx && DevelopBlock(in layers, in grid, bestEx, K, Road, owner, chosenKey,
-                        sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup, ref ecb)) return true;
-                if (foundCc && DevelopBlock(in layers, in grid, bestCc, K, Road, owner, chosenKey,
-                        sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup, ref ecb)) return true;
-            }
-
-            // 폴백: 직선 T분기 — 오목·코너볼록이 전부 실패(긴 직선/최악 지형 교착)일 때만.
-            if (foundSt && DevelopBlock(in layers, in grid, bestSt, K, Road, owner, chosenKey,
-                    sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup, ref ecb)) return true;
+            cands.Dispose();
+            if (grew) return true;
 
             Debug.Log($"[AiCityGrowth] team{owner} day{day}: 성장 자리 없음 K={K} (유효후보={nValid})");
             return false;
         }
 
-        // 후보 비교: share(링 정렬) → sides(조밀) → dist(베이스 근접). 앞이 클수록/가까울수록 우수.
-        static bool Better(int share, int sides, float dist, int bShare, int bSides, float bDist)
-            => share != bShare ? share > bShare
-             : sides != bSides ? sides > bSides
-             : dist < bDist;
+        // 후보 — 한 풀에서 단일 비교자로 랭크.
+        struct Cand
+        {
+            public int2  O;
+            public int   Bal, Cat, Share, Sides;
+            public float Dist;
+        }
+
+        // 후보 비교(우선순위): ① 편향(밀린 축 확장) ② 카테고리(오목>코너볼록>직선T)
+        //   ③ 링 share(기존 도로 재사용=정렬) ④ 닿는 변(조밀) ⑤ 베이스 근접.
+        //   앞 항목이 클수록(거리는 작을수록) 우수.
+        static bool Better(in Cand a, in Cand b)
+            => a.Bal   != b.Bal   ? a.Bal   > b.Bal
+             : a.Cat   != b.Cat   ? a.Cat   > b.Cat
+             : a.Share != b.Share ? a.Share > b.Share
+             : a.Sides != b.Sides ? a.Sides > b.Sides
+             : a.Dist  < b.Dist;
 
         static int BlockSizeFor(int maxDim) => maxDim <= 4 ? 4 : maxDim <= 6 ? 6 : maxDim <= 8 ? 8 : 0;
 
@@ -252,10 +261,20 @@ namespace CitySim
             int2 sz, bool hasEnt, in EntranceInfo ent, TerrainMask buildableOn,
             in CellTypeLookup cellTypeLookup, ref EntityCommandBuffer ecb)
         {
+            // Road==1(기본 DefaultSize)은 그린-방향(연속 루프) 발행 → 겹치는 모든
+            //   셀이 OR 병합돼 교차로가 아닌 이음매도 연결(유저 드래그와 같은 모델).
+            //   Road>1(멀티셀)은 명시 분기가 1×1만 다루므로 기존 축 모델로 폴백.
+            bool useDrawn = Road == 1;
+
             var roadOrigins = new NativeList<int2>(64, Allocator.Temp);
-            var roadAxis    = new NativeList<RoadPlacedAxis>(64, Allocator.Temp);
+            var roadDirs    = new NativeList<RoadDir>(64, Allocator.Temp);          // 그린 모델
+            var roadAxis    = new NativeList<RoadPlacedAxis>(64, Allocator.Temp);   // 축 폴백
             var plannedRoad = new NativeHashSet<int2>(128, Allocator.Temp);
-            CollectRingRoads(in layers, O, K, Road, ref roadOrigins, ref roadAxis, ref plannedRoad);
+
+            if (useDrawn)
+                CollectRingRoadsDrawn(O, K, ref roadOrigins, ref roadDirs, ref plannedRoad);
+            else
+                CollectRingRoads(in layers, O, K, Road, ref roadOrigins, ref roadAxis, ref plannedRoad);
 
             bool placed = TryPlaceBuildingInSpan(in layers, in cellTypeLookup, O, K,
                 sz, hasEnt, in ent, buildableOn, in plannedRoad, out int2 bOrigin, out float bRot);
@@ -268,7 +287,9 @@ namespace CitySim
                     ecb.AddComponent(e, new PlaceRoadCommand
                     {
                         Cell = roadOrigins[i], OwnerLocalId = owner, LaneCount = 2,
-                        FactionId = grid.FactionId, Size = (byte)Road, Axis = roadAxis[i],
+                        FactionId = grid.FactionId, Size = (byte)Road,
+                        Axis       = useDrawn ? RoadPlacedAxis.Any : roadAxis[i],
+                        Directions = useDrawn ? roadDirs[i] : RoadDir.None,
                     });
                 }
                 var be = ecb.CreateEntity();
@@ -279,8 +300,45 @@ namespace CitySim
                 });
             }
 
-            roadOrigins.Dispose(); roadAxis.Dispose(); plannedRoad.Dispose();
+            roadOrigins.Dispose(); roadDirs.Dispose(); roadAxis.Dispose(); plannedRoad.Dispose();
             return placed;
+        }
+
+        // 블록 도로 링을 '그린-방향 연속 루프'로 수집 (Road==1 전용).
+        //   각 링 셀의 Directions = 같은 링의 4-이웃을 향한 비트(코너=수직 2비트, 변=직선 2비트).
+        //   링 전체(새 셀 + 기존 공유 셀)를 모두 발행 → RoadSystem이 새 셀 set / 기존 OR.
+        //     · 모든 링 셀이 루프 이웃을 향한 비트를 가져 상호 비트 불변식 성립(완전 연결 루프).
+        //     · 기존 팀 도로(이웃 블록·베이스)와 겹치는 셀은 OR 병합 → 교차로 아닌 곳도 연결.
+        static void CollectRingRoadsDrawn(
+            int2 O, int K,
+            ref NativeList<int2> outOrigins, ref NativeList<RoadDir> outDirs,
+            ref NativeHashSet<int2> outCells)
+        {
+            int xa = O.x - 1, xb = O.x + K, za = O.y - 1, zb = O.y + K;
+
+            var ring = new NativeHashSet<int2>(128, Allocator.Temp);
+            for (int z = za; z <= zb; z++)
+            for (int x = xa; x <= xb; x++)
+            {
+                bool onCol = x == xa || x == xb;
+                bool onRow = z == za || z == zb;
+                if (!onCol && !onRow) continue;   // 내부(건물 영역) 스킵
+                var c = new int2(x, z);
+                ring.Add(c);
+                outCells.Add(c);
+            }
+
+            foreach (var c in ring)
+            {
+                RoadDir bits = RoadDir.None;
+                if (ring.Contains(c + new int2(0,  1))) bits |= RoadDir.N;
+                if (ring.Contains(c + new int2(1,  0))) bits |= RoadDir.E;
+                if (ring.Contains(c + new int2(0, -1))) bits |= RoadDir.S;
+                if (ring.Contains(c + new int2(-1, 0))) bits |= RoadDir.W;
+                outOrigins.Add(c);
+                outDirs.Add(bits);
+            }
+            ring.Dispose();
         }
 
         // 블록 도로 링 수집 + 셀별 배치 축 결정.
@@ -416,6 +474,30 @@ namespace CitySim
             return share;
         }
 
+        // 평행 seam: 블록의 '새' 도로 변 바로 바깥에 같은 팀 도로가 평행하게 붙어 있으면 true
+        //   (= 공유 없이 한 칸 어긋나 나란히 깔리는 도로). → 그런 후보를 거부.
+        //   변이 이미 기존 도로(공유)면 '새 변'이 아니므로 제외 → 정상 삼거리/사거리는 통과.
+        //   바깥이 빈 땅인 프런티어 확장도 통과(편향 교정과 양립). 코너 오판 방지로 내부 폭 K만 스캔.
+        static bool IsParallelSeam(int2 O, int K, int Road, int owner, in GridLayers layers)
+        {
+            for (int i = 0; i < K; i++)
+            {
+                // S: 새 도로 최외곽 행 z=O.y-Road, 그 바로 바깥 z=O.y-Road-1
+                if (IsTeamRoad(new int2(O.x + i, O.y - Road - 1), in layers, owner)
+                    && !IsTeamRoad(new int2(O.x + i, O.y - Road), in layers, owner)) return true;
+                // N
+                if (IsTeamRoad(new int2(O.x + i, O.y + K + Road), in layers, owner)
+                    && !IsTeamRoad(new int2(O.x + i, O.y + K + Road - 1), in layers, owner)) return true;
+                // W
+                if (IsTeamRoad(new int2(O.x - Road - 1, O.y + i), in layers, owner)
+                    && !IsTeamRoad(new int2(O.x - Road, O.y + i), in layers, owner)) return true;
+                // E
+                if (IsTeamRoad(new int2(O.x + K + Road, O.y + i), in layers, owner)
+                    && !IsTeamRoad(new int2(O.x + K + Road - 1, O.y + i), in layers, owner)) return true;
+            }
+            return false;
+        }
+
         static bool LineMass(int2 start, int2 step, int count, int owner, in GridLayers layers)
         {
             for (int i = 0; i < count; i++)
@@ -499,15 +581,19 @@ namespace CitySim
         public int BuildingKeyA;
         public int BuildingKeyB;
 
-        // 의도적 랜덤: 이 확률로 오목(노치)이 가능해도 일부러 볼록 확장 선택.
-        //   0 = 항상 노치 우선(완전 계획도시). 0.3 = 30% 볼록(자연스러운 불규칙).
-        public float ConvexBias;
+        // 확장 편향 데드밴드(셀): Anchor 기준 |extX-extZ|가 이 값 이하이면 균형으로 보고
+        //   편향 교정을 끄고 품질(오목/공유)로 채운다. 블록 한 변(~4-8)보다 커야 좌우 떨림 방지.
+        public int BalanceDeadband;
+
+        // 평행 seam 거부: 기존 도로와 공유 없이 한 칸 평행으로 깔리는 블록을 차단.
+        public bool RejectParallelSeam;
 
         public static GrowthConfig Default => new GrowthConfig
         {
-            BuildingKeyA = 1004,
-            BuildingKeyB = 1005,
-            ConvexBias   = 0f,
+            BuildingKeyA       = 1004,
+            BuildingKeyB       = 1005,
+            BalanceDeadband    = 8,
+            RejectParallelSeam = true,
         };
     }
 }

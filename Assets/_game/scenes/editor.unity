@@ -1701,7 +1701,7 @@ MonoBehaviour:
   OwnedDlcIdsForDev: 
   StartMapId: 
   DevMapJson: 
-  DevMapJsonPath: Assets/_game/data/json/maps/NewMap.json
+  DevMapJsonPath: Assets/_game/data/json/maps/256x256Map.json
   ExternalMapLoadControl: 0
 --- !u!4 &1206696573
 Transform:
@@ -2713,6 +2713,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1701608966}
   - component: {fileID: 1701608968}
+  - component: {fileID: 1701608969}
   m_Layer: 0
   m_Name: test
   m_TagString: Untagged
@@ -2762,6 +2763,18 @@ MonoBehaviour:
   _allMapClear: 0
   _dlcBootstrap: {fileID: 1206696572}
   _mapId: hh
+--- !u!114 &1701608969
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1701608964}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1a5415c6536d154449d191160dafd801, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Test
 --- !u!1 &1734226377
 GameObject:
   m_ObjectHideFlags: 0
