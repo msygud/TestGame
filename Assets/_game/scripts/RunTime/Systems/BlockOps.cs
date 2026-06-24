@@ -520,85 +520,86 @@ namespace CitySim
         }
 
         // ──────────────────────────────────────────────────────────────
-        //  9. orphan 도로 수집 — "파괴된 건물만 쓰던 도로"를 끊고 풀어낸다.
+        //  9. 재연결 경로 — "베이스 컴포넌트에서 단절된 도로 섬까지 다리 놓기"
         //
-        //  AI는 블록당 건물 1개 → 건물이 죽으면 그 블록은 빈 것. 그 블록 링을 정리하되,
-        //  살아있는 연결은 끊지 않는다.
-        //    · 시드: 파괴된 건물(razedCells)에 인접한 도로 중 (다른) 라이브 건물에 **안 닿는** 셀
-        //      = 그 건물만 쓰던 링. degree 무관 제거(닫힌 링을 끊기 위함). 공유 변(라이브 이웃에
-        //      닿음)은 시드에서 제외 → 유지.
-        //    · 파면 leaf-prune: 시드 절단면에서 전파, 라이브 미접촉 + 연결 ≤1 말단만 반복 제거.
-        //      ★ 연결 ≥2(살아있는 통과/교차로)는 보존, 파괴 건물과 무관한 도로는 시드에 안 잡혀 안전.
-        //  반환: 제거할 도로 셀들(RoadSystem이 강제 RemoveRoadCommand로 footprint/시각/이웃 정리).
+        //  구역 해체(ReleaseZone)로 중간 도로가 제거되면, 그 너머 살아있는 구역이
+        //  베이스에서 단절된 '섬'이 될 수 있다(물류·시민 BFS 사망). 사람은 손으로
+        //  다시 잇지만 AI는 자동화해야 공평 → NetworkRepairSystem이 이 함수를 쓴다.
+        //
+        //  다중 소스 BFS: baseSet(베이스에 연결된 팀 도로)를 시작점으로, 도로 깔 수 있는
+        //  빈 셀로만 4방향 확장 → islandSet(단절된 섬 도로)에 인접한 빈 셀에서 멈춘다.
+        //  반환 경로 = [baseSet 도로, …빈 셀…, 섬 인접 빈 셀, 섬 도로]. 양 끝(기존 도로)을
+        //    포함시켜 발행하면 그린-방향 OR 병합으로 베이스·섬 양쪽에 교차/이음매로 붙는다
+        //    (상호 비트 성립 → 물류·비주얼 자동 호환). 같은 높이 평지에만 머문다(단차/물 회피).
         // ──────────────────────────────────────────────────────────────
-        public static void CollectOrphanRoads(
-            in NativeHashMap<int2, RoadCell> roadLayer,
-            in NativeHashMap<int2, int>      liveBuildingOwner,
-            in NativeList<int2>              razedCells,
-            ref NativeList<int2>             outRemoveCells)
+        public static bool FindReconnectPath(
+            in NativeHashMap<int2, RoadCell>      roadLayer,
+            in NativeHashMap<int2, OccupancyCell> occupancyLayer,
+            in NativeHashMap<int2, TerrainCell>   terrainLayer,
+            in NativeHashMap<int2, ResourceCell>  resourceLayer,
+            in CellTypeLookup                     cellTypeLookup,
+            in NativeHashSet<int2>                baseSet,
+            in NativeHashSet<int2>                islandSet,
+            int maxExplore,
+            ref NativeList<int2> outPath)
         {
-            var toRemove = new NativeHashSet<int2>(256, Allocator.Temp);
+            outPath.Clear();
+            if (baseSet.IsEmpty || islandSet.IsEmpty) return false;
+
+            var cameFrom = new NativeHashMap<int2, int2>(256, Allocator.Temp);
             var frontier = new NativeList<int2>(256, Allocator.Temp);
 
-            // 시드 — 파괴 건물 인접 도로 중 라이브 미접촉(그 건물만 쓰던 링). 닫힌 링을 끊는다.
-            for (int i = 0; i < razedCells.Length; i++)
-            for (int d = 0; d < 4; d++)
-            {
-                int2 nb = razedCells[i] + RoadDirOps.Offsets[d];
-                if (toRemove.Contains(nb)) continue;
-                if (!roadLayer.TryGetValue(nb, out var road)) continue;
-                if (AdjacentToLive(nb, road.OwnerLocalId, in liveBuildingOwner)) continue;
-                toRemove.Add(nb);
-                EnqueueRoadNeighbors(nb, road.OwnerLocalId, in roadLayer, in toRemove, ref frontier);
-            }
+            foreach (var c in baseSet) { cameFrom[c] = c; frontier.Add(c); }   // 소스 = 베이스 도로
 
-            // 파면 leaf-prune — 시드 절단면에서 전파(라이브 미접촉 + 연결 ≤1만). 연결 ≥2 보존.
-            int head = 0;
-            while (head < frontier.Length)
+            bool found = false; int2 goalEmpty = default, islandCell = default;
+            int head = 0, explored = 0;
+            while (head < frontier.Length && explored < maxExplore)
             {
-                int2 c = frontier[head++];
-                if (toRemove.Contains(c)) continue;
-                if (!roadLayer.TryGetValue(c, out var rc)) continue;
-                int owner = rc.OwnerLocalId;
-                if (AdjacentToLive(c, owner, in liveBuildingOwner)) continue;
+                int2 cur = frontier[head++]; explored++;
 
-                int deg = 0;
+                // 목표 — '빈 셀'(도로 아님)이 섬 도로에 4-인접하면 그 자리에서 다리 완성.
+                //   소스(베이스 도로)는 roadLayer에 있어 스킵 → 섬은 항상 빈 셀 너머에 있다.
+                if (!roadLayer.ContainsKey(cur))
+                {
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int2 nb = cur + RoadDirOps.Offsets[d];
+                        if (islandSet.Contains(nb)) { found = true; goalEmpty = cur; islandCell = nb; break; }
+                    }
+                    if (found) break;
+                }
+
+                byte curH = CellHeight(cur, terrainLayer);
                 for (int d = 0; d < 4; d++)
                 {
-                    int2 nb = c + RoadDirOps.Offsets[d];
-                    if (roadLayer.TryGetValue(nb, out var nrc) && nrc.OwnerLocalId == owner
-                        && !toRemove.Contains(nb)) deg++;
-                }
-                if (deg <= 1)
-                {
-                    toRemove.Add(c);
-                    EnqueueRoadNeighbors(c, owner, in roadLayer, in toRemove, ref frontier);
+                    int2 nb = cur + RoadDirOps.Offsets[d];
+                    if (cameFrom.ContainsKey(nb)) continue;
+                    if (!RoadStepFree(nb, curH, occupancyLayer, terrainLayer, resourceLayer,
+                            roadLayer, in cellTypeLookup)) continue;
+                    cameFrom[nb] = cur;
+                    frontier.Add(nb);
                 }
             }
 
-            foreach (var c in toRemove) outRemoveCells.Add(c);
-            toRemove.Dispose();
-            frontier.Dispose();
-        }
-
-        static void EnqueueRoadNeighbors(
-            int2 c, int owner, in NativeHashMap<int2, RoadCell> roadLayer,
-            in NativeHashSet<int2> toRemove, ref NativeList<int2> frontier)
-        {
-            for (int d = 0; d < 4; d++)
+            if (found)
             {
-                int2 nb = c + RoadDirOps.Offsets[d];
-                if (roadLayer.TryGetValue(nb, out var rc) && rc.OwnerLocalId == owner
-                    && !toRemove.Contains(nb)) frontier.Add(nb);
+                var rev = new NativeList<int2>(64, Allocator.Temp);
+                int2 c = goalEmpty;
+                while (true)
+                {
+                    rev.Add(c);
+                    int2 p = cameFrom[c];
+                    if (p.Equals(c)) break;             // 소스 도달
+                    c = p;
+                }
+                for (int i = rev.Length - 1; i >= 0; i--) outPath.Add(rev[i]);  // base→goalEmpty
+                outPath.Add(islandCell);                                        // 섬에 OR 병합
+                rev.Dispose();
             }
-        }
 
-        static bool AdjacentToLive(int2 c, int owner, in NativeHashMap<int2, int> liveBuildingOwner)
-        {
-            for (int d = 0; d < 4; d++)
-                if (liveBuildingOwner.TryGetValue(c + RoadDirOps.Offsets[d], out int o) && o == owner)
-                    return true;
-            return false;
+            cameFrom.Dispose();
+            frontier.Dispose();
+            return found;
         }
     }
 }

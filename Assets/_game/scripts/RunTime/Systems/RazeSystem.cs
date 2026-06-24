@@ -6,14 +6,18 @@ using UnityEngine;
 namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════════════════
-    //  RazeSystem — 광역 파괴 (건물 + orphan 도로 정리)
+    //  RazeSystem — 광역 파괴 (건물 + 구역 도로 정리)
     //
     //  RazeAreaCommand([Min,Max])를 받아:
     //    ① 사각형과 겹치는 건물을 파괴 — 엔티티 destroy + OccupancyLayer/GridMap 점유 해제
     //       (살아있는 땅이 재사용 가능해짐).
-    //    ② 살아있는(파괴 안 된) 같은-소유자 건물에 더는 닿지 않는 도로를 orphan으로 수집
-    //       (BlockOps.CollectOrphanRoads — 파괴 건물 인접 시드 + 파면 leaf-prune).
-    //    ③ orphan 도로를 강제 RemoveRoadCommand로 발행 → RoadSystem이 footprint/시각/이웃 정리.
+    //    ② 파괴 건물을 그 건물이 속한 '구역'(AI 블록)에 귀속(BuildingCount −1, ZoneOps).
+    //       구역이 비면(건물 0) 그 구역의 도로 링 refcount를 감소 → 공유 안 되는(0이 된)
+    //       셀만 강제 RemoveRoadCommand로 제거. 공유 변·통과 도로는 refcount≥1로 보존.
+    //    ③ 도로가 제거된 팀에 NetworkRepairRequest 발행 → NetworkRepairSystem이 단절 섬 재연결.
+    //
+    //  degree가 아니라 '구역 소유/공유'로 판단 → 격자·링 도시에서도 빈 블록 링이 정확히 풀린다.
+    //  플레이어 도로는 구역 미등록(수동 관리) → 정리·재연결 안 함. AI/베이스만 자동.
     //
     //  소유 무관(공평) — 플레이어·적·AI 누구의 도시든 영역 안이면 동일하게 파괴된다.
     //  시스템 순서: RoadSystem 전(같은 프레임에 도로 철거가 실행되도록).
@@ -33,6 +37,8 @@ namespace CitySim
             var layers      = SystemAPI.GetSingleton<GridLayers>();
             bool hasGridMap = SystemAPI.HasSingleton<GridMap>();
             var gridMap     = hasGridMap ? SystemAPI.GetSingleton<GridMap>() : default;
+            bool hasZones   = SystemAPI.HasSingleton<CityZones>();
+            var zones       = hasZones ? SystemAPI.GetSingleton<CityZones>() : default;
 
             var ecb   = new EntityCommandBuffer(Allocator.Temp);
             var rects = new NativeList<int4>(8, Allocator.Temp);
@@ -46,42 +52,40 @@ namespace CitySim
                 ecb.DestroyEntity(e);
             }
 
-            // 2) 건물 분류 — 사각형과 겹치면 파괴(점유 해제+entity destroy), 아니면 라이브로 등록.
-            var liveOwner  = new NativeHashMap<int2, int>(256, Allocator.Temp);
-            var razedCells = new NativeList<int2>(64, Allocator.Temp);   // 파괴 건물 footprint 셀(orphan 시드)
+            // 2) 건물 파괴 + 구역 귀속 — 사각형과 겹친 건물만 destroy(점유 해제) 후 구역에 사망 보고.
+            var deadZones    = new NativeList<int2>(16, Allocator.Temp);   // 비워진 구역 원점
+            var repairOwners = new NativeHashSet<int>(8, Allocator.Temp);  // 재연결 검증 대상 팀
             int razedBuildings = 0;
             foreach (var (bfRO, e) in SystemAPI.Query<RefRO<BuildingFootprint>>().WithEntityAccess())
             {
                 var  bf  = bfRO.ValueRO;
                 int2 eff = EntranceOps.RotateSize(bf.Size, bf.RotSteps);   // 회전 적용 실 footprint
+                if (!FootprintIntersectsAny(bf.Origin, eff, in rects)) continue;
 
-                if (FootprintIntersectsAny(bf.Origin, eff, in rects))
+                for (int dx = 0; dx < eff.x; dx++)
+                for (int dz = 0; dz < eff.y; dz++)
                 {
-                    for (int dx = 0; dx < eff.x; dx++)
-                    for (int dz = 0; dz < eff.y; dz++)
-                    {
-                        int2 cell = bf.Origin + new int2(dx, dz);
-                        layers.OccupancyLayer.Remove(cell);
-                        if (hasGridMap) gridMap.BuildingCells.Remove(cell);
-                        razedCells.Add(cell);
-                    }
-                    ecb.DestroyEntity(e);   // LinkedEntityGroup 시각까지 파괴
-                    razedBuildings++;
+                    int2 cell = bf.Origin + new int2(dx, dz);
+                    layers.OccupancyLayer.Remove(cell);
+                    if (hasGridMap) gridMap.BuildingCells.Remove(cell);
                 }
-                else
+                ecb.DestroyEntity(e);   // LinkedEntityGroup 시각까지 파괴
+                razedBuildings++;
+
+                // 구역 귀속 — 빈 구역이면 해체 목록에, 어느 경우든 소유 팀은 재연결 검증 대상.
+                if (hasZones && ZoneOps.AttributeDeath(zones, bf.Origin, out int2 zO, out int zOwner))
                 {
-                    for (int dx = 0; dx < eff.x; dx++)
-                    for (int dz = 0; dz < eff.y; dz++)
-                        liveOwner.TryAdd(bf.Origin + new int2(dx, dz), bf.OwnerLocalId);
+                    deadZones.Add(zO);
+                    repairOwners.Add(zOwner);
                 }
             }
 
-            // 3) orphan 도로 수집 — 파괴 건물에 인접한 '그 건물만 쓰던' 링 도로를 끊고 풀어낸다.
-            //    연결 ≥2(살아있는 통과/교차로)는 보존, 파괴 건물과 무관한 도로는 시드에 안 잡힘.
+            // 3) 빈 구역 해체 → 공유 안 되는 도로 셀 수집
             var removeCells = new NativeList<int2>(128, Allocator.Temp);
-            BlockOps.CollectOrphanRoads(in layers.RoadLayer, in liveOwner, in razedCells, ref removeCells);
+            for (int i = 0; i < deadZones.Length; i++)
+                ZoneOps.ReleaseZone(zones, deadZones[i], ref removeCells);
 
-            // 4) orphan 도로 → 강제 RemoveRoadCommand (RoadSystem이 footprint/시각/이웃/StampDirty 처리)
+            // 4) 도로 → 강제 RemoveRoadCommand (RoadSystem이 footprint/시각/이웃/StampDirty 처리)
             for (int i = 0; i < removeCells.Length; i++)
             {
                 int2 cell = removeCells[i];
@@ -93,14 +97,24 @@ namespace CitySim
                 });
             }
 
+            // 5) 도로 제거가 일어난 팀에 재연결 요청 — NetworkRepairSystem이 RoadSystem 이후 처리.
+            if (removeCells.Length > 0)
+            {
+                foreach (var owner in repairOwners)
+                {
+                    var re = ecb.CreateEntity();
+                    ecb.AddComponent(re, new NetworkRepairRequest { OwnerLocalId = owner });
+                }
+            }
+
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
 
-            Debug.Log($"[Raze] 건물 {razedBuildings} 파괴, orphan 도로 {removeCells.Length} 셀 철거");
+            Debug.Log($"[Raze] 건물 {razedBuildings} 파괴, 구역 {deadZones.Length} 해체, 도로 {removeCells.Length} 셀 철거");
 
             rects.Dispose();
-            liveOwner.Dispose();
-            razedCells.Dispose();
+            deadZones.Dispose();
+            repairOwners.Dispose();
             removeCells.Dispose();
         }
 

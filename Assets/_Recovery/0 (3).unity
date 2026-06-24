@@ -1522,7 +1522,7 @@ Transform:
   m_GameObject: {fileID: 1181421715}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.38268343, z: 0, w: 0.92387956}
-  m_LocalPosition: {x: 400, y: 0, z: 400}
+  m_LocalPosition: {x: 16.25, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -1701,7 +1701,7 @@ MonoBehaviour:
   OwnedDlcIdsForDev: 
   StartMapId: 
   DevMapJson: 
-  DevMapJsonPath: Assets/_game/data/json/maps/NewMap.json
+  DevMapJsonPath: Assets/_game/data/json/maps/256x256Map.json
   ExternalMapLoadControl: 0
 --- !u!4 &1206696573
 Transform:

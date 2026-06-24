@@ -32,6 +32,7 @@ namespace CitySim
             state.RequireForUpdate<EntranceLookup>();
             state.RequireForUpdate<PrefabMetaLookup>();
             state.RequireForUpdate<CellTypeLookup>();
+            state.RequireForUpdate<CityZones>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -43,6 +44,7 @@ namespace CitySim
             var entranceLookup = SystemAPI.GetSingleton<EntranceLookup>();
             var metaLookup     = SystemAPI.GetSingleton<PrefabMetaLookup>();
             var cellTypeLookup = SystemAPI.GetSingleton<CellTypeLookup>();
+            var zones          = SystemAPI.GetSingleton<CityZones>();
             var cfg            = GrowthConfig.Default;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
@@ -56,13 +58,19 @@ namespace CitySim
                 int owner = team.LocalID;
                 var grid  = gridRO.ValueRO;
 
+                // 베이스 블록을 영구 구역으로 등록(1회) — 베이스 외곽 링 셀에 refcount +1을 박아
+                //   인접 AI 구역이 죽어도 베이스 링이 0으로 떨어져 제거되지 않게 보호. 연결 루트도 됨.
+                int Road  = math.max(1, grid.Road);
+                int2 baseO = grid.Anchor + new int2(Road, Road);
+                ZoneOps.RegisterZone(zones, baseO, grid.Block, Road, owner, grid.FactionId, permanent: true);
+
                 var rng = Unity.Mathematics.Random.CreateFromIndex(
                     math.hash(new int2(clock.Day + 1, owner + 1)) ^ grid.Seed);
                 int chosenKey = PickBuilding(in cfg, ref rng);
                 if (chosenKey <= 0) continue;
 
                 bool grew = GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                    in grid, owner, chosenKey, clock.Day, in cfg, ref rng, ref ecb);
+                    in grid, in zones, owner, chosenKey, clock.Day, in cfg, ref rng, ref ecb);
 
                 // ② 건물 크기 폴백 — 선택한 건물이 안 들어가면 다른(보통 더 작은) 건물로 한 번 더.
                 //    최악 지형은 큰 블록만 막히는 경우가 많아 작은 블록이면 들어감 → 교착 완화.
@@ -71,7 +79,7 @@ namespace CitySim
                     int altKey = chosenKey == cfg.BuildingKeyA ? cfg.BuildingKeyB : cfg.BuildingKeyA;
                     if (altKey > 0 && altKey != chosenKey)
                         GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                            in grid, owner, altKey, clock.Day, in cfg, ref rng, ref ecb);
+                            in grid, in zones, owner, altKey, clock.Day, in cfg, ref rng, ref ecb);
                 }
             }
 
@@ -81,7 +89,8 @@ namespace CitySim
 
         static bool GrowOneBlock(
             in GridLayers layers, in EntranceLookup entranceLookup, in PrefabMetaLookup metaLookup,
-            in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner, int chosenKey, int day,
+            in CellTypeLookup cellTypeLookup, in CityGrid grid, in CityZones zones, int owner,
+            int chosenKey, int day,
             in GrowthConfig cfg, ref Unity.Mathematics.Random rng, ref EntityCommandBuffer ecb)
         {
             if (!metaLookup.TryGetMeta(chosenKey, 0, out var meta)) return false;
@@ -175,7 +184,7 @@ namespace CitySim
                     if (Better(cands[i], cands[bi])) bi = i;
                 int2 pick = cands[bi].O;
                 cands.RemoveAtSwapBack(bi);
-                if (DevelopBlock(in layers, in grid, pick, K, Road, owner, chosenKey,
+                if (DevelopBlock(in layers, in grid, in zones, pick, K, Road, owner, chosenKey,
                         sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup, ref ecb))
                 { grew = true; break; }
             }
@@ -257,7 +266,8 @@ namespace CitySim
 
         // ── 블록 개발: 도로 링 + 건물 1개 ────────────────────────────────────
         static bool DevelopBlock(
-            in GridLayers layers, in CityGrid grid, int2 O, int K, int Road, int owner, int chosenKey,
+            in GridLayers layers, in CityGrid grid, in CityZones zones, int2 O, int K, int Road,
+            int owner, int chosenKey,
             int2 sz, bool hasEnt, in EntranceInfo ent, TerrainMask buildableOn,
             in CellTypeLookup cellTypeLookup, ref EntityCommandBuffer ecb)
         {
@@ -298,6 +308,12 @@ namespace CitySim
                     MainKey = chosenKey, VariantKey = 0, Cell = bOrigin, RotationY = bRot,
                     OwnerLocalId = owner, FactionId = grid.FactionId, RequireRoadAccess = true,
                 });
+
+                // 구역 등록 — 이 블록 내부 셀 → 구역 매핑 + 링 셀 refcount +1.
+                //   건물이 (전투/raze로) 죽으면 RazeSystem이 이 구역을 해체해 공유 안 되는
+                //   링 도로만 제거한다(빈 블록 링 정확 정리). 링 셀 집합은 EnumRingBegin이
+                //   CollectRingRoadsDrawn/CollectRingRoads와 동일하게 산출 → 누수 없음.
+                ZoneOps.RegisterZone(zones, O, K, Road, owner, grid.FactionId, permanent: false);
             }
 
             roadOrigins.Dispose(); roadDirs.Dispose(); roadAxis.Dispose(); plannedRoad.Dispose();
@@ -419,6 +435,12 @@ namespace CitySim
         {
             int2 ro = O - new int2(Road, Road);
             int  rs = K + 2 * Road;
+
+            // 다른 플레이어 영역(클레임) 안엔 성장 금지 (적 건물 M칸 이내, 도로는 영역 아님) — 1패스 박스 스캔.
+            if (ClaimOps.RegionHasEnemy(ro, ro + new int2(rs - 1, rs - 1), owner,
+                    ClaimOps.DefaultMargin, in layers.OccupancyLayer))
+                return false;
+
             bool first = true; byte baseH = 0;
             for (int dz = 0; dz < rs; dz++)
             for (int dx = 0; dx < rs; dx++)

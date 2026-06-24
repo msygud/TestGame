@@ -454,7 +454,59 @@
 - ✅ **시스템 순서**: `RazeSystem [UpdateBefore RoadSystem]` — 같은 프레임에 도로 철거 실행.
 - ✅ **(2026-06-23 수정) 철거 시 살아남은 경계 도로 모양 갱신** — 증상: 비워진 블록 경계의 T(3거리)가 가지(branch)를 향한 비트를 그대로 가져 **직선이 안 됨**(비주얼도 안 바뀜). 원인: `UpdateFootprintBoundaryDirections`가 그린(Explicit) 셀을 무조건 스킵(배치용 권위값 보존 규칙). 해결: `removing` 파라미터 추가 — **철거 시** 그린 이웃의 **제거된 footprint 쪽 비트만 제거**(T→직선) + `DirtyRoadTag`로 비주얼 교체. 배치는 기존대로 보존. 레거시 이웃은 `ComputeDirections` 재계산으로 자동.
 - 테스트: [Test.cs](Assets/_game/scripts/Test.cs) — **마우스 좌클릭으로 가리킨 건물 1개 파괴**(클릭 셀 포함 footprint → RazeAreaCommand). 한 구역 건물을 하나씩 부수며 도로가 라이브 건물에 안 닿는 순간 풀려 사라지는지 점진 관찰. (이전 키 R bbox 1/4 raze 폐지.)
-- ⬜ **다음**: 전투(건물 `CombatDeadTag` 사망)에서 **자동** orphan-prune 트리거(현재는 `RazeAreaCommand` 명시 발행). 멀티셀 도로 orphan(현재 cell 단위 판정, size>1은 footprint 통째 제거로 근사). CombatDeathSystem 사망 시 점유 정리(현재 RazeSystem 경로만 정리).
+- ⬜ **다음**: 전투(건물 `CombatDeadTag` 사망)에서 **자동** 구역 해체 트리거(현재는 `RazeAreaCommand` 명시 발행). 멀티셀 도로(현재 cell 단위 판정, size>1은 footprint 통째 제거로 근사). CombatDeathSystem 사망 시 점유 정리(현재 RazeSystem 경로만 정리).
+
+### 🟢 구역(Zone) 기반 도로 재구성 + 자동 재연결 — 2026-06-23 (degree-prune 폐기, 현행)
+> 사용자 지적: orphan-prune이 **막힌 도로를 남발**(격자/링은 degree≥2라 빈 블록 링이 영원히 남음)
+> + AI는 도로를 **재구성·복구할 수단이 없어** 한 번 공격당하면 도시가 깨진 채 방치 → 취약·불공평.
+> **사람이 손으로 하는 정리+재연결을 AI가 자동화**하도록 전환. degree(토폴로지)가 아니라 **구역 소유/공유**로 판단.
+
+- ✅ **구역 레지스트리** ([ZoneComponents.cs](Assets/_game/scripts/RunTime/Components/ZoneComponents.cs)): `CityZones` 싱글톤 = `Zones`(블록 원점 O→`ZoneRecord`) + `InteriorZone`(내부 셀→O) + `RingRef`(도로 링 셀→**살아있는 구역 수**). 키=블록 원점이라 넘버 카운터 불필요. [`CityZoneInitSystem`](Assets/_game/scripts/RunTime/Systems/CityZoneInitSystem.cs)이 Persistent 수명주기(GridInit 패턴).
+- ✅ **등록(`ZoneOps.RegisterZone`)** — [`AiCityGrowthSystem.DevelopBlock`](Assets/_game/scripts/RunTime/Systems/AiCityGrowthSystem.cs)이 블록 조성 성공 시 호출: 내부 셀→O 매핑 + **링 셀 refcount +1**. 링 셀 집합(`EnumRingBegin`)은 `CollectRingRoadsDrawn`/`CollectRingRoads`와 동일 산출 → 누수 없음. 베이스 블록은 매 팀 1회 **영구(permanent) 구역**으로 등록 → 베이스 링 셀 +1 박아 인접 구역이 죽어도 베이스 링이 0으로 안 떨어짐(연결 루트도 됨).
+- ✅ **해체(`ZoneOps.AttributeDeath`/`ReleaseZone`)** — [`RazeSystem`](Assets/_game/scripts/RunTime/Systems/RazeSystem.cs): 파괴 건물을 `InteriorZone`로 구역에 귀속(`BuildingCount −1`). 0이 되면 그 구역 링 셀 **refcount −1 → 0이 된 셀(공유 안 됨)만** 강제 `RemoveRoadCommand`. **공유 변·통과 도로는 refcount≥1로 보존**. permanent(베이스)는 절대 해체 안 함. → 격자/링 도시에서도 **빈 블록 링이 정확히 풀림**(degree-prune이 못 하던 것). `CollectOrphanRoads`(+`AdjacentToLive`/`EnqueueRoadNeighbors`) 폐기.
+- ✅ **자동 재연결** ([`NetworkRepairSystem`](Assets/_game/scripts/RunTime/Systems/NetworkRepairSystem.cs), `[UpdateAfter RoadSystem]`): 도로 제거가 일어난 팀에 `RazeSystem`이 `NetworkRepairRequest` 발행 → ① 베이스 블록 근처 팀 도로 시드로 BFS=`baseSet`(베이스 연결) ② 나머지 팀 도로를 4-인접 컴포넌트=**단절 섬** ③ 섬마다 [`BlockOps.FindReconnectPath`](Assets/_game/scripts/RunTime/Systems/BlockOps.cs)(baseSet→섬 다중소스 BFS, 빈 평지만)로 다리 경로 → **그린-방향 `PlaceRoadCommand`**(양 끝 OR 병합 = 베이스·섬에 교차로로 붙음). 물/단차/적영토로 막히면 둠(=사람도 못 잇는 상황, 공평). → **AI가 전투 피해를 스스로 치유**.
+- ✅ **플레이어 도로는 구역 미등록 = 자동 정리·재연결 안 함**(수동 관리, "사람은 손으로" 설계 의도와 일관). AI/베이스만 자동.
+- ✅ **시스템 순서**: `AiCityGrowth → RazeSystem → RoadSystem → NetworkRepair`. RazeSystem이 구역 해체+제거 발행 → RoadSystem이 제거 실행 → NetworkRepair가 **제거 반영된** RoadLayer로 단절 판정·다리 발행(다음 프레임 RoadSystem이 깖, 1프레임 지연 허용).
+- ⬜ **다음/한계**: ① 멀티셀 도로(roadSize>1) 다리는 1×1 그린 전용 — `FindReconnectPath`/링 refcount가 1×1 가정. ② **블록당 건물 여러 개**가 되면 `RegisterZone`이 건물 수만큼 `BuildingCount` 증가시키도록 확장 필요(현재 1건물=1블록 전제, =1). ③ 건물 배치가 사후 실패하면(드묾, DevelopBlock 검증과 BuildingPlacement 정합) **유령 구역**(건물 없는 등록) 가능 — 도로가 안 지워질 뿐 오제거는 없음(보수적). ④ 베이스 링 셀 집합은 `EnumRingBegin(baseO,Block,Road)`가 `FactionBaseSpawnSystem` 외곽 링과 일치한다는 전제(CityGrid 규약상 일치).
+- 테스트: [Test.cs](Assets/_game/scripts/Test.cs) 좌클릭으로 한 구역을 **가운데부터** 부수기 → 빈 블록 링이 공유 변만 남기고 풀리는지 / 그 너머 구역이 단절되면 콘솔 `[NetRepair]`와 함께 새 다리 도로가 깔리는지 확인. 콘솔 `[Raze] … 구역 N 해체, 도로 M 셀 철거`.
+
+---
+
+## 건설 클레임(영역) 게이트 + 도로 연속성 — 2026-06-24
+> 동기: 건설에 **공간적 소유권이 없어** ① 적 빈 땅에 도로 도배/건물 plop(카펫 그리핑) ② 도로를
+> 지형 끝-끝 이어 적을 **완전 봉쇄**(확장 불능) — 둘 다 가능했음. 셋(벽·카펫·plop)이 한 뿌리.
+> **결정(영구)**: 영토/영향권 기반으로 가되, 전체 영토 시스템 없이 **라이트 클레임 게이트**로 시작.
+> (현행: 도로는 유닛 이동을 막지 않음 = `BuildBlockedGrid`가 장애물 footprint만 봄. 막는 건 '건설'뿐.)
+
+- ✅ **클레임 정의 = "내 건물 + 마진 M칸"**. 규칙: **다른 플레이어 클레임 안엔 못 짓는다**
+  = 셀이 적 건물에서 M칸(체비셰프) 이내면 거부. [ClaimOps](Assets/_game/scripts/RunTime/Systems/ClaimOps.cs)
+  (`InEnemyClaim` 셀별 / `RegionHasEnemy` 박스 1패스). **중립(owner<0)·환경물·도로·자기 건물은 클레임 아님.**
+  M 기본 3(`ClaimOps.DefaultMargin`, 튜닝용). `TerritoryLayer` 캐시 없이 OccupancyLayer 직접 스캔(비핫패스).
+  - ✅ **(2026-06-24) 도로 제외 — claim 소스 = 건물만 (영구 결정)**. 초기엔 도로도 claim에 넣었으나,
+    도로는 선형이라 적이 **내 확장 방향에 도로 한 줄만 깔아도 M칸 '띠'가 봉쇄 구역**이 됐다(작은 맵 치명적
+    — 봉쇄를 막으려던 게 더 강한 봉쇄 도구가 됨). 도로는 영역이 아닌 인프라 → **건물만 영역을 정의.**
+    적 도로 옆/근처엔 자유 건설(도로 위에만 못 올림 = RoadSystem impassability 별개). 개발된 구역(건물 보유)은
+    여전히 carpet/plop 차단, 빈 땅만 contested.
+- ✅ **게이트 적용(휴먼·AI 공통)**: 건물 [ValidateCells](Assets/_game/scripts/RunTime/Systems/BuildingPlacement.cs)
+  (`ClaimedByOther` 신규) + 도로 [RoadSystem 배치](Assets/_game/scripts/RunTime/Systems/RoadSystem.cs) +
+  AI 성장 [BlockValid](Assets/_game/scripts/RunTime/Systems/AiCityGrowthSystem.cs)(박스 1패스 = 후보 조기 탈락) +
+  프리뷰 [SegmentBlockStatus](Assets/_game/scripts/RunTime/Systems/RoadBuildController.cs)(`PreviewStatus.ClaimBlocked` 신규, 진보라).
+- ✅ **효과**: 적 땅 도배·base plop 차단. 봉쇄 벽도 적 영역 M칸 밖에만 → 갇혀도 내 M-링으로 숨통 +
+  전투 raze(소유 무관 강제 철거)로 탈출. 자원 도로/재연결 다리도 적 클레임은 못 통과(공평).
+- ✅ **도로 연속성(contiguity)** — 유저 드래그는 **내 기존 도로망에서 시작(겹쳐)해야** 발행.
+  [RoadBuildController.Confirm](Assets/_game/scripts/RunTime/Systems/RoadBuildController.cs)의
+  `FilterConnectedToNetwork`: 기존 내 도로와 겹치는 pending 셀을 시드로 4-인접 flood → 닿은 세그먼트만
+  건설, 떠다니는 도로는 제거(+경고 로그). 그린 모델(겹쳐야 연결)과 일치. 카펫 도배 한 겹 더 차단 +
+  떠다니는 도로 0 → orphan/구역 정리도 깔끔. **AI/라우터/재연결은 본래 기존망에서 출발하므로 무영향.**
+- ✅ **(2026-06-24) 연속성 프리뷰 반영** — `ComputeAttached`(Confirm·프리뷰 공용)로 pending 세그먼트+현재
+  드래그를 합쳐 연결 셀 집합 산출. 미연결 셀은 `PreviewStatus.Disconnected`(회색)로 실시간 표시 →
+  떠다니는 드래그가 그릴 때부터 회색, Confirm 때 빠지는 것과 시각 일치. 단일 호버는 미적용(아직 도로 아님).
+- ⬜ **다음/한계**: ② 클레임은 OccupancyLayer 스캔이라 큰 맵·잦은 배치 시 `TerritoryLayer`에 캐시 고려.
+  ③ 베이스 스폰이 클레임 게이트를 타면 스타트포인트가 M칸 내로 붙은 **퇴화 맵**에서 base 충돌 가능
+  (정상 맵은 무관). ④ M=3은 실측 튜닝 대상. ⑤ 프리뷰 `ComputeAttached`가 매 프레임 HashSet/Queue 할당
+  (빌드 모드 한정·소량이라 무시 가능, 잦으면 컨테이너 재사용).
+- ❓ **교차(crossing) 허용**(남의 도로 가로지르기)은 보류 — 클레임 게이트로 벽/카펫이 풀려 당장 불필요.
+  영토를 본격 도입하거나 경계에서 도로가 만나는 케이스가 문제되면 그때 도입.
 
 ---
 

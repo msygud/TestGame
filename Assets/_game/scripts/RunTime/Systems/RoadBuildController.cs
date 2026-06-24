@@ -193,19 +193,31 @@ namespace CitySim
             var layers = GetLayers(out bool hasLayers);
             byte roadSize = 1;
 
+            // 건설 가능한 세그먼트만 추림(2칸 이상 + 비차단). 한 셀이라도 무효
+            //   (건물/자원/단차/범위/적 영역)면 그 구간 전체를 건설하지 않음.
+            var build = new List<List<int2>>();
             foreach (var seg in _segments)
             {
-                // 2칸 미만(원클릭·제자리)은 무효 — 한 셀은 이전/다음이 없어 방향이 0.
-                // 연결하려면 도로 위로 겹쳐 드래그.
                 if (seg.Count < 2) continue;
-
-                // 한 셀이라도 무효(건물/자원/단차/범위)면 이 구간 전체를 건설하지 않음.
                 if (hasLayers &&
                     PreviewStatusOps.IsBlocking(SegmentBlockStatus(seg, slot, layers)))
                     continue;
-
-                EmitDrawnDirections(seg, drawn);
+                build.Add(seg);
             }
+
+            // 연속성 제한 — 도로는 내 기존 도로망에서 시작(연결)해야 한다. 떠다니는 도로 금지.
+            //   기존 내 도로와 겹치는 pending 셀을 시드로 4-인접 flood → 닿은 세그먼트만 발행.
+            //   (그린 모델: 겹쳐야 연결되므로, 기존 도로 위로 드래그한 구간만 통과.)
+            if (hasLayers && slot >= 0)
+            {
+                int dropped = FilterConnectedToNetwork(build, slot, layers);
+                if (dropped > 0)
+                    Debug.LogWarning($"[RoadBuildController] 기존 도로에 연결되지 않은 {dropped}구간은 "
+                                   + "건설하지 않았습니다 — 도로는 내 기존 도로에서 시작(겹쳐 드래그)해야 합니다.");
+            }
+
+            foreach (var seg in build)
+                EmitDrawnDirections(seg, drawn);
 
             foreach (var kv in drawn)
             {
@@ -305,6 +317,51 @@ namespace CitySim
             return path;
         }
 
+        // pending 셀들(세그먼트 목록 + 추가 목록) 중 '내 기존 도로망에 연결된' 셀 집합.
+        //   시드 = pending 셀 중 기존 내 도로와 겹치는 셀(그린 모델: 겹쳐야 연결).
+        //   pending 내부 4-인접 flood. Confirm(끊긴 구간 제거)·프리뷰(미연결 표시) 공용.
+        HashSet<int2> ComputeAttached(List<List<int2>> segs, List<int2> extra, int slot, GridLayers layers)
+        {
+            var cmp     = new Int2Comparer();
+            var pending = new HashSet<int2>(cmp);
+            if (segs != null)
+                foreach (var seg in segs)
+                    foreach (var c in seg) pending.Add(c);
+            if (extra != null)
+                foreach (var c in extra) pending.Add(c);
+
+            var attached = new HashSet<int2>(cmp);
+            var queue    = new Queue<int2>();
+            foreach (var c in pending)
+                if (layers.RoadLayer.TryGetValue(c, out var rc) && rc.OwnerLocalId == slot)
+                    if (attached.Add(c)) queue.Enqueue(c);
+
+            while (queue.Count > 0)
+            {
+                var c = queue.Dequeue();
+                for (int i = 0; i < 4; i++)
+                {
+                    var n = c + RoadDirOps.Offsets[i];
+                    if (pending.Contains(n) && attached.Add(n)) queue.Enqueue(n);
+                }
+            }
+            return attached;
+        }
+
+        // build 중 '내 기존 도로망에 연결된' 세그먼트만 남기고 끊긴 것을 제거. 제거한 구간 수 반환.
+        //   드래그 경로는 연속이라 한 셀만 닿으면(attached) 그 세그먼트 전체가 연결된 것.
+        int FilterConnectedToNetwork(List<List<int2>> build, int slot, GridLayers layers)
+        {
+            var attached = ComputeAttached(build, null, slot, layers);
+            int before = build.Count;
+            build.RemoveAll(seg =>
+            {
+                foreach (var c in seg) if (attached.Contains(c)) return false;
+                return true;
+            });
+            return before - build.Count;
+        }
+
         // 경로 인접에서 셀별 그린 방향 비트 산출.
         //   각 셀 = (이전 셀 방향 if 있음) | (다음 셀 방향 if 있음).
         //   시작=다음만, 끝=이전만, 중간/코너=둘 다. → 상호 비트 불변식 자동 성립.
@@ -357,6 +414,11 @@ namespace CitySim
 
             foreach (var cell in seg)
             {
+                // 다른 플레이어 영역(클레임) 안엔 건설 불가.
+                if (ownerSlot >= 0 &&
+                    ClaimOps.InEnemyClaim(cell, ownerSlot, ClaimOps.DefaultMargin, in layers.OccupancyLayer))
+                    return PreviewStatus.ClaimBlocked;
+
                 if (layers.RoadLayer.TryGetValue(cell, out var hereRoad))
                 {
                     if (ownerSlot >= 0 && hereRoad.OwnerLocalId != ownerSlot)
@@ -391,7 +453,8 @@ namespace CitySim
         // 그 사유로 표시(전체 빨강), 아니면 셀별 상태(환경철거/경고/가능)로 표시.
         // 반환: 추가한 셀 수.
         int AddSegmentPreview(DynamicBuffer<PreviewCell> buf, List<int2> seg,
-                              PreviewKind kind, int ownerSlot, GridLayers layers, bool hasLayers)
+                              PreviewKind kind, int ownerSlot, GridLayers layers, bool hasLayers,
+                              HashSet<int2> attached)
         {
             if (seg.Count == 0) return 0;
 
@@ -402,9 +465,14 @@ namespace CitySim
 
             foreach (var cell in seg)
             {
-                var st = blocked ? segBlock
-                       : (hasLayers ? EvaluateCell(cell, axis, ownerSlot, layers)
-                                    : PreviewStatus.Valid);
+                PreviewStatus st;
+                if (blocked)
+                    st = segBlock;
+                else if (attached != null && !attached.Contains(cell))
+                    st = PreviewStatus.Disconnected;        // 기존 도로 미연결 → Confirm 때 빠짐
+                else
+                    st = hasLayers ? EvaluateCell(cell, axis, ownerSlot, layers)
+                                   : PreviewStatus.Valid;
                 buf.Add(new PreviewCell { Cell = cell, Status = st, Kind = kind });
             }
             return seg.Count;
@@ -434,21 +502,28 @@ namespace CitySim
             // 프리뷰용 소유자 슬롯 해소 (실패해도 점유/범위 검사는 계속).
             int ownerSlot = hasLayers && ResolvePlayerFaction(out int s, out _) ? s : -1;
 
+            // 연속성 — pending 세그먼트 + 현재 드래그를 합쳐 내 도로망에 연결된 셀 집합 계산.
+            //   닿지 않은 셀은 Disconnected(회색)로 표시 → Confirm 때 빠지는 것과 시각 일치.
+            //   단일 호버(드래그 아님)는 아직 도로가 아니라 연속성 미적용(null).
+            HashSet<int2> attached = (hasLayers && ownerSlot >= 0)
+                ? ComputeAttached(_segments, _dragging ? _currentDrag : null, ownerSlot, layers)
+                : null;
+
             // 확정 대기 segment들
             int cellCount = 0;
             foreach (var seg in _segments)
-                cellCount += AddSegmentPreview(buf, seg, PreviewKind.Pending, ownerSlot, layers, hasLayers);
+                cellCount += AddSegmentPreview(buf, seg, PreviewKind.Pending, ownerSlot, layers, hasLayers, attached);
 
             // 드래그 중이면 드래그 경로, 아니면 호버 셀 1개
             if (_dragging)
             {
-                AddSegmentPreview(buf, _currentDrag, PreviewKind.Dragging, ownerSlot, layers, hasLayers);
+                AddSegmentPreview(buf, _currentDrag, PreviewKind.Dragging, ownerSlot, layers, hasLayers, attached);
             }
             else if (_hasHover)
             {
                 _hoverList.Clear();
                 _hoverList.Add(_hoverCell);
-                AddSegmentPreview(buf, _hoverList, PreviewKind.Dragging, ownerSlot, layers, hasLayers);
+                AddSegmentPreview(buf, _hoverList, PreviewKind.Dragging, ownerSlot, layers, hasLayers, null);
 
                 // HUD 사유 표시용 호버 상태/점유 종류
                 if (hasLayers)

@@ -72,6 +72,7 @@ namespace CitySim
         HeightMismatch = 5,  // 멀티셀 건물의 셀 높이가 다름
         NoRoadAccess   = 6,  // 입구가 도로에 닿지 않음 (RequireRoadAccess=true일 때만)
         ResourceBlocked = 7, // 채취 자원이 있는 셀 (자원은 보존 — 갈아엎지 않음)
+        ClaimedByOther = 8,  // 다른 플레이어 영역(클레임) 안 (적 점유물 M칸 이내)
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -174,7 +175,7 @@ namespace CitySim
                 ? new int2(roadSize, roadSize)
                 : EntranceOps.RotateSize(meta.Size, rotSteps);
 
-            var  fail = ValidateCells(req.Cell, size, meta.BuildableOn,
+            var  fail = ValidateCells(req.Cell, size, meta.BuildableOn, req.OwnerLocalId,
                 ref layers, cellTypeLookup, out byte baseHeight);
 
             if (fail != PlacementFailCode.None)
@@ -235,6 +236,7 @@ namespace CitySim
             int2              origin,
             int2              size,
             TerrainMask       buildableOn,
+            int               ownerLocalId,
             ref GridLayers    layers,
             CellTypeLookup    cellTypeLookup,
             out byte          baseHeight)
@@ -250,6 +252,11 @@ namespace CitySim
                 // a. 범위 확인
                 if (!layers.TerrainLayer.TryGetValue(cell, out var terrain))
                     return PlacementFailCode.OutOfBounds;
+
+                // a2. 다른 플레이어 영역(클레임) 안엔 건설 불가 (적 건물 M칸 이내, 도로는 영역 아님).
+                if (ownerLocalId >= 0 &&
+                    ClaimOps.InEnemyClaim(cell, ownerLocalId, ClaimOps.DefaultMargin, in layers.OccupancyLayer))
+                    return PlacementFailCode.ClaimedByOther;
 
                 // b. 점유 확인 — 환경(나무/바위)은 배치 시 치우므로 막지 않는다.
                 if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty
