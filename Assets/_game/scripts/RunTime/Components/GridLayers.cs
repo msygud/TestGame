@@ -198,6 +198,18 @@ namespace CitySim
         /// 그린 값을 보존한다. false = 레거시 축 모델(AI 링/베이스/맵 도로).
         /// </summary>
         public bool Explicit;
+
+        /// <summary>
+        /// 도로 관리시설 coverage 밖에서 누적된 미관리 일수(DayChanged 단위).
+        /// RoadDecaySystem이 매일 관리: covered면 0으로 리셋, 아니면 +1, 임계 도달 시 강제 철거.
+        /// </summary>
+        public byte UnmaintainedDays;
+
+        /// <summary>
+        /// 영구 도로(베이스 외곽 링). true면 RoadDecaySystem이 decay 대상에서 제외한다
+        /// (관리시설 coverage와 무관하게 절대 사라지지 않음). 전투 raze는 별개로 영향받음.
+        /// </summary>
+        public bool Permanent;
     }
 
     // ══════════════════════════════════════════════════════════════

@@ -245,6 +245,7 @@ namespace CitySim
                     Size                      = (byte)step,
                     VisualDirectionsOverride  = dir,
                     Axis                      = axis,
+                    Permanent                 = 1,   // 베이스 외곽 링 = 영구(미관리 decay 예외)
                 });
                 emitted++;
             }

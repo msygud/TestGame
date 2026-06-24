@@ -148,6 +148,7 @@ namespace CitySim
                             Size            = 1,
                             Axis            = RoadPlacedAxis.Any,
                             Explicit        = true,
+                            Permanent       = cmd.ValueRO.Permanent != 0,
                         };
                         layers.OccupancyLayer[origin] = new OccupancyCell
                         {
@@ -209,6 +210,7 @@ namespace CitySim
                             FootprintOrigin = origin,
                             Size            = size,
                             Axis            = placedAxis,
+                            Permanent       = cmd.ValueRO.Permanent != 0,
                         };
                         layers.OccupancyLayer[c] = new OccupancyCell
                         {

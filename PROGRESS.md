@@ -552,7 +552,14 @@
      (Relief=None). 관리시설도 건물이라 배치 시 `StampDirtyEvent` 자동 발행(BuildingPlacement 227행) →
      슬롯 dirty → 재빌드. 입구 없는 depot은 쿼리에서 자동 제외(BFS 시작점 없음). ⚠ depot 프리팹은 SO
      `Entrances[]`에 입구 정의 필요(공급자와 동일 전제).
-  3. `RoadCell` 미관리 카운터 + decay 시스템(`DayChanged` 게이트): covered면 리셋 / 아니면 +1 / ≥K면 강제 철거.
+  3. ✅ **RoadCell 카운터 + decay 시스템 완료** (2026-06-24) — `RoadCell{UnmaintainedDays(byte), Permanent(bool)}`
+     추가(GridLayers.cs). 신규 `RoadDecaySystem`([UpdateBefore RoadSystem], `DayChanged` 게이트, 메인스레드
+     저빈도): RoadLayer 키 스냅샷 순회 → `stamp[owner]`에 `RoadMaintenance` 도장 있으면 `UnmaintainedDays=0`
+     리셋, 없으면 +1, ≥`DecayDays`(기본 3)면 `RemoveRoadCommand{Forced=1}` ECB 발행(RoadSystem이 같은 프레임
+     철거). **베이스 링 영구 예외**: `PlaceRoadCommand.Permanent`(신규 byte) → `RoadSystem` 두 생성 지점에서
+     `RoadCell.Permanent` 전달, `FactionBaseSpawnSystem.EmitPerimeterRoads`가 `Permanent=1` 발행 → decay 제외.
+     중립/맵 도로(owner∉[0,8))도 제외. 멀티셀은 footprint 원점 1회만 철거(근사, 1×1 전용). ⚠ **Phase 4 의존**:
+     depot 프리팹 등록 + 베이스 포함 전까지는 coverage가 비어 비-영구 도로가 K일 후 decay(=의도된 메커니즘).
   4. 베이스캠프에 관리소 1개 기본 포함(`FactionBaseSpawnSystem`) → 초기 도로 coverage 보장.
   5. AI(`AiCityGrowthSystem`) — 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업, 마지막 단계).
 - ❓ **튜닝**: `MaxDist`(순찰 반경), decay `K` — 골격 후 실측.

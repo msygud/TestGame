@@ -112,6 +112,12 @@ namespace CitySim
         /// 경로 이웃(이전/다음)을 향한 비트만 담기므로 상호 비트 불변식이 자동 성립.
         /// </summary>
         public RoadDir Directions;
+
+        /// <summary>
+        /// 1 = 영구 도로(베이스 외곽 링). RoadCell.Permanent로 전달돼 RoadDecaySystem의
+        /// 미관리 decay 대상에서 제외된다. 0 = 일반 도로(유저/AI/맵 — coverage 따라 decay).
+        /// </summary>
+        public byte Permanent;
     }
 
     /// <summary>도로 철거 명령. 단발성.</summary>
