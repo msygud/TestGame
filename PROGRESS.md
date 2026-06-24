@@ -510,7 +510,7 @@
 
 ---
 
-## 도로 관리시설 (Road Maintenance) — 설계 확정, 구현 대기 (2026-06-24)
+## 도로 관리시설 (Road Maintenance) — 골격 0~4 구현 완료, AI 연동·에디터 셋업 대기 (2026-06-24)
 > **동기**: 도로 악용 — 시작하자마자 적 근처까지 도로를 깔아 상대 도시확장을 봉쇄. 어제(2026-06-23~24)
 > 클레임 게이트 + raze로 접근했으나 **접근 방식 전환**: 도로는 "관리시설의 도달 범위" 안에서만 유지된다.
 > 범위 밖 도로는 시간 경과로 파괴 → 적 근처로 도로를 끌려면 관리소를 보급선처럼 연쇄 배치해야 함
@@ -567,8 +567,24 @@
      1개 발행(`BaseCampSize`와 동일 경로). 입구가 외곽 링에 닿는 자리여야 정상 배치 + BFS 시작점 확보.
      ⬜ 에디터: depot 프리팹을 GamePrefabRegistry에 `IsRoadMaintenance=true` + `Entrances` 정의로 등록하고,
      각 `FactionBaseDefinition`에 `MaintenanceMainKey`/`MaintenanceCellOffset` 설정.
-  5. AI(`AiCityGrowthSystem`) — 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업, 마지막 단계).
-- ❓ **튜닝**: `MaxDist`(순찰 반경), decay `K` — 골격 후 실측.
+  5. ⬜ **AI 연동 (Phase 5, 미착수 — 다음 세션)** — `AiCityGrowthSystem`이 도시 성장 시 관리소도 배치 +
+     coverage 안에서만 블록 성장. 최대 작업. **이게 없으면 AI 도로가 coverage 없이 K일 후 decay → AI 도시가
+     안 자랄 수 있음**(베이스 링만 영구 보존). Phase 4의 베이스 depot 1개는 초기 반경만 커버.
+- ❓ **튜닝**: `MaxDist`(순찰 반경, depot 프리팹의 `MaintenanceMaxDist`), decay `K`(`RoadDecaySystem.DecayDays` 기본 3) — 골격 후 실측.
+
+### 🟢 세션 종료 상태 (2026-06-24) — 골격 0~4 완료, 푸시 완료
+> 다음 세션은 이 블록만 읽으면 현재 상태 파악 가능.
+
+- **완료(코드)**: Phase 0(클레임 게이트 제거, `498c727`) → 1(authoring 체인, `a96da23`) → 2(coverage BFS, `7c13482`)
+  → 3(decay 시스템, `9c5d84d`) → 4(베이스 depot 자동 배치, `632eb6d`). 브랜치 `claude/progress-check-og6eaw`, 작업 트리 clean.
+  - ※ Phase 0는 **다른 Claude 세션이 동시에 수행**(같은 브랜치) → 본 세션 Phase 1~4가 그 위에 쌓임. grep `Claim` 잔여 0건.
+- **남은 코드**: Phase 5(AI 연동)만 미착수.
+- **에디터 수작업(필수, 미완)**:
+  ① 관리소 프리팹을 `GamePrefabRegistry`에 등록 — `IsRoadMaintenance=true`, `MaintenanceMaxDist=N`, `Entrances`에 입구 정의.
+  ② 각 `FactionBaseDefinition` SO에 `MaintenanceMainKey`(①의 MainKey) + `MaintenanceCellOffset`(입구가 외곽 링에 닿는 자리) 설정.
+  ③ Unity 에디터에서 컴파일 검증(이 환경엔 컴파일러 없음 — 모든 C# 편집은 grep 정합성까지만 확인).
+- **⚠ 현재 플레이 시 주의**: 에디터 셋업(①②) 전까지 coverage가 비어 **베이스 링 외 모든 도로가 `DecayDays`(3일) 후 철거**된다
+  (= 의도된 메커니즘이 셋업 부재로 과하게 작동). 셋업 완료 후 실측 튜닝할 것.
 
 ---
 
