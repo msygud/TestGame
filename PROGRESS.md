@@ -520,23 +520,26 @@
   `StampKind`에 `RoadMaintenance` 한 종류 추가 → "관리시설이 도로망 BFS로 닿는 범위"가 곧 coverage.
   플레이어(LocalId)별 독립 슬롯·dirty 재빌드·`HourChanged` 게이팅 전부 재사용. **미관리 도로 = 어떤
   RoadMaintenance 도장도 안 찍힌 도로셀.**
-- ✅ **coverage 모델 = 하이브리드(거리+용량)** (확정): 시설 입구에서 도로망 nearest-first BFS,
-  `min(MaxDist 도달, 용량 N 셀 소진)`. 가까운 도로셀부터 용량 예산을 소비. 거리는 막연한 봉쇄선을 끊고,
-  용량은 "관리 인프라에 비례한 도시 규모"라는 시뮬레이션 의미(시민 시뮬→군사 효율 테마와 정합).
+- ✅ **coverage 모델 = 영역(도로망 BFS)** (확정, 2026-06-24 정정 — 이전 '하이브리드'에서 단순화):
+  관리시설 입구 도로셀에서 **도로망을 따라 `MaxDist`칸 이내** 도로셀이 covered. 용량(N) 개념 폐기 —
+  순수 거리 기반. 테마상 '순찰 반경', BFS 한 번으로 결정적. (Stamp BFS와 동일 다중소스 확산 구조.)
 - ✅ **파괴 = 유예 decay** (확정): `RoadCell`에 미관리 누적 시간 카운터 → K일 지속 시
   `RemoveRoadCommand{Forced=1}` 발행(기존 RoadSystem 경로). covered 복귀 시 카운터 리셋. 살릴 여지 +
   "금 간 도로" 경고 telegraph 가능. 즉시 파괴 대비 체감 부드러움.
-- ⬜ **구현 골격** (아래 보류 결정과 무관하게 진행 가능):
-  1. `RoadMaintenanceDepot` 건물 태그 `{OwnerLocalId, MaxDist, Capacity}` + `RegistryItem` authoring 플래그.
-  2. `StampKind.RoadMaintenance` + coverage BFS 시스템 — depot별 nearest-first BFS, 용량 예산 소진,
-     플레이어별 `StampLayers` 슬롯에 도장(또는 별도 coverage set). dirty/라운드로빈은 stamp 패턴 그대로.
+- ✅ **클레임 게이트 완전 제거** (확정, 2026-06-24 — 이전 '보류' 해제): 어제 만든 건설 클레임 게이트
+  (위 2026-06-24 섹션)는 전부 은퇴 — `ClaimOps` + 모든 호출처(건물 `ValidateCells`의 `ClaimedByOther`,
+  `RoadSystem` 배치, AI `BlockValid` 박스 1패스, 프리뷰 `ClaimBlocked`). 도로 봉쇄·grief는 maintenance
+  decay가 대체. ⚠ **부작용 명시**: 클레임이 막던 **건물 carpet/plop 보호도 함께 사라짐** — 필요하면
+  추후 별도 메커니즘으로(maintenance와 무관). zone-raze / 전투 복구(`NetworkRepair`)는 별개라 유지.
+- ⬜ **구현 골격**:
+  0. (선행) 클레임 게이트 제거 — `ClaimOps` + 호출처 4곳 은퇴.
+  1. `RoadMaintenanceDepot` 건물 태그 `{OwnerLocalId, MaxDist}` + `RegistryItem` authoring 플래그.
+  2. `StampKind.RoadMaintenance` + coverage BFS 시스템 — depot 입구에서 도로망 다중소스 BFS(`MaxDist`),
+     플레이어별 `StampLayers` 슬롯에 도장. dirty/라운드로빈은 stamp 패턴 그대로.
   3. `RoadCell` 미관리 카운터 + decay 시스템(`DayChanged` 게이트): covered면 리셋 / 아니면 +1 / ≥K면 강제 철거.
   4. 베이스캠프에 관리소 1개 기본 포함(`FactionBaseSpawnSystem`) → 초기 도로 coverage 보장.
   5. AI(`AiCityGrowthSystem`) — 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업, 마지막 단계).
-- ❓ **보류(결정 안 함)**: 어제 만든 **클레임 게이트(도로분)·zone-raze와의 관계**. maintenance가 도로
-  build 게이트·평시 도로 정리를 **대체**할지, **공존**할지. → 골격(1~4) 먼저 만들고 동작 본 뒤 결정.
-  (건물 carpet/plop 방지 클레임·전투 raze/복구는 일단 유지.)
-- ❓ **튜닝**: `MaxDist`, 용량 `N`, decay `K일` — 골격 후 실측.
+- ❓ **튜닝**: `MaxDist`(순찰 반경), decay `K` — 골격 후 실측.
 
 ---
 
