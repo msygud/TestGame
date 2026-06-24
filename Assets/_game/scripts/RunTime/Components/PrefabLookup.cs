@@ -40,6 +40,10 @@ namespace CitySim
         public NeedType     Relief;
         /// <summary>stamp BFS 최대 도달 거리. 0 이하면 무제한.</summary>
         public int          SupplyMaxDist;
+        /// <summary>도로 관리시설 여부. true면 SpawnSystem이 RoadMaintenanceDepot를 부착.</summary>
+        public bool         IsRoadMaintenance;
+        /// <summary>관리 도달 거리(도로 칸 수). 0 이하면 무제한.</summary>
+        public int          MaintenanceMaxDist;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -116,6 +120,8 @@ namespace CitySim
         public bool          IsSupplier;    // 욕구 공급자 여부
         public NeedType      Relief;        // 해소 욕구 비트마스크
         public int           SupplyMaxDist; // stamp BFS 최대 거리 (0 이하=무제한)
+        public bool          IsRoadMaintenance;  // 도로 관리시설 여부
+        public int           MaintenanceMaxDist; // 관리 도달 거리 (0 이하=무제한)
 
         public bool IsRoad     => Category == PrefabCategory.Road;
         public bool IsMulti    => Category == PrefabCategory.Environment;

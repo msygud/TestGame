@@ -510,6 +510,51 @@
 
 ---
 
+## 도로 관리시설 (Road Maintenance) — 설계 확정, 구현 대기 (2026-06-24)
+> **동기**: 도로 악용 — 시작하자마자 적 근처까지 도로를 깔아 상대 도시확장을 봉쇄. 어제(2026-06-23~24)
+> 클레임 게이트 + raze로 접근했으나 **접근 방식 전환**: 도로는 "관리시설의 도달 범위" 안에서만 유지된다.
+> 범위 밖 도로는 시간 경과로 파괴 → 적 근처로 도로를 끌려면 관리소를 보급선처럼 연쇄 배치해야 함
+> (공짜 그리핑 → 방어해야 하는 전략적 약속). 관리소는 전투로 파괴 가능.
+
+- ✅ **핵심 = 기존 `Stamp BFS` 인프라 재사용** ([StampComponents.cs](Assets/_game/scripts/RunTime/Components/StampComponents.cs)).
+  `StampKind`에 `RoadMaintenance` 한 종류 추가 → "관리시설이 도로망 BFS로 닿는 범위"가 곧 coverage.
+  플레이어(LocalId)별 독립 슬롯·dirty 재빌드·`HourChanged` 게이팅 전부 재사용. **미관리 도로 = 어떤
+  RoadMaintenance 도장도 안 찍힌 도로셀.**
+- ✅ **coverage 모델 = 영역(도로망 BFS)** (확정, 2026-06-24 정정 — 이전 '하이브리드'에서 단순화):
+  관리시설 입구 도로셀에서 **도로망을 따라 `MaxDist`칸 이내** 도로셀이 covered. 용량(N) 개념 폐기 —
+  순수 거리 기반. 테마상 '순찰 반경', BFS 한 번으로 결정적. (Stamp BFS와 동일 다중소스 확산 구조.)
+- ✅ **파괴 = 유예 decay** (확정): `RoadCell`에 미관리 누적 시간 카운터 → K일 지속 시
+  `RemoveRoadCommand{Forced=1}` 발행(기존 RoadSystem 경로). covered 복귀 시 카운터 리셋. 살릴 여지 +
+  "금 간 도로" 경고 telegraph 가능. 즉시 파괴 대비 체감 부드러움.
+- ✅ **클레임 게이트 완전 제거** (확정, 2026-06-24 — 이전 '보류' 해제): 어제 만든 건설 클레임 게이트
+  (위 2026-06-24 섹션)는 전부 은퇴 — `ClaimOps` + 모든 호출처(건물 `ValidateCells`의 `ClaimedByOther`,
+  `RoadSystem` 배치, AI `BlockValid` 박스 1패스, 프리뷰 `ClaimBlocked`). 도로 봉쇄·grief는 maintenance
+  decay가 대체. ⚠ **부작용 명시**: 클레임이 막던 **건물 carpet/plop 보호도 함께 사라짐** — 필요하면
+  추후 별도 메커니즘으로(maintenance와 무관). zone-raze / 전투 복구(`NetworkRepair`)는 별개라 유지.
+- ✅ **베이스 링 도로 = 영구(decay 예외)** (확정, 2026-06-24): 관리소를 잃어도 베이스 외곽 링은
+  decay 안 함(zone permanent와 동일 취지) → 베이스 brick 방지. 확장 도로만 관리 대상. Phase 3에서 반영.
+- 🔧 **구현 골격** (Phase 0부터 단계 진행 — 사용자 단계확인 방식):
+  0. ✅ **클레임 게이트 제거 완료** (2026-06-24) — `ClaimOps.cs`(+.meta) 삭제 + 호출처 6곳 정리:
+     `RoadBuildController.SegmentBlockStatus`, `RoadSystem` 배치, `BuildingPlacement.ValidateCells`
+     (+`PlacementFailCode.ClaimedByOther` 제거), `AiCityGrowthSystem.BlockValid`(박스스캔 제거),
+     `RoadBuildPreview`(`PreviewStatus.ClaimBlocked` 제거 → `Disconnected` 9→8 재번호, IsBlocking/ToText/색).
+     grep 잔여 0건. ⚠ 컴파일 검증은 Unity 에디터에서(이 환경엔 컴파일러 없음).
+     ⚠ **부작용 발효**: 건물 carpet/plop 보호 사라짐(설계대로). 봉쇄 방지는 Phase 1~4 maintenance가 대체 예정.
+  1. ✅ **관리시설 컴포넌트 + authoring 체인 완료** (2026-06-24) — `IsSupplier` 경로 미러링:
+     `RoadMaintenanceDepot{OwnerLocalId, MaxDist}` 컴포넌트(`StampRebuildSystem.cs`, `StampSupplier` 옆) +
+     `RegistryItem.IsRoadMaintenance/MaintenanceMaxDist` 플래그 → `BakedPrefabEntry` → Baker →
+     `PrefabMeta` → `PrefabLookupBuildSystem` → `SpawnRequest` → `BuildingPlacement.EmitSingle` →
+     `SpawnSystem`이 `IsRoadMaintenance`면 depot 태그 부착. ⬜ Unity에서 관리시설 프리팹 SO 항목에
+     `IsRoadMaintenance=true`, `MaintenanceMaxDist=N` 설정 필요(에디터 수작업).
+  2. `StampKind.RoadMaintenance` + coverage BFS 시스템 — depot 입구에서 도로망 다중소스 BFS(`MaxDist`),
+     플레이어별 `StampLayers` 슬롯에 도장. dirty/라운드로빈은 stamp 패턴 그대로.
+  3. `RoadCell` 미관리 카운터 + decay 시스템(`DayChanged` 게이트): covered면 리셋 / 아니면 +1 / ≥K면 강제 철거.
+  4. 베이스캠프에 관리소 1개 기본 포함(`FactionBaseSpawnSystem`) → 초기 도로 coverage 보장.
+  5. AI(`AiCityGrowthSystem`) — 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업, 마지막 단계).
+- ❓ **튜닝**: `MaxDist`(순찰 반경), decay `K` — 골격 후 실측.
+
+---
+
 ## 도메인 통합 모델 (Domain) — 로드맵 (2026-06-23 설계 확정, 구현은 단계별·다른 세션)
 
 > 배치·이동·타겟을 **하나의 `Domain` 비트마스크**로 통일. 모든 관계 = `maskA & maskB != 0`.
