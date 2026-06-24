@@ -50,8 +50,7 @@ namespace CitySim
         OwnerWarn       = 5,
         ResourceBlocked = 6,  // 채취 자원 위 — 건설 불가 (자원 보존)
         WillClear       = 7,  // 환경물(나무/바위) 위 — 건설 가능, 배치 시 철거됨
-        ClaimBlocked    = 8,  // 다른 플레이어 영역(클레임) 안 — 건설 불가
-        Disconnected    = 9,  // 내 기존 도로망에 연결 안 됨 — 건설 안 됨(연속성)
+        Disconnected    = 8,  // 내 기존 도로망에 연결 안 됨 — 건설 안 됨(연속성)
     }
 
     /// <summary>프리뷰 마커 한 칸.</summary>
@@ -71,7 +70,6 @@ namespace CitySim
             || s == PreviewStatus.OutOfBounds
             || s == PreviewStatus.HeightMismatch
             || s == PreviewStatus.ResourceBlocked
-            || s == PreviewStatus.ClaimBlocked
             || s == PreviewStatus.Disconnected;
 
         /// <summary>대상 오브젝트(점유물/철거 예정물)에 외곽선 강조를 줄지.</summary>
@@ -89,7 +87,6 @@ namespace CitySim
             PreviewStatus.OwnerWarn      => "경고: 타 플레이어 도로 — 연결 안 됨",
             PreviewStatus.ResourceBlocked => "건설 불가: 자원 점유",
             PreviewStatus.WillClear      => "환경물 철거 후 건설",
-            PreviewStatus.ClaimBlocked   => "건설 불가: 다른 플레이어 영역",
             PreviewStatus.Disconnected   => "건설 안 됨: 기존 도로와 연결 안 됨",
             _                            => string.Empty,
         };
@@ -124,7 +121,6 @@ namespace CitySim
             PreviewStatus.OwnerWarn      => new Color(0.85f, 0.30f, 0.90f, 1f),  // 자홍
             PreviewStatus.ResourceBlocked => new Color(0.10f, 0.70f, 0.85f, 1f), // 청록 (자원)
             PreviewStatus.WillClear      => new Color(0.55f, 0.40f, 0.20f, 1f), // 갈색 (철거 예정)
-            PreviewStatus.ClaimBlocked   => new Color(0.45f, 0.05f, 0.30f, 1f), // 진보라 (적 영역)
             PreviewStatus.Disconnected   => new Color(0.45f, 0.45f, 0.50f, 1f), // 회색 (미연결)
             _                            => Color.white,
         };

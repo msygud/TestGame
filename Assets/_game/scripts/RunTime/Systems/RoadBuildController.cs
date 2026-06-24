@@ -414,11 +414,6 @@ namespace CitySim
 
             foreach (var cell in seg)
             {
-                // 다른 플레이어 영역(클레임) 안엔 건설 불가.
-                if (ownerSlot >= 0 &&
-                    ClaimOps.InEnemyClaim(cell, ownerSlot, ClaimOps.DefaultMargin, in layers.OccupancyLayer))
-                    return PreviewStatus.ClaimBlocked;
-
                 if (layers.RoadLayer.TryGetValue(cell, out var hereRoad))
                 {
                     if (ownerSlot >= 0 && hereRoad.OwnerLocalId != ownerSlot)

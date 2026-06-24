@@ -436,11 +436,6 @@ namespace CitySim
             int2 ro = O - new int2(Road, Road);
             int  rs = K + 2 * Road;
 
-            // 다른 플레이어 영역(클레임) 안엔 성장 금지 (적 건물 M칸 이내, 도로는 영역 아님) — 1패스 박스 스캔.
-            if (ClaimOps.RegionHasEnemy(ro, ro + new int2(rs - 1, rs - 1), owner,
-                    ClaimOps.DefaultMargin, in layers.OccupancyLayer))
-                return false;
-
             bool first = true; byte baseH = 0;
             for (int dz = 0; dz < rs; dz++)
             for (int dx = 0; dx < rs; dx++)

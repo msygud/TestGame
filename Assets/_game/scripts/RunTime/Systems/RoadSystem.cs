@@ -83,12 +83,6 @@ namespace CitySim
                     else if (layers.ResourceLayer.TryGetValue(c, out var res) && res.Amount > 0)
                         blocked = true;
 
-                    // 다른 플레이어 영역(클레임) 안엔 도로 배치 불가 (적 건물 M칸 이내).
-                    //   도로는 영역이 아니므로 적 도로 옆/근처엔 깔 수 있음(도로 위 충돌은 위 점유 검사 소관).
-                    if (!blocked &&
-                        ClaimOps.InEnemyClaim(c, ownerLocalId, ClaimOps.DefaultMargin, in layers.OccupancyLayer))
-                        blocked = true;
-
                     // 지형 타입 거부 — 도로는 물 위에 못 깐다 (다리 미지원). Land 전용.
                     if (!layers.TerrainLayer.TryGetValue(c, out var ct))
                         blocked = true;          // 맵 밖

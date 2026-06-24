@@ -531,9 +531,16 @@
   `RoadSystem` 배치, AI `BlockValid` 박스 1패스, 프리뷰 `ClaimBlocked`). 도로 봉쇄·grief는 maintenance
   decay가 대체. ⚠ **부작용 명시**: 클레임이 막던 **건물 carpet/plop 보호도 함께 사라짐** — 필요하면
   추후 별도 메커니즘으로(maintenance와 무관). zone-raze / 전투 복구(`NetworkRepair`)는 별개라 유지.
-- ⬜ **구현 골격**:
-  0. (선행) 클레임 게이트 제거 — `ClaimOps` + 호출처 4곳 은퇴.
-  1. `RoadMaintenanceDepot` 건물 태그 `{OwnerLocalId, MaxDist}` + `RegistryItem` authoring 플래그.
+- ✅ **베이스 링 도로 = 영구(decay 예외)** (확정, 2026-06-24): 관리소를 잃어도 베이스 외곽 링은
+  decay 안 함(zone permanent와 동일 취지) → 베이스 brick 방지. 확장 도로만 관리 대상. Phase 3에서 반영.
+- 🔧 **구현 골격** (Phase 0부터 단계 진행 — 사용자 단계확인 방식):
+  0. ✅ **클레임 게이트 제거 완료** (2026-06-24) — `ClaimOps.cs`(+.meta) 삭제 + 호출처 6곳 정리:
+     `RoadBuildController.SegmentBlockStatus`, `RoadSystem` 배치, `BuildingPlacement.ValidateCells`
+     (+`PlacementFailCode.ClaimedByOther` 제거), `AiCityGrowthSystem.BlockValid`(박스스캔 제거),
+     `RoadBuildPreview`(`PreviewStatus.ClaimBlocked` 제거 → `Disconnected` 9→8 재번호, IsBlocking/ToText/색).
+     grep 잔여 0건. ⚠ 컴파일 검증은 Unity 에디터에서(이 환경엔 컴파일러 없음).
+     ⚠ **부작용 발효**: 건물 carpet/plop 보호 사라짐(설계대로). 봉쇄 방지는 Phase 1~4 maintenance가 대체 예정.
+  1. ⬜ `RoadMaintenanceDepot` 건물 태그 `{OwnerLocalId, MaxDist}` + `RegistryItem` authoring 플래그.
   2. `StampKind.RoadMaintenance` + coverage BFS 시스템 — depot 입구에서 도로망 다중소스 BFS(`MaxDist`),
      플레이어별 `StampLayers` 슬롯에 도장. dirty/라운드로빈은 stamp 패턴 그대로.
   3. `RoadCell` 미관리 카운터 + decay 시스템(`DayChanged` 게이트): covered면 리셋 / 아니면 +1 / ≥K면 강제 철거.
