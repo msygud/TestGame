@@ -158,6 +158,22 @@ namespace CitySim
                          ref map, in roadLayer, ref queue, ref visited);
             }
 
+            // ── ③-c 같은 플레이어 소유 도로 관리시설도 동일 BFS로 도장(Kind=RoadMaintenance) ──
+            //   Relief=None. 도달 범위 안 도로셀에 RoadMaintenance 도장만 찍는다.
+            //   RoadDecaySystem이 이 도장 유무로 "관리됨 vs 미관리"를 판정.
+            //   입구 없는 관리시설(BuildingEntrance 미부착)은 쿼리에서 자동 제외.
+            foreach (var (depot, footprint, bEntrance, entity) in
+                     SystemAPI.Query<RefRO<RoadMaintenanceDepot>, RefRO<BuildingFootprint>,
+                                     RefRO<BuildingEntrance>>().WithEntityAccess())
+            {
+                if (depot.ValueRO.OwnerLocalId != target)
+                    continue;
+
+                StampOne(in footprint.ValueRO, in bEntrance.ValueRO, entity, target,
+                         NeedType.None, depot.ValueRO.MaxDist, StampKind.RoadMaintenance,
+                         ref map, in roadLayer, ref queue, ref visited);
+            }
+
             visited.Dispose();
             queue.Dispose();
 

@@ -546,8 +546,12 @@
      `PrefabMeta` → `PrefabLookupBuildSystem` → `SpawnRequest` → `BuildingPlacement.EmitSingle` →
      `SpawnSystem`이 `IsRoadMaintenance`면 depot 태그 부착. ⬜ Unity에서 관리시설 프리팹 SO 항목에
      `IsRoadMaintenance=true`, `MaintenanceMaxDist=N` 설정 필요(에디터 수작업).
-  2. `StampKind.RoadMaintenance` + coverage BFS 시스템 — depot 입구에서 도로망 다중소스 BFS(`MaxDist`),
-     플레이어별 `StampLayers` 슬롯에 도장. dirty/라운드로빈은 stamp 패턴 그대로.
+  2. ✅ **coverage BFS 완료** (2026-06-24) — `StampKind.RoadMaintenance` 추가 + `StampRebuildSystem`에
+     depot 쿼리 루프 1개 추가(supplier/warehouse 옆). `StampOne`이 `kind` 파라미터를 받아 그대로 재사용 —
+     depot 입구 도로셀에서 `MaxDist`까지 도로망 BFS, **같은 stamp 레이어에 RoadMaintenance Kind로 누적**
+     (Relief=None). 관리시설도 건물이라 배치 시 `StampDirtyEvent` 자동 발행(BuildingPlacement 227행) →
+     슬롯 dirty → 재빌드. 입구 없는 depot은 쿼리에서 자동 제외(BFS 시작점 없음). ⚠ depot 프리팹은 SO
+     `Entrances[]`에 입구 정의 필요(공급자와 동일 전제).
   3. `RoadCell` 미관리 카운터 + decay 시스템(`DayChanged` 게이트): covered면 리셋 / 아니면 +1 / ≥K면 강제 철거.
   4. 베이스캠프에 관리소 1개 기본 포함(`FactionBaseSpawnSystem`) → 초기 도로 coverage 보장.
   5. AI(`AiCityGrowthSystem`) — 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업, 마지막 단계).

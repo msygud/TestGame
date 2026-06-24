@@ -24,6 +24,7 @@ namespace CitySim
     {
         Supplier = 0,   // 욕구 공급자(Relief 의미 있음). ServiceSearch가 매칭.
         Warehouse,      // 물류 창고(Relief=None). pull/push가 품목별로 사용.
+        RoadMaintenance, // 도로 관리시설(Relief=None). RoadDecaySystem이 도장 유무로 관리 판정.
     }
 
     /// <summary>
