@@ -119,13 +119,17 @@ namespace CitySim
 
                 // ── 베이스캠프 외곽 도로 발행 ─────────────────────────
                 int campSize = 8;
+                int  maintenanceMainKey = 0;
+                int2 maintenanceOffset  = default;
                 if (metaBuf.IsCreated)
                 {
                     for (int m = 0; m < metaBuf.Length; m++)
                     {
                         if (metaBuf[m].FactionId == slot.FactionId)
                         {
-                            campSize = metaBuf[m].BaseCampSize;
+                            campSize           = metaBuf[m].BaseCampSize;
+                            maintenanceMainKey = metaBuf[m].MaintenanceMainKey;
+                            maintenanceOffset  = metaBuf[m].MaintenanceOffset;
                             break;
                         }
                     }
@@ -176,6 +180,26 @@ namespace CitySim
                         RequireRoadAccess = true,
                     });
 
+                    requestCount++;
+                }
+
+                // ── 도로 관리시설 1개 자동 배치 (coverage 앵커) ──────────
+                //   없으면 이 팀의 비-영구 도로가 coverage 밖이 되어 decay된다.
+                //   입구가 외곽 링 도로에 닿아야(RequireRoadAccess) 정상 배치 + BFS 시작점 확보.
+                if (maintenanceMainKey > 0)
+                {
+                    int mvk = variantProfile.Resolve(maintenanceMainKey, who);
+                    var de = ecb.CreateEntity();
+                    ecb.AddComponent(de, new PlaceBuildingRequest
+                    {
+                        MainKey           = maintenanceMainKey,
+                        VariantKey        = mvk,
+                        Cell              = buildOrigin + maintenanceOffset,
+                        RotationY         = 0f,
+                        OwnerLocalId      = ownerLocalId,
+                        FactionId         = slot.FactionId,
+                        RequireRoadAccess = true,
+                    });
                     requestCount++;
                 }
             }

@@ -47,6 +47,17 @@ namespace CitySim
         [Min(3)]
         public int BaseCampSize = 8;
 
+        [Header("Road Maintenance")]
+        [Tooltip("도로 관리시설 건물의 MainKey. 이 프리팹은 GamePrefabRegistry에서 IsRoadMaintenance=true + " +
+                 "입구(Entrances) 정의가 있어야 한다.\n" +
+                 "0 = 베이스에 관리시설 자동 배치 안 함 ⚠ 그러면 이 팩션의 비-영구 도로가 coverage 밖이 되어 " +
+                 "RoadDecaySystem이 며칠 뒤 철거한다(베이스 외곽 링만 영구 보존).")]
+        public int MaintenanceMainKey;
+
+        [Tooltip("관리시설 배치 위치 — 건물 영역 원점(buildOrigin) 기준 상대 셀.\n" +
+                 "RequireRoadAccess=true이므로 입구가 외곽 링 도로에 닿는 자리여야 한다(보통 영역 가장자리).")]
+        public Vector2Int MaintenanceCellOffset;
+
         [Tooltip("게임 시작 시 팀 스타트포인트 기준으로 배치될 건물·유닛 목록.")]
         public List<BaseSpawnEntry> BaseEntries = new();
     }

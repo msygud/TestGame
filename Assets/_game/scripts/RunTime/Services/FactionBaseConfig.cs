@@ -14,6 +14,10 @@ namespace CitySim
     {
         public int FactionId;
         public int BaseCampSize;
+        /// <summary>도로 관리시설 MainKey. 0 = 자동 배치 안 함.</summary>
+        public int  MaintenanceMainKey;
+        /// <summary>관리시설 배치 오프셋 — buildOrigin 기준 상대 셀.</summary>
+        public int2 MaintenanceOffset;
     }
 
     // ══════════════════════════════════════════════════════════════

@@ -560,7 +560,13 @@
      `RoadCell.Permanent` 전달, `FactionBaseSpawnSystem.EmitPerimeterRoads`가 `Permanent=1` 발행 → decay 제외.
      중립/맵 도로(owner∉[0,8))도 제외. 멀티셀은 footprint 원점 1회만 철거(근사, 1×1 전용). ⚠ **Phase 4 의존**:
      depot 프리팹 등록 + 베이스 포함 전까지는 coverage가 비어 비-영구 도로가 K일 후 decay(=의도된 메커니즘).
-  4. 베이스캠프에 관리소 1개 기본 포함(`FactionBaseSpawnSystem`) → 초기 도로 coverage 보장.
+  4. ✅ **베이스캠프 관리시설 자동 포함 완료** (2026-06-24) — 관리시설을 **명시적 per-faction config 슬롯**으로
+     도입(일반 건물 목록에 묻지 않음 — 도로망 전체 생존을 좌우하는 특별 역할). `FactionBaseDefinition` SO에
+     `MaintenanceMainKey` + `MaintenanceCellOffset` 필드 → `BakedFactionMeta` → Baker → `FactionBaseSpawnSystem`이
+     베이스 생성 시 `MaintenanceMainKey>0`이면 `buildOrigin+offset`에 `PlaceBuildingRequest{RequireRoadAccess=true}`
+     1개 발행(`BaseCampSize`와 동일 경로). 입구가 외곽 링에 닿는 자리여야 정상 배치 + BFS 시작점 확보.
+     ⬜ 에디터: depot 프리팹을 GamePrefabRegistry에 `IsRoadMaintenance=true` + `Entrances` 정의로 등록하고,
+     각 `FactionBaseDefinition`에 `MaintenanceMainKey`/`MaintenanceCellOffset` 설정.
   5. AI(`AiCityGrowthSystem`) — 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업, 마지막 단계).
 - ❓ **튜닝**: `MaxDist`(순찰 반경), decay `K` — 골격 후 실측.
 

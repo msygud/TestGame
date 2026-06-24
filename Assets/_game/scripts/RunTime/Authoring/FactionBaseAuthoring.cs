@@ -36,6 +36,10 @@ namespace CitySim
                     {
                         FactionId    = def.FactionId,
                         BaseCampSize = math.max(3, def.BaseCampSize),
+                        MaintenanceMainKey = def.MaintenanceMainKey,
+                        MaintenanceOffset  = new int2(
+                            def.MaintenanceCellOffset.x,
+                            def.MaintenanceCellOffset.y),
                     });
 
                     foreach (var entry in def.BaseEntries)
