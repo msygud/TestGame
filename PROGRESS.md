@@ -540,7 +540,12 @@
      `RoadBuildPreview`(`PreviewStatus.ClaimBlocked` 제거 → `Disconnected` 9→8 재번호, IsBlocking/ToText/색).
      grep 잔여 0건. ⚠ 컴파일 검증은 Unity 에디터에서(이 환경엔 컴파일러 없음).
      ⚠ **부작용 발효**: 건물 carpet/plop 보호 사라짐(설계대로). 봉쇄 방지는 Phase 1~4 maintenance가 대체 예정.
-  1. ⬜ `RoadMaintenanceDepot` 건물 태그 `{OwnerLocalId, MaxDist}` + `RegistryItem` authoring 플래그.
+  1. ✅ **관리시설 컴포넌트 + authoring 체인 완료** (2026-06-24) — `IsSupplier` 경로 미러링:
+     `RoadMaintenanceDepot{OwnerLocalId, MaxDist}` 컴포넌트(`StampRebuildSystem.cs`, `StampSupplier` 옆) +
+     `RegistryItem.IsRoadMaintenance/MaintenanceMaxDist` 플래그 → `BakedPrefabEntry` → Baker →
+     `PrefabMeta` → `PrefabLookupBuildSystem` → `SpawnRequest` → `BuildingPlacement.EmitSingle` →
+     `SpawnSystem`이 `IsRoadMaintenance`면 depot 태그 부착. ⬜ Unity에서 관리시설 프리팹 SO 항목에
+     `IsRoadMaintenance=true`, `MaintenanceMaxDist=N` 설정 필요(에디터 수작업).
   2. `StampKind.RoadMaintenance` + coverage BFS 시스템 — depot 입구에서 도로망 다중소스 BFS(`MaxDist`),
      플레이어별 `StampLayers` 슬롯에 도장. dirty/라운드로빈은 stamp 패턴 그대로.
   3. `RoadCell` 미관리 카운터 + decay 시스템(`DayChanged` 게이트): covered면 리셋 / 아니면 +1 / ≥K면 강제 철거.

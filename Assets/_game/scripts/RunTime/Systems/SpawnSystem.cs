@@ -92,6 +92,13 @@ namespace CitySim
                             Relief       = req.ValueRO.Relief,
                             MaxDist      = req.ValueRO.SupplyMaxDist,
                         });
+
+                    if (req.ValueRO.IsRoadMaintenance)
+                        ecb.AddComponent(instance, new RoadMaintenanceDepot
+                        {
+                            OwnerLocalId = req.ValueRO.OwnerLocalId,
+                            MaxDist      = req.ValueRO.MaintenanceMaxDist,
+                        });
                 }
 
                 ecb.DestroyEntity(reqEntity);

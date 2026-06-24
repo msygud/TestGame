@@ -189,6 +189,13 @@ namespace CitySim
         // NeedType : ulong 은 Unity 직렬화 미지원 → ulong 백킹 + 프로퍼티로 우회
         public NeedType Relief { get => (NeedType)ReliefRaw; set => ReliefRaw = (ulong)value; }
 
+        [Header("Road Maintenance")]
+        [Tooltip("이 건물이 도로 관리시설인지. true면 배치 시 RoadMaintenanceDepot가 부착되어 " +
+                 "도로망 BFS 도달 범위 안의 도로를 유지(decay 방지)한다.")]
+        public bool    IsRoadMaintenance;
+        [Tooltip("관리 도달 거리(도로 칸 수). 도로망 BFS로 이 거리 내 도로가 유지된다. 0 이하면 무제한.")]
+        public int     MaintenanceMaxDist;
+
         [Header("DLC")]
         // 0이면 레지스트리의 dlcId를 따름.
         public int DlcKey;

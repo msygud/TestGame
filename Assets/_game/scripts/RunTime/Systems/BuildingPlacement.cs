@@ -332,6 +332,9 @@ namespace CitySim
                 IsSupplier      = meta.IsSupplier,
                 Relief          = meta.Relief,
                 SupplyMaxDist   = meta.SupplyMaxDist,
+
+                IsRoadMaintenance  = meta.IsRoadMaintenance,
+                MaintenanceMaxDist = meta.MaintenanceMaxDist,
             });
             ecb.AddComponent<MapLoaded>(e);
         }
