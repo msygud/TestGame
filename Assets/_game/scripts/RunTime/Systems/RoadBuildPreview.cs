@@ -50,7 +50,10 @@ namespace CitySim
         OwnerWarn       = 5,
         ResourceBlocked = 6,  // 채취 자원 위 — 건설 불가 (자원 보존)
         WillClear       = 7,  // 환경물(나무/바위) 위 — 건설 가능, 배치 시 철거됨
-        Disconnected    = 8,  // 내 기존 도로망에 연결 안 됨 — 건설 안 됨(연속성)
+        Disconnected     = 8,  // 내 기존 도로망에 연결 안 됨 — 건설 안 됨(연속성)
+        Coverage         = 9,  // 새로 배치할 관리시설의 도달 범위 (청색, 비차단)
+        CoverageExisting = 10, // 기존 관리시설들의 도달 범위 = 현재 관리되는 도로(연결성, 초록, 비차단)
+        DepotExisting    = 11, // 기존 관리시설 위치 마커 (금색, 비차단)
     }
 
     /// <summary>프리뷰 마커 한 칸.</summary>
@@ -88,6 +91,9 @@ namespace CitySim
             PreviewStatus.ResourceBlocked => "건설 불가: 자원 점유",
             PreviewStatus.WillClear      => "환경물 철거 후 건설",
             PreviewStatus.Disconnected   => "건설 안 됨: 기존 도로와 연결 안 됨",
+            PreviewStatus.Coverage       => "관리 범위",
+            PreviewStatus.CoverageExisting => "기존 관리 범위",
+            PreviewStatus.DepotExisting  => "기존 관리소",
             _                            => string.Empty,
         };
     }
@@ -122,6 +128,9 @@ namespace CitySim
             PreviewStatus.ResourceBlocked => new Color(0.10f, 0.70f, 0.85f, 1f), // 청록 (자원)
             PreviewStatus.WillClear      => new Color(0.55f, 0.40f, 0.20f, 1f), // 갈색 (철거 예정)
             PreviewStatus.Disconnected   => new Color(0.45f, 0.45f, 0.50f, 1f), // 회색 (미연결)
+            PreviewStatus.Coverage       => new Color(0.20f, 0.55f, 1.00f, 1f), // 청색 (새 관리 범위)
+            PreviewStatus.CoverageExisting => new Color(0.30f, 0.80f, 0.45f, 1f), // 초록 (기존 관리 범위)
+            PreviewStatus.DepotExisting  => new Color(1.00f, 0.80f, 0.20f, 1f), // 금색 (기존 관리소 위치)
             _                            => Color.white,
         };
 

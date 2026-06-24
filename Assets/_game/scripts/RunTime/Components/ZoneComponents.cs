@@ -164,5 +164,24 @@ namespace CitySim
         {
             xa = O.x - Road; xb = O.x + K; za = O.y - Road; zb = O.y + K;
         }
+
+        /// <summary>
+        /// 구역(원점 O, 내부변 K, 도로폭 Road)의 링 셀 전체를 outSet에 추가한다.
+        /// RegisterZone/ReleaseZone의 링 enumerate와 동일 셀 집합. 외부 소비처(예: 도로
+        /// decay 면제 — 영구 구역=베이스 외곽 링)가 링 셀 집합을 얻을 때 사용.
+        /// </summary>
+        public static void CollectRingCells(int2 O, int K, int Road, ref NativeHashSet<int2> outSet)
+        {
+            EnumRingBegin(O, K, Road, out int xa, out int xb, out int za, out int zb);
+            int step = Road <= 1 ? 1 : Road;
+            for (int z = za; z <= zb; z += step)
+            for (int x = xa; x <= xb; x += step)
+            {
+                if (!(x == xa || x == xb || z == za || z == zb)) continue;   // 링(둘레)만
+                for (int dz = 0; dz < step; dz++)
+                for (int dx = 0; dx < step; dx++)
+                    outSet.Add(new int2(x + dx, z + dz));
+            }
+        }
     }
 }

@@ -546,12 +546,84 @@
      `PrefabMeta` → `PrefabLookupBuildSystem` → `SpawnRequest` → `BuildingPlacement.EmitSingle` →
      `SpawnSystem`이 `IsRoadMaintenance`면 depot 태그 부착. ⬜ Unity에서 관리시설 프리팹 SO 항목에
      `IsRoadMaintenance=true`, `MaintenanceMaxDist=N` 설정 필요(에디터 수작업).
-  2. `StampKind.RoadMaintenance` + coverage BFS 시스템 — depot 입구에서 도로망 다중소스 BFS(`MaxDist`),
-     플레이어별 `StampLayers` 슬롯에 도장. dirty/라운드로빈은 stamp 패턴 그대로.
-  3. `RoadCell` 미관리 카운터 + decay 시스템(`DayChanged` 게이트): covered면 리셋 / 아니면 +1 / ≥K면 강제 철거.
+  2. ✅ **`StampKind.RoadMaintenance` + 런타임 coverage stamp 완료** (2026-06-25):
+     `StampKind.RoadMaintenance` 추가([StampComponents.cs](Assets/_game/scripts/RunTime/Components/StampComponents.cs)).
+     [`StampRebuildSystem`](Assets/_game/scripts/RunTime/Systems/StampRebuildSystem.cs)에 공급자/창고 옆
+     **③-c depot 도장 루프** 추가 — `RoadMaintenanceDepot`+`BuildingFootprint`+`BuildingEntrance` 소유자별로
+     입구 도로셀에서 도로망 BFS(`MaxDist`) → `StampLayers` 슬롯에 `Kind=RoadMaintenance` 도장. dirty/
+     라운드로빈/`HourChanged` 게이팅·road 변경 dirty(RoadSystem)·depot 배치 dirty(BuildingPlacement) 전부
+     기존 인프라 그대로 재사용. **`StampOne`의 인라인 BFS를 공용 `RoadCoverageOps.Flood`로 교체** →
+     공급자/창고/관리시설 + 배치 프리뷰가 **단일 BFS fact 공유**(프리뷰 ≡ 런타임 보장, `IsOwnedRoad` 제거).
+  3. ✅ **decay 시스템 완료** (2026-06-25) — [RoadDecaySystem.cs](Assets/_game/scripts/RunTime/Systems/RoadDecaySystem.cs):
+     `RoadDecayState` 싱글톤(`Unmaintained: NativeHashMap<int2,int>` + `GraceDays`(기본 3))을 `RoadDecayInitSystem`이
+     Persistent 수명주기(GridInit 패턴)로 관리. **카운터는 RoadCell이 아니라 별도 맵** — RoadSystem/RoadCell 무수정
+     (결합 0, 셀 사라지면 orphan 정리 패스로 비움). `RoadDecaySystem`(`[UpdateBefore RoadSystem]`, `DayChanged` 게이트):
+     ① 영구 구역(`CityZones.Permanent`=베이스) 외곽 링을 면제 셀로 수집(`ZoneOps.CollectRingCells` 신규) →
+     ② 모든 도로셀 순회 — 소유없음/면제/covered(owner 슬롯 stamp에 `RoadMaintenance` 도장)면 카운터 리셋, 아니면 +1,
+     `GraceDays` 도달 시 `RemoveRoadCommand{Forced=1}` 발행 → ③ orphan 카운터 정리. `GraceDays<=0`이면 decay off.
+     ⚠ Phase 4(베이스 관리소) 전엔 **베이스 외곽 링만 자동 면제** — 그 밖의 도로는 depot coverage 없으면 K일 후 철거됨
+     (테스트 시 depot로 덮은 도로만 생존). 시스템 순서 `RoadDecay → RoadSystem`(같은 프레임 철거 실행).
   4. 베이스캠프에 관리소 1개 기본 포함(`FactionBaseSpawnSystem`) → 초기 도로 coverage 보장.
   5. AI(`AiCityGrowthSystem`) — 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업, 마지막 단계).
 - ❓ **튜닝**: `MaxDist`(순찰 반경), decay `K` — 골격 후 실측.
+
+### 도로탭 배치 + 배치-시점 커버리지 프리뷰 (2026-06-25)
+> **사용자 결정**: 관리소는 일반 건물이 아니라 **도로 인프라** → 건물탭이 아니라 **도로탭에서 배치**.
+> 그리고 배치할 때 **그 관리소가 커버할 도로(도로망 BFS 도달 범위)를 실시간으로 보여준다**
+> (보급선처럼 관리소를 이어 깔아야 하는 전략을 눈으로 계획).
+
+- ✅ **공용 커버리지 BFS fact** — [`RoadCoverageOps.Flood`](Assets/_game/scripts/RunTime/Systems/RoadCoverageOps.cs):
+  시작 도로셀에서 같은 소유자 도로망을 `MaxDist`칸 BFS(셀 `Directions` 비트 + 이웃 반대 비트 양방향 =
+  `StampRebuildSystem.StampOne`과 **동일 규칙**). `covered`(셀→거리) 반환. **프리뷰와 Phase 2 런타임 stamp가
+  같은 fact 공유 → 항상 일치.** (Phase 2는 이 결과를 `StampKind.RoadMaintenance` 도장으로 변환만 하면 됨.)
+- ✅ **`PreviewStatus.Coverage`(청색, 비차단)** 추가 — [RoadBuildPreview.cs](Assets/_game/scripts/RunTime/Systems/RoadBuildPreview.cs)
+  (색/`ToText`/`IsBlocking=false`). 기존 `RoadBuildPreviewRenderSystem` GL 마커 그대로 재사용.
+- ✅ **`DepotPlaceController`** (신규, [DepotPlaceController.cs](Assets/_game/scripts/RunTime/Systems/DepotPlaceController.cs)):
+  도로탭 안 관리소 배치 모드. 호버 → meta/입구 조회 → **입구가 내 도로 향하도록 회전 자동선택** →
+  footprint 검증(`ValidateCells`와 동치: 범위/점유/자원/단차/지형타입) → 입구 도로셀에서
+  `RoadCoverageOps.Flood` → `PreviewCell` 버퍼에 footprint 마커 + 청색 커버리지. 좌클릭 시
+  `PlaceBuildingRequest{관리소 MainKey, RequireRoadAccess=false}` 발행(Phase 1 배선 그대로 동작).
+  `RoadBuildController`와 **같은 프리뷰 싱글톤 공유**(동시 하나만 활성).
+- ✅ **(2026-06-25) 배치 중 기존 관리소·연결성 오버레이** — 배치 모드에서 내 **모든 기존 관리소 위치
+  (금색 마커)** + **그들의 coverage union(초록=현재 관리되는 도로 연결성)** 을 같이 그림. 위에 새 depot의
+  footprint + 도달 범위(청색)를 얹어 **빈틈/중복/연쇄 배치를 눈으로 계획**. 기존 관리소는 매 프레임
+  `RoadMaintenanceDepot` 쿼리 → 각자 `RoadCoverageOps.Flood`로 재계산(항상 최신, stamp 타이밍 무관).
+  렌더 순서 = 기존coverage→새footprint→새coverage→기존관리소위치(최상단). 상태 추가:
+  `PreviewStatus.CoverageExisting`(초록)·`DepotExisting`(금색). 테스트 override `MaintenanceMaxDistOverride`로
+  프리팹 미설정 상태에서도 유한 반경 확인(프리뷰·배치 동일 값, `PlaceBuildingRequest`로 얇게 전달).
+- ✅ **GameHUD 도로탭에 "관리소 배치" 토글** — [GameHUD.cs](Assets/_game/scripts/RunTime/UI/GameHUD.cs):
+  도로 건설과 **상호배타**(한쪽 진입 시 다른쪽 해제), Escape 해제, 호버 라벨에 활성 도구 상태 표시.
+- ✅ **설계 원칙 유지**: 입구가 도로에 안 닿아도 **차단 않고** 빈 커버리지+경고만(인간 배치는 정보만 제공).
+  단, 커버리지가 의미 있도록 입구-도로 향 회전을 자동 선택.
+- ⬜ **Unity 수작업**: ① 관리소 프리팹 `RegistryItem`에 `IsRoadMaintenance=true`/`MaintenanceMaxDist=N`
+  + **입구(Entrances[]) 정의**(BFS 시작점 — 없으면 커버리지/Phase 2 BFS 모두 스킵). ② 도로 패널에
+  "관리소 배치" 버튼 + 라벨 배치. ③ `GameHUD._depotController`/`_btnDepotToggle`/`_lblDepotToggle` 와이어링 +
+  `DepotPlaceController.DepotMainKey`(=관리소 MainKey) 지정. ④ 컴파일 검증은 에디터에서(이 환경엔 컴파일러 없음).
+- ❓ `DepotPlaceController`의 ECS접근/팩션해소/레이캐스트는 `RoadBuildController` 복사 — 추후 공용 베이스 추출 가능.
+
+### 🟢 현재 상태 (2026-06-25 세션 종료) — Road Maintenance Phase 0~3 완료, 4~5 대기
+> 다음 세션은 이 블록부터 읽으면 됨. **런타임 도로 유지 루프가 end-to-end 동작**(배치→도장→decay).
+
+- **완료**: Phase 0(클레임 게이트 제거) · Phase 1(depot 컴포넌트+authoring) · Phase 2(`StampKind.RoadMaintenance`
+  런타임 도장, BFS는 공용 `RoadCoverageOps.Flood`) · Phase 3(`RoadDecaySystem` 미관리 decay) ·
+  도로탭 배치 UI(`DepotPlaceController`) + 배치-시점 커버리지 프리뷰 + **기존 관리소·연결성 오버레이**.
+- **확정 동작 흐름**: 도로탭 "관리소 배치" → 호버 시 footprint+청색 coverage(+기존 관리소 금색/기존 범위 초록) →
+  좌클릭 `PlaceBuildingRequest` → `SpawnSystem`이 `RoadMaintenanceDepot` 부착 → `StampRebuildSystem`이
+  도로망에 `RoadMaintenance` 도장 → `RoadDecaySystem`이 미관리(도장 없음) 도로를 `GraceDays`(3) 후 강제 철거.
+  베이스 외곽 링(영구 구역)은 면제.
+- ⚠ **테스트 스캐폴딩 — 프리팹 정리 후 제거할 것**:
+  - `DepotPlaceController.MaintenanceMaxDistOverride`(기본 6) + `PlaceBuildingRequest.MaintenanceMaxDistOverride`
+    + `BuildingPlacement.EmitSingle`의 override 분기. **`>0`이면 배치를 강제로 관리시설화**(IsRoadMaintenance=true +
+    MaxDist=override) → 프리팹 미설정 상태에서 풀 루프 테스트용. 프리팹에 `IsRoadMaintenance`/`MaintenanceMaxDist`를
+    설정·베이크한 뒤엔 override를 **0으로 되돌리면** 프리팹 메타 그대로 사용.
+- ⬜ **다음 단계**:
+  - **Phase 4** — `FactionBaseSpawnSystem`에 베이스 관리소 1개 기본 배치(초기 coverage 보장 → 베이스 인근 도로 decay 방지).
+  - **Phase 5** — `AiCityGrowthSystem`에 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업).
+  - **Unity 수작업**: 관리소 프리팹 `RegistryItem`에 `IsRoadMaintenance=true`/`MaintenanceMaxDist=N` + 입구 정의
+    (윈도우에 "Road Maintenance" 필드 추가됨, 베이크 필요) / 도로 패널에 "관리소 배치" 버튼·라벨 + GameHUD 와이어링.
+  - **튜닝(실측)**: `MaintenanceMaxDist`(순찰 반경), `RoadDecayState.GraceDays`(유예 일수).
+  - **폴리시/한계**: K 도달 시 일괄 철거(점진 erosion·"금 간 도로" telegraph 미구현) / 멀티셀 도로(roadSize>1) 미대응 /
+    Supply 필드(`IsSupplier`/`Relief`/`SupplyMaxDist`)는 등록 윈도우에 아직 없음(필요 시 추가).
 
 ---
 

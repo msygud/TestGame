@@ -51,6 +51,12 @@ namespace CitySim
         [SerializeField] TMP_Text  _lblSegmentInfo;  // "구간: N"
         [SerializeField] TMP_Text  _lblHoverStatus;  // 호버 셀 사유 ("건설 불가: 단차 불일치" 등)
 
+        // ── 관리소 배치 (도로 인프라 — 건물탭 아님) ─────────────────
+        [Header("도로 관리시설 배치")]
+        [SerializeField] DepotPlaceController _depotController;
+        [SerializeField] Button   _btnDepotToggle;   // 배치 시작 / 중지 토글
+        [SerializeField] TMP_Text _lblDepotToggle;   // "Place Depot" / "Stop Depot"
+
         // ── 탭 색 ──────────────────────────────────────────────────
         static readonly Color TabActive   = new Color(0.25f, 0.55f, 1.00f);
         static readonly Color TabInactive = new Color(0.20f, 0.20f, 0.20f);
@@ -67,15 +73,24 @@ namespace CitySim
             _btnRoadConfirm.onClick.AddListener(OnRoadConfirm);
             _btnRoadUndo   .onClick.AddListener(OnRoadUndo);
 
+            if (_btnDepotToggle != null)
+                _btnDepotToggle.onClick.AddListener(OnDepotToggle);
+
             ShowTab(0);
         }
 
         void Update()
         {
-            if (_activeTab == 0 && _roadController != null && _roadController.IsModeActive)
+            if (_activeTab != 0) return;
+
+            bool roadActive  = _roadController  != null && _roadController.IsModeActive;
+            bool depotActive = _depotController != null && _depotController.IsModeActive;
+            if (!roadActive && !depotActive) return;
+
+            var kb = Keyboard.current;
+            if (kb != null)
             {
-                var kb = Keyboard.current;
-                if (kb != null)
+                if (roadActive)
                 {
                     if (kb.enterKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame)
                         OnRoadConfirm();
@@ -84,9 +99,13 @@ namespace CitySim
                     else if (kb.escapeKey.wasPressedThisFrame)
                         OnRoadToggle();
                 }
-
-                RefreshRoadPanel();
+                else if (depotActive && kb.escapeKey.wasPressedThisFrame)
+                {
+                    OnDepotToggle();
+                }
             }
+
+            RefreshRoadPanel();
         }
 
         // ───────────────────────────────────────────────────────────
@@ -96,9 +115,14 @@ namespace CitySim
         {
             if (_activeTab == idx) return;
 
-            // 이전 탭 정리
-            if (_activeTab == 0 && _roadController != null && _roadController.IsModeActive)
-                _roadController.ExitBuildMode();
+            // 이전 탭 정리 — 도로탭의 두 도구(도로 건설/관리소 배치) 모두 해제.
+            if (_activeTab == 0)
+            {
+                if (_roadController != null && _roadController.IsModeActive)
+                    _roadController.ExitBuildMode();
+                if (_depotController != null && _depotController.IsModeActive)
+                    _depotController.ExitMode();
+            }
 
             _activeTab = idx;
 
@@ -126,9 +150,35 @@ namespace CitySim
             if (_roadController == null) return;
 
             if (_roadController.IsModeActive)
+            {
                 _roadController.ExitBuildMode();
+            }
             else
+            {
+                // 상호배타 — 관리소 배치 모드가 켜져 있으면 먼저 끈다.
+                if (_depotController != null && _depotController.IsModeActive)
+                    _depotController.ExitMode();
                 _roadController.EnterBuildMode();
+            }
+
+            RefreshRoadPanel();
+        }
+
+        // 관리소 배치 토글 — 도로 건설과 상호배타(같은 프리뷰 버퍼 공유).
+        void OnDepotToggle()
+        {
+            if (_depotController == null) return;
+
+            if (_depotController.IsModeActive)
+            {
+                _depotController.ExitMode();
+            }
+            else
+            {
+                if (_roadController != null && _roadController.IsModeActive)
+                    _roadController.ExitBuildMode();
+                _depotController.EnterMode();
+            }
 
             RefreshRoadPanel();
         }
@@ -153,24 +203,34 @@ namespace CitySim
         void RefreshRoadPanel()
         {
             if (_roadController == null) return;
-            bool active = _roadController.IsModeActive;
+            bool roadActive  = _roadController.IsModeActive;
+            bool depotActive = _depotController != null && _depotController.IsModeActive;
 
             if (_lblRoadToggle  != null)
-                _lblRoadToggle.text = active ? "Stop" : "Build Road";
+                _lblRoadToggle.text = roadActive ? "Stop" : "Build Road";
 
+            if (_lblDepotToggle != null)
+                _lblDepotToggle.text = depotActive ? "Stop Depot" : "Place Depot";
+
+            // 도로 건설 전용 버튼은 도로 모드일 때만 활성.
             if (_btnRoadConfirm != null)
-                _btnRoadConfirm.interactable = active;
+                _btnRoadConfirm.interactable = roadActive;
 
             if (_btnRoadUndo != null)
-                _btnRoadUndo.interactable = active;
+                _btnRoadUndo.interactable = roadActive;
 
             if (_lblSegmentInfo != null)
-                _lblSegmentInfo.text = active
+                _lblSegmentInfo.text = roadActive
                     ? $"Segments: {_roadController.SegmentCount}"
                     : string.Empty;
 
+            // 호버 사유 라벨은 활성 도구의 상태를 표시.
             if (_lblHoverStatus != null)
-                _lblHoverStatus.text = active ? _roadController.HoverStatusText : string.Empty;
+            {
+                if (depotActive)      _lblHoverStatus.text = _depotController.StatusText;
+                else if (roadActive)  _lblHoverStatus.text = _roadController.HoverStatusText;
+                else                  _lblHoverStatus.text = string.Empty;
+            }
         }
     }
 }

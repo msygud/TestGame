@@ -158,6 +158,22 @@ namespace CitySim
                          ref map, in roadLayer, ref queue, ref visited);
             }
 
+            // ── ③-c 같은 플레이어 소유 도로 관리시설도 동일 BFS로 도장(Kind=RoadMaintenance) ──
+            //   Relief=None. 도달 범위 안의 도로셀에 RoadMaintenance 도장이 찍히고,
+            //   RoadDecaySystem(Phase 3)이 이 도장 없는 도로를 미관리로 보고 decay시킨다.
+            //   입구 없는 depot(BuildingEntrance 미부착)은 쿼리에서 자동 제외(BFS 시작점 없음).
+            foreach (var (depot, footprint, bEntrance, entity) in
+                     SystemAPI.Query<RefRO<RoadMaintenanceDepot>, RefRO<BuildingFootprint>,
+                                     RefRO<BuildingEntrance>>().WithEntityAccess())
+            {
+                if (depot.ValueRO.OwnerLocalId != target)
+                    continue;
+
+                StampOne(in footprint.ValueRO, in bEntrance.ValueRO, entity, target,
+                         NeedType.None, depot.ValueRO.MaxDist, StampKind.RoadMaintenance,
+                         ref map, in roadLayer, ref queue, ref visited);
+            }
+
             visited.Dispose();
             queue.Dispose();
 
@@ -167,13 +183,13 @@ namespace CitySim
         }
 
         // ──────────────────────────────────────────────────────────────────
-        //  공급자 1개 BFS — 입구 도로셀에서 시작해 자기 소유 도로를 4방 확산.
+        //  시설 1개 도장 — 입구 도로셀에서 owner 도로망을 maxDist까지 확산.
         //
-        //  · 시작점이 도로가 아니거나 내 소유가 아니면 즉시 종료 — 배치 검증을
-        //    통과했어야 정상이나, 런타임에 도로가 헐릴 수 있으므로 방어.
-        //  · 방문 셀마다 SupplierRef(공급자, Relief, dist) 도장.
-        //  · 같은 셀에 다른 공급자가 이미 있어도 무관 (MultiHashMap = 누적).
-        //  · 같은 공급자의 같은 셀 재방문은 visited로 차단 (최단거리 먼저 도달).
+        //  BFS는 공용 fact RoadCoverageOps.Flood에 위임한다 — 배치 프리뷰
+        //  (DepotPlaceController)와 **동일 규칙**이라 프리뷰 ≡ 런타임 coverage 보장.
+        //  · 입구 도로셀이 owner 도로가 아니면 Flood가 빈 결과(런타임 도로 철거 방어).
+        //  · 도달 셀마다 SupplierRef(시설, Relief, dist, Kind) 도장.
+        //  · 같은 셀에 다른 시설이 이미 있어도 무관 (MultiHashMap = 누적).
         // ──────────────────────────────────────────────────────────────────
         static void StampOne(
             in BuildingFootprint fp,
@@ -190,71 +206,24 @@ namespace CitySim
         {
             int2 start = EntranceOps.EntranceRoadCell(fp.Origin, fp.Size, in be.Entrance, fp.RotSteps);
 
-            if (!IsOwnedRoad(start, owner, in roadLayer))
-                return;
+            // 입구 도로셀에서 owner 도로망을 maxDist까지 확산(공용 fact).
+            //   queue/visited는 Flood 진입 시 Clear된다.
+            RoadCoverageOps.Flood(start, owner, maxDist, in roadLayer, ref queue, ref visited);
 
-            queue.Clear();
-            visited.Clear();
-
-            queue.Enqueue(start);
-            visited[start] = 0;
-
-            // 4방 오프셋.
-            var dirs = new NativeArray<int2>(4, Allocator.Temp);
-            dirs[0] = new int2(0, 1);   // N
-            dirs[1] = new int2(1, 0);   // E
-            dirs[2] = new int2(0, -1);  // S
-            dirs[3] = new int2(-1, 0);  // W
-
-            while (queue.TryDequeue(out int2 cell))
+            // 도달한 도로셀마다 도장(거리는 visited에 기록됨). 추가 순서 무관(소비처가 Dist로 정렬).
+            var cells = visited.GetKeyArray(Allocator.Temp);
+            for (int i = 0; i < cells.Length; i++)
             {
-                int dist = visited[cell];
-
-                // 도장 찍기.
+                int2 cell = cells[i];
                 map.Add(cell, new SupplierRef
                 {
                     Supplier = facilityEntity,
                     Relief   = relief,
-                    Dist     = dist,
+                    Dist     = visited[cell],
                     Kind     = kind,
                 });
-
-                // 거리 상한 도달 시 더 확장 안 함.
-                if (maxDist > 0 && dist >= maxDist)
-                    continue;
-
-                // 현재 셀의 연결 비트(Directions)를 따라서만 확산.
-                //   보행/시각과 동일 권위 데이터를 사용 → 평행 도로는 물류도 안 건너감,
-                //   교차 셀에서만 가로질러 전파(축-AND 결과 그대로 반영).
-                if (!roadLayer.TryGetValue(cell, out var curRc))
-                    continue;
-
-                for (int d = 0; d < 4; d++)
-                {
-                    if ((curRc.Directions & RoadDirOps.FromIndex(d)) == 0)
-                        continue;                                  // 이 방향으로 안 이어짐
-                    int2 next = cell + dirs[d];
-                    if (visited.ContainsKey(next))
-                        continue;
-                    if (!roadLayer.TryGetValue(next, out var nextRc) || nextRc.OwnerLocalId != owner)
-                        continue;
-                    // 이웃이 반대 방향으로 되받아 연결돼야 함(양방향 일치).
-                    if ((nextRc.Directions & RoadDirOps.FromIndex((d + 2) & 3)) == 0)
-                        continue;
-
-                    visited[next] = dist + 1;
-                    queue.Enqueue(next);
-                }
             }
-
-            dirs.Dispose();
-        }
-
-        /// <summary>그 셀이 도로 레이어에 있고, owner 소유인가.</summary>
-        static bool IsOwnedRoad(int2 cell, int owner,
-                                in NativeHashMap<int2, RoadCell> roadLayer)
-        {
-            return roadLayer.TryGetValue(cell, out var rc) && rc.OwnerLocalId == owner;
+            cells.Dispose();
         }
     }
 }

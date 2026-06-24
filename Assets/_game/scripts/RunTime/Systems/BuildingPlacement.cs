@@ -57,6 +57,14 @@ namespace CitySim
         /// (EntranceOps가 "입구 없음 → 제약 없음"으로 처리).
         /// </summary>
         public bool  RequireRoadAccess;
+
+        /// <summary>
+        /// 테스트용 관리시설 override(도로 칸 수). &gt;0이면 EmitSingle이 이 배치를 관리시설로
+        /// 강제한다: IsRoadMaintenance=true(RoadMaintenanceDepot 태그 부착) + MaintenanceMaxDist=이 값
+        /// (프리팹 IsRoadMaintenance/MaxDist 미설정 상태에서 풀 루프 테스트). 0 = 프리팹 메타 그대로.
+        /// AI/베이스 경로는 0(미사용).
+        /// </summary>
+        public int   MaintenanceMaxDistOverride;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -333,8 +341,12 @@ namespace CitySim
                 Relief          = meta.Relief,
                 SupplyMaxDist   = meta.SupplyMaxDist,
 
-                IsRoadMaintenance  = meta.IsRoadMaintenance,
-                MaintenanceMaxDist = meta.MaintenanceMaxDist,
+                // 테스트: MaintenanceMaxDistOverride>0이면 이 배치를 관리시설로 강제
+                //   (프리팹 IsRoadMaintenance 미설정 상태에서 RoadMaintenanceDepot 태그+범위 부여).
+                //   프리팹에 값을 설정·베이크한 뒤엔 override=0 → 프리팹 메타 그대로 사용.
+                IsRoadMaintenance  = req.MaintenanceMaxDistOverride > 0 || meta.IsRoadMaintenance,
+                MaintenanceMaxDist = req.MaintenanceMaxDistOverride > 0
+                    ? req.MaintenanceMaxDistOverride : meta.MaintenanceMaxDist,
             });
             ecb.AddComponent<MapLoaded>(e);
         }

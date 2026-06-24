@@ -19,11 +19,13 @@ namespace CitySim
     //  ※ 이 파일은 "그릇"만 정의한다. BFS 도장 / 수급자 조회는 후속 단계.
     // ══════════════════════════════════════════════════════════════════════
 
-    /// <summary>도장 종류. 같은 stamp 레이어에 공급자/창고가 함께 찍힌다.</summary>
+    /// <summary>도장 종류. 같은 stamp 레이어에 공급자/창고/관리시설이 함께 찍힌다.</summary>
     public enum StampKind : byte
     {
-        Supplier = 0,   // 욕구 공급자(Relief 의미 있음). ServiceSearch가 매칭.
-        Warehouse,      // 물류 창고(Relief=None). pull/push가 품목별로 사용.
+        Supplier = 0,    // 욕구 공급자(Relief 의미 있음). ServiceSearch가 매칭.
+        Warehouse,       // 물류 창고(Relief=None). pull/push가 품목별로 사용.
+        RoadMaintenance, // 도로 관리시설(Relief=None). 도달 범위 = 관리되는 도로.
+                         //   RoadDecaySystem(Phase 3)이 이 도장 없는 도로를 미관리로 판정.
     }
 
     /// <summary>
