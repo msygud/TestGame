@@ -187,6 +187,27 @@ Assets/_game/scripts/
 - 도로: `VariantKey = RoadDir` 비트마스크(1~15).
 - `NeedType : ulong`은 Unity 직렬화 미지원 → `ulong ReliefRaw` 백킹 필드 + `NeedType Relief` 프로퍼티.
 
+## 프리팹 메타데이터 3역할 (인스턴스 대상 결정·해석 골격)
+"무엇을 인스턴스할까"를 푸는 모든 데이터는 아래 **세 역할 중 하나**에 속한다.
+역할이 소유 정책(독점/공유)을 결정한다. 새 메타데이터는 반드시 한 역할에 배치할 것.
+
+| 역할 | 무엇 | 소유 | 예 |
+|---|---|---|---|
+| **해석 (Resolution)** | key → 엔티티 | **공유 단일** (칸막이 금지) | `MainKey`, `VariantKey`, `PrefabLookup` |
+| **결정 (Decision)** | 상황 → key | **시스템 독점** (도메인별 테이블) | `NeedMaps`→`NeedLookupL2`, `RoadKey`, (미래) 병종표 |
+| **능력 (Capability)** | 인스턴스가 무엇을 하나 | **공유 사실** (아이템 태그, 여러 시스템이 질의) | `ReliefRaw`/`IsSupplier`, `Size`, `Entrance`, `BuildableOn`, `IsRoadMaintenance` |
+
+- **불변식**: 결정자는 여럿이지만 모두 산출은 `(MainKey, VariantKey)` 하나로 수렴 →
+  단일 해석기(`PrefabLookup`)로 합류. 어떤 결정 테이블도 프리팹을 저장하지 않는다.
+- **독점은 결정에서만**: 시스템마다 판단 기준(입력 형태)이 다르므로 결정 테이블은 그 시스템 독점이 옳다.
+  단 **능력 데이터는 독점 금지** — 여러 시스템이 질의하므로 단일 출처로 두고 복사하지 않는다.
+- **새 필드 리트머스**: "판단 기준인가(→결정·독점) / 그 물건의 속성인가(→능력·공유 단일 출처) / key를 엔티티로 바꾸나(→해석·공유)".
+- **결정 테이블 거처 규칙**: 아이템 능력에서 **파생 가능**한 정책은 아이템과 동거(자동생성+얇은 오버라이드, 예 `NeedMaps`),
+  어느 속성으로도 표현 안 되는 **순수 외부 정책**만 별도 SO(예 `RoadPrefabRegistry`).
+- **A↔B drift 주의**: `NeedMaps`(결정: 욕구→key)와 `ReliefRaw`(능력: 건물→푸는 욕구)는 *반대 방향의 한 쌍*이다.
+  중복이 아니라 서로 일치해야 하는 관계 → 모든 `NeedMaps` 행의 MainKey는 `IsSupplier && ReliefRaw ⊇ NeedMask`인
+  아이템을 가져야 한다. `Validate()`에서 교차검증(미구현 — 오픈 이슈). `ReliefRaw`가 기본 관계의 단일 출처.
+
 ## 시민 컴포넌트 설계
 | 분류 | 컴포넌트 | 특징 |
 |---|---|---|
