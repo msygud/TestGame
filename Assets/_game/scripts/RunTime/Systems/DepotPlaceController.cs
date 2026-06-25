@@ -316,6 +316,16 @@ namespace CitySim
 
             ents.Dispose();
             q.Dispose();
+
+            // 영구 면제(베이스 외곽 링) 도로도 decay-안전 → 같은 coverage 색(초록)으로 표시.
+            //   depot coverage가 아니라 RoadDecayState.Exempt로 보호되지만, 플레이어 관점에선
+            //   "decay 안 되는 도로"가 한눈에 보이도록 합친다. 내 소유 도로만 필터.
+            if (TryGetSingleton(out RoadDecayState decay) && decay.Exempt.IsCreated)
+            {
+                foreach (var c in decay.Exempt)
+                    if (roadLayer.TryGetValue(c, out var rc) && rc.OwnerLocalId == slot)
+                        _existingCovered.TryAdd(c, 0);
+            }
         }
 
         // 입구가 내 도로를 향하면서 footprint도 유효한 회전을 우선 선택.

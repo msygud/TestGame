@@ -589,13 +589,41 @@
      `RoadDecayState` 싱글톤(`Unmaintained: NativeHashMap<int2,int>` + `GraceDays`(기본 3))을 `RoadDecayInitSystem`이
      Persistent 수명주기(GridInit 패턴)로 관리. **카운터는 RoadCell이 아니라 별도 맵** — RoadSystem/RoadCell 무수정
      (결합 0, 셀 사라지면 orphan 정리 패스로 비움). `RoadDecaySystem`(`[UpdateBefore RoadSystem]`, `DayChanged` 게이트):
-     ① 영구 구역(`CityZones.Permanent`=베이스) 외곽 링을 면제 셀로 수집(`ZoneOps.CollectRingCells` 신규) →
+     ① 면제 셀 = `RoadDecayState.Exempt`(베이스 외곽 링) →
      ② 모든 도로셀 순회 — 소유없음/면제/covered(owner 슬롯 stamp에 `RoadMaintenance` 도장)면 카운터 리셋, 아니면 +1,
      `GraceDays` 도달 시 `RemoveRoadCommand{Forced=1}` 발행 → ③ orphan 카운터 정리. `GraceDays<=0`이면 decay off.
+     - ✅ **(2026-06-25 수정) 베이스 면제를 모든 팀으로** — 처음엔 `CityZones.Permanent`(영구 구역) 링으로 면제했으나
+       영구 구역 등록이 `AiCityGrowthSystem`(**AI 전용**)에서만 일어나 **휴먼 베이스가 면제에서 빠져 decay로 날아감**.
+       → `RoadDecayState.Exempt`(`NativeHashSet<int2>`) 신규 + `FactionBaseSpawnSystem.EmitPerimeterRoads`가 베이스 링
+       footprint 셀을 **모든 팀(휴먼·AI) 공통으로** 등록. zone 의존 제거(`ZoneOps.CollectRingCells` 도로 미사용→삭제).
+     - ✅ **(2026-06-26 수정) 건물 파괴 시 stamp 무효화** — 증상: depot 건물을 파괴해도 그 도로가 decay 안 됨.
+       원인: `RazeSystem`이 건물을 destroy하면서 **`StampDirtyEvent`를 안 쏨**(도로 제거만 RoadSystem 경유로 dirty). depot만
+       죽고 도로는 남으면 stamp 재빌드가 안 돼 죽은 depot의 coverage 도장이 영구 잔존 → 영원히 '관리됨'. 해결:
+       `RazeSystem`이 파괴 건물의 `OwnerLocalId`를 모아 `StampDirtyEvent` 발행 → 다음 재빌드에서 도장 제거 → 미관리 도로 decay.
+       (⬜ 전투 사망 `CombatDeathSystem`도 건물 파괴 시 동일 dirty 필요 — 그 경로 구현 시 반영.)
+     - ✅ **(2026-06-26) 전역 day 일괄 → 셀별 연속 타이머 + telegraph** — 사용자 요구: 건설 중 갱신주기가 겹치면
+       도로가 *일괄* 파괴되는 게 거슬림. 신규 도로·depot 파괴 도로 모두 **미관리가 된 시각부터 셀별 타이머**를 타게.
+       해결: `Unmaintained`를 `<int2,int>(누적 일수)` → `<int2,double>(미관리 시작 게임시각 TotalSeconds)`로 변경.
+       `RoadDecaySystem` 게이트 `DayChanged`→`HourChanged`(점검 주기), 만료 = `(now − since) ≥ GraceDays×SecondsPerDay`
+       (연속 시각). 셀마다 제 시점에 만료 → **자연 분산**(전역 일괄 제거). [RoadDecayTelegraphSystem.cs](Assets/_game/scripts/RunTime/Systems/RoadDecayTelegraphSystem.cs)
+       신규(항상 ON, GL): 미관리 도로를 **진행도 노랑→빨강 + 임박 시 펄스**로 칠해 "곧 부서짐" 예고(압박감). depot 깔면
+       covered 복귀로 즉시 꺼짐. ⬜ 프로토타입 오버레이 — 추후 도로 균열 셰이더/디칼/VFX로 대체 가능.
      ⚠ Phase 4(베이스 관리소) 전엔 **베이스 외곽 링만 자동 면제** — 그 밖의 도로는 depot coverage 없으면 K일 후 철거됨
      (테스트 시 depot로 덮은 도로만 생존). 시스템 순서 `RoadDecay → RoadSystem`(같은 프레임 철거 실행).
-  4. 베이스캠프에 관리소 1개 기본 포함(`FactionBaseSpawnSystem`) → 초기 도로 coverage 보장.
-  5. AI(`AiCityGrowthSystem`) — 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업, 마지막 단계).
+  4. ✅ **베이스 자동 관리시설 완료** (2026-06-26) — [FactionBaseSpawnSystem.cs](Assets/_game/scripts/RunTime/Systems/FactionBaseSpawnSystem.cs):
+     팀별 베이스 빌딩 발행 시 **첫 '입구 있는' 건물 하나를 관리시설로 지정**(`MaintenanceMaxDistOverride`로 태그+범위
+     부여, `EntranceLookup.Has`로 입구 보유 확인) → 그 입구 도로셀에서 coverage가 퍼져 **베이스 링+인근 확장 도로
+     decay 방지**. 거리=`GrowthConfig.MaintenanceMaxDist`(공용 튜닝, 기본 6). **0이면 비활성**(전용 depot 프리팹/
+     베이스 config 사용 시). 별도 배치 없이 기존 베이스 빌딩의 검증된 위치·회전 재사용(점유/회전 문제 회피).
+     ⚠ override 기반 = 테스트 경로 — 전용 depot 프리팹(IsRoadMaintenance) 준비되면 `MaintenanceMaxDist=0`으로 전환.
+  5. ✅ **AI 관리소(커버리지 기반=방식2) 완료** (2026-06-26) — [AiCityGrowthSystem.cs](Assets/_game/scripts/RunTime/Systems/AiCityGrowthSystem.cs):
+     `DevelopBlock`이 블록 발행 시 **그 블록이 기존 depot coverage 밖이면 블록 건물을 관리시설로**(override) 만든다.
+     판정: 블록 링 중 **연결되는(기존 팀 도로인) 셀**의 `RoadMaintenance` 도장 거리 `d`(`MinMaintenanceDist`, `ownerStamp`)
+     를 보고 `d + K + Road ≤ maintMaxDist`면 이미 도달=depot 불필요, 아니면 depot 발행 → **프런티어가 coverage 밖으로
+     나갈 때만 depot 추가(보급선식)**. depot이 ~MaxDist마다 연쇄. 입구 있는 건물만(BFS 시작점 필요).
+     `StampLayers`(팀 슬롯)·`GrowthConfig.MaintenanceMaxDist`(공용, 기본 6)를 `OnUpdate→GrowOneBlock→DevelopBlock` 체인으로 전달.
+     "블록당 1개"(방식1)는 MaxDist>블록 시 과잉이라 폐기. ⚠ override 기반(테스트) — 전용 depot 프리팹(`MaintenanceDepotKey`)
+     준비되면 블록 건물 대신 전용 depot 발행으로 전환(현재는 성장 건물이 depot 겸함).
 - ❓ **튜닝**: `MaxDist`(순찰 반경), decay `K` — 골격 후 실측.
 
 ### 도로탭 배치 + 배치-시점 커버리지 프리뷰 (2026-06-25)
@@ -622,6 +650,9 @@
   렌더 순서 = 기존coverage→새footprint→새coverage→기존관리소위치(최상단). 상태 추가:
   `PreviewStatus.CoverageExisting`(초록)·`DepotExisting`(금색). 테스트 override `MaintenanceMaxDistOverride`로
   프리팹 미설정 상태에서도 유한 반경 확인(프리뷰·배치 동일 값, `PlaceBuildingRequest`로 얇게 전달).
+- ✅ **(2026-06-26) 영구 면제(베이스 링) 도로도 coverage 초록으로** — depot coverage가 아니라 `RoadDecayState.Exempt`
+  로 보호되는 베이스 외곽 링도 **"decay 안 되는 도로"라 같은 초록**으로 합쳐 표시(혼란 방지, 사용자 결정).
+  `GatherExistingDepots`가 `Exempt`를 읽어 내 소유 도로만 `_existingCovered`에 추가(별도 색/enum 없음).
 - ✅ **GameHUD 도로탭에 "관리소 배치" 토글** — [GameHUD.cs](Assets/_game/scripts/RunTime/UI/GameHUD.cs):
   도로 건설과 **상호배타**(한쪽 진입 시 다른쪽 해제), Escape 해제, 호버 라벨에 활성 도구 상태 표시.
 - ✅ **설계 원칙 유지**: 입구가 도로에 안 닿아도 **차단 않고** 빈 커버리지+경고만(인간 배치는 정보만 제공).
@@ -632,29 +663,58 @@
   `DepotPlaceController.DepotMainKey`(=관리소 MainKey) 지정. ④ 컴파일 검증은 에디터에서(이 환경엔 컴파일러 없음).
 - ❓ `DepotPlaceController`의 ECS접근/팩션해소/레이캐스트는 `RoadBuildController` 복사 — 추후 공용 베이스 추출 가능.
 
-### 🟢 현재 상태 (2026-06-25 세션 종료) — Road Maintenance Phase 0~3 완료, 4~5 대기
-> 다음 세션은 이 블록부터 읽으면 됨. **런타임 도로 유지 루프가 end-to-end 동작**(배치→도장→decay).
+### 🟢 현재 상태 (2026-06-26) — Road Maintenance Phase 0~5 완료
+> 다음 세션은 이 블록부터 읽으면 됨. **런타임 도로 유지 루프가 end-to-end 동작**(배치→도장→decay→베이스 면제→AI 자가유지).
 
 - **완료**: Phase 0(클레임 게이트 제거) · Phase 1(depot 컴포넌트+authoring) · Phase 2(`StampKind.RoadMaintenance`
-  런타임 도장, BFS는 공용 `RoadCoverageOps.Flood`) · Phase 3(`RoadDecaySystem` 미관리 decay) ·
+  런타임 도장, BFS는 공용 `RoadCoverageOps.Flood`) · Phase 3(`RoadDecaySystem` 미관리 decay + 베이스 링 면제) ·
+  Phase 4(`FactionBaseSpawnSystem` 베이스 자동 depot=첫 입구 건물) ·
+  Phase 5(`AiCityGrowthSystem` 커버리지 기반 AI depot=프런티어가 coverage 밖이면 블록 건물을 depot으로) ·
   도로탭 배치 UI(`DepotPlaceController`) + 배치-시점 커버리지 프리뷰 + **기존 관리소·연결성 오버레이**.
 - **확정 동작 흐름**: 도로탭 "관리소 배치" → 호버 시 footprint+청색 coverage(+기존 관리소 금색/기존 범위 초록) →
   좌클릭 `PlaceBuildingRequest` → `SpawnSystem`이 `RoadMaintenanceDepot` 부착 → `StampRebuildSystem`이
   도로망에 `RoadMaintenance` 도장 → `RoadDecaySystem`이 미관리(도장 없음) 도로를 `GraceDays`(3) 후 강제 철거.
-  베이스 외곽 링(영구 구역)은 면제.
+  **베이스 외곽 링은 면제**(`FactionBaseSpawnSystem`이 모든 팀 등록 — zone 의존 폐기, 휴먼 베이스 날아가던 버그 수정) +
+  **베이스 첫 입구 건물이 자동 관리시설**이라 베이스 인근 확장 도로도 초기 coverage.
+- 🔧 **디버그 비주얼라이저** — [RoadMaintenanceDebugSystem.cs](Assets/_game/scripts/RunTime/Systems/RoadMaintenanceDebugSystem.cs)
+  (에디터/개발빌드 전용, **F6 토글**, 기본 OFF): `StampLayers`의 `RoadMaintenance` 도장을 **소유자별 색**으로 GL 렌더 →
+  런타임 coverage가 실제로 찍히는지 확인(Phase 5 검증). **플레이어 본인 제외(AI/적 전용)** — 본인 coverage는 배치
+  오버레이가 보여주고 겹치면 혼란이라. 팔레트는 배치 오버레이 색(초록/금색/청색)과 안 겹치게 선택. `RoadBuildPreviewRenderSystem` GL 패턴.
 - ⚠ **테스트 스캐폴딩 — 프리팹 정리 후 제거할 것**:
   - `DepotPlaceController.MaintenanceMaxDistOverride`(기본 6) + `PlaceBuildingRequest.MaintenanceMaxDistOverride`
     + `BuildingPlacement.EmitSingle`의 override 분기. **`>0`이면 배치를 강제로 관리시설화**(IsRoadMaintenance=true +
     MaxDist=override) → 프리팹 미설정 상태에서 풀 루프 테스트용. 프리팹에 `IsRoadMaintenance`/`MaintenanceMaxDist`를
     설정·베이크한 뒤엔 override를 **0으로 되돌리면** 프리팹 메타 그대로 사용.
 - ⬜ **다음 단계**:
-  - **Phase 4** — `FactionBaseSpawnSystem`에 베이스 관리소 1개 기본 배치(초기 coverage 보장 → 베이스 인근 도로 decay 방지).
-  - **Phase 5** — `AiCityGrowthSystem`에 관리소 배치 + coverage 안에서만 블록 성장 연동(최대 작업).
+  - **테스트 스캐폴딩 → 프로덕션 전환**: 전용 관리소 프리팹(`IsRoadMaintenance=true` + 입구 + MainKey)을 만들고
+    `GrowthConfig.MaintenanceDepotKey` 지정 → AI는 블록 건물 override 대신 전용 depot 발행, 베이스/유저도 전용 depot 사용,
+    `MaintenanceMaxDistOverride`/`GrowthConfig.MaintenanceMaxDist` override 경로 0으로 정리.
+  - **성장 제한(선택)**: 현재는 "coverage 밖이면 depot 추가"로 자가유지. 더 보수적으로 하려면 성장 후보를
+    coverage(또는 +depot 1개 사거리) 안으로 명시 제한 추가 가능(현재 미적용 — 자가보정으로 충분).
   - **Unity 수작업**: 관리소 프리팹 `RegistryItem`에 `IsRoadMaintenance=true`/`MaintenanceMaxDist=N` + 입구 정의
     (윈도우에 "Road Maintenance" 필드 추가됨, 베이크 필요) / 도로 패널에 "관리소 배치" 버튼·라벨 + GameHUD 와이어링.
   - **튜닝(실측)**: `MaintenanceMaxDist`(순찰 반경), `RoadDecayState.GraceDays`(유예 일수).
-  - **폴리시/한계**: K 도달 시 일괄 철거(점진 erosion·"금 간 도로" telegraph 미구현) / 멀티셀 도로(roadSize>1) 미대응 /
-    Supply 필드(`IsSupplier`/`Relief`/`SupplyMaxDist`)는 등록 윈도우에 아직 없음(필요 시 추가).
+  - **폴리시/한계**: 멀티셀 도로(roadSize>1) 미대응 / Supply 필드(`IsSupplier`/`Relief`/`SupplyMaxDist`)는 등록 윈도우에
+    아직 없음(필요 시 추가) / telegraph는 프로토타입 GL 오버레이(추후 균열 셰이더/VFX) · 현재 모든 팀 표시(owner 필터 가능).
+
+### ❓ 오픈 설계 결정 (2026-06-26, 사용자 숙고 중 — 다음 세션 이어받기)
+> 도로 제거 정책 + AI 회복력. 두 항목은 한 묶음(은퇴할 자리에 새 회복 메커니즘이 들어감).
+
+1. **구역 prune/NetworkRepair 은퇴 → decay 단일화** (방향 합의됨, 미구현)
+   - "건물 파괴 시 공유 안 되는 도로 즉시 제거"(`RazeSystem`의 zone 로직 + `ZoneOps.ReleaseZone` + `CityZones` +
+     `NetworkRepairSystem` + `CityZoneInitSystem` + `AiCityGrowthSystem.RegisterZone`)를 폐기, 도로 제거를 **decay 단일화**.
+   - 근거: decay의 coverage-보존이 prune의 sharing-보존을 근사(공유 도로=관리됨=유지 / 전용 도로=coverage 잃음=decay).
+     즉시→서서히(telegraph), 분위기↑·복잡도↓. `RazeSystem`은 건물 파괴 + StampDirty만 남김.
+   - 잔여 고려: ① **유령 링**(죽은 구역 링이 이웃 depot에 덮여 남음) — 거슬리면 "인접 라이브 건물 없으면 decay 가속" 규칙 추가.
+     ② NetworkRepair(연결 회복) 상실 → 아래 2번(coverage 회복)이 그 역할 대체.
+2. **AI coverage 수복** (depot-스나이핑 대응, 검토 중)
+   - 문제: 적이 **depot만 의도적으로 파괴** → 넓은 coverage 상실 → 건물 대량 고아. **현재 AI는 회복 수단 없음**(취약점).
+     Phase 5는 *새 블록 성장 시에만* depot을 달아 기존 도시 수복은 못 함.
+   - 제안: AI 하루 점검 → 미관리(uncovered) 내 도로 감지 → 그 구역의 **입구가 살아있는 도로를 향하는 기존 건물 하나를
+     depot으로 승격**(`RoadMaintenanceDepot` 부착, 새 배치·도로재건 불필요) → coverage 복원. `GraceDays` 안에 반응하면 무손실.
+   - 밸런스: 하루 1회·행동 소모(즉시·무료 아님) → 스나이핑은 AI를 압박하는 유효 전술로 남되 한 방 붕괴는 불가.
+   - 단계: (1) **decay 전 수복**=핵심 방어 / (2) 도로 이미 삭은 뒤 재건=어려움, Phase 5 재성장이 일부 흡수(추후).
+   - 권장 순서: **1(은퇴) → 2(수복)**.
 
 ---
 

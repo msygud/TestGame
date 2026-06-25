@@ -47,6 +47,11 @@ namespace CitySim
             var zones          = SystemAPI.GetSingleton<CityZones>();
             var cfg            = GrowthConfig.Default;
 
+            // Phase 5: 관리시설 coverage(StampLayers) — 새 블록이 기존 depot 도달 밖이면
+            //   그 블록 건물을 depot으로(override) → AI 확장 도로도 유지. maintMaxDist=0이면 비활성.
+            bool hasStamp     = SystemAPI.TryGetSingleton<StampLayers>(out var stamp);
+            int  maintMaxDist = (hasStamp && cfg.MaintenanceMaxDist > 0) ? cfg.MaintenanceMaxDist : 0;
+
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
             foreach (var (teamRO, gridRO) in
@@ -57,6 +62,10 @@ namespace CitySim
 
                 int owner = team.LocalID;
                 var grid  = gridRO.ValueRO;
+
+                // 이 팀의 관리시설 도장 맵(coverage 판정용). maintMaxDist=0이면 default(미사용).
+                var ownerStamp = (maintMaxDist > 0 && (uint)owner < StampLayers.MaxPlayers)
+                    ? stamp[owner] : default;
 
                 // 베이스 블록을 영구 구역으로 등록(1회) — 베이스 외곽 링 셀에 refcount +1을 박아
                 //   인접 AI 구역이 죽어도 베이스 링이 0으로 떨어져 제거되지 않게 보호. 연결 루트도 됨.
@@ -70,7 +79,7 @@ namespace CitySim
                 if (chosenKey <= 0) continue;
 
                 bool grew = GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                    in grid, in zones, owner, chosenKey, clock.Day, in cfg, ref rng, ref ecb);
+                    in grid, in zones, owner, chosenKey, clock.Day, in cfg, in ownerStamp, maintMaxDist, ref rng, ref ecb);
 
                 // ② 건물 크기 폴백 — 선택한 건물이 안 들어가면 다른(보통 더 작은) 건물로 한 번 더.
                 //    최악 지형은 큰 블록만 막히는 경우가 많아 작은 블록이면 들어감 → 교착 완화.
@@ -79,7 +88,7 @@ namespace CitySim
                     int altKey = chosenKey == cfg.BuildingKeyA ? cfg.BuildingKeyB : cfg.BuildingKeyA;
                     if (altKey > 0 && altKey != chosenKey)
                         GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                            in grid, in zones, owner, altKey, clock.Day, in cfg, ref rng, ref ecb);
+                            in grid, in zones, owner, altKey, clock.Day, in cfg, in ownerStamp, maintMaxDist, ref rng, ref ecb);
                 }
             }
 
@@ -91,7 +100,8 @@ namespace CitySim
             in GridLayers layers, in EntranceLookup entranceLookup, in PrefabMetaLookup metaLookup,
             in CellTypeLookup cellTypeLookup, in CityGrid grid, in CityZones zones, int owner,
             int chosenKey, int day,
-            in GrowthConfig cfg, ref Unity.Mathematics.Random rng, ref EntityCommandBuffer ecb)
+            in GrowthConfig cfg, in NativeParallelMultiHashMap<int2, SupplierRef> ownerStamp, int maintMaxDist,
+            ref Unity.Mathematics.Random rng, ref EntityCommandBuffer ecb)
         {
             if (!metaLookup.TryGetMeta(chosenKey, 0, out var meta)) return false;
             int2 sz = meta.Size;
@@ -185,7 +195,8 @@ namespace CitySim
                 int2 pick = cands[bi].O;
                 cands.RemoveAtSwapBack(bi);
                 if (DevelopBlock(in layers, in grid, in zones, pick, K, Road, owner, chosenKey,
-                        sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup, ref ecb))
+                        sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup,
+                        in ownerStamp, maintMaxDist, ref ecb))
                 { grew = true; break; }
             }
             cands.Dispose();
@@ -269,7 +280,9 @@ namespace CitySim
             in GridLayers layers, in CityGrid grid, in CityZones zones, int2 O, int K, int Road,
             int owner, int chosenKey,
             int2 sz, bool hasEnt, in EntranceInfo ent, TerrainMask buildableOn,
-            in CellTypeLookup cellTypeLookup, ref EntityCommandBuffer ecb)
+            in CellTypeLookup cellTypeLookup,
+            in NativeParallelMultiHashMap<int2, SupplierRef> ownerStamp, int maintMaxDist,
+            ref EntityCommandBuffer ecb)
         {
             // Road==1(기본 DefaultSize)은 그린-방향(연속 루프) 발행 → 겹치는 모든
             //   셀이 OR 병합돼 교차로가 아닌 이음매도 연결(유저 드래그와 같은 모델).
@@ -302,11 +315,33 @@ namespace CitySim
                         Directions = useDrawn ? roadDirs[i] : RoadDir.None,
                     });
                 }
+                // Phase 5: 이 블록이 기존 depot coverage 밖이면 블록 건물을 관리시설로(override).
+                //   연결되는(=기존 팀 도로인) 링 셀의 RoadMaintenance 도장 거리 d를 보고,
+                //   d + K + Road ≤ maxDist면 이미 도달 → depot 불필요. 아니면 depot 발행
+                //   (보급선식 = 프런티어가 coverage 밖으로 나갈 때만 depot 추가, 방식2).
+                //   입구 있는 건물만(없으면 BFS 시작점 없어 coverage 불가).
+                int maintOverride = 0;
+                if (maintMaxDist > 0 && hasEnt)
+                {
+                    bool covered = false;
+                    for (int i = 0; i < roadOrigins.Length; i++)
+                    {
+                        int2 c = roadOrigins[i];
+                        // 새 셀(아직 RoadLayer에 없음)·타소유는 연결점 아님 → 건너뜀.
+                        if (!layers.RoadLayer.TryGetValue(c, out var rc) || rc.OwnerLocalId != owner)
+                            continue;
+                        int d = MinMaintenanceDist(in ownerStamp, c);
+                        if (d != int.MaxValue && d + K + Road <= maintMaxDist) { covered = true; break; }
+                    }
+                    if (!covered) maintOverride = maintMaxDist;
+                }
+
                 var be = ecb.CreateEntity();
                 ecb.AddComponent(be, new PlaceBuildingRequest
                 {
                     MainKey = chosenKey, VariantKey = 0, Cell = bOrigin, RotationY = bRot,
                     OwnerLocalId = owner, FactionId = grid.FactionId, RequireRoadAccess = true,
+                    MaintenanceMaxDistOverride = maintOverride,
                 });
 
                 // 구역 등록 — 이 블록 내부 셀 → 구역 매핑 + 링 셀 refcount +1.
@@ -318,6 +353,21 @@ namespace CitySim
 
             roadOrigins.Dispose(); roadDirs.Dispose(); roadAxis.Dispose(); plannedRoad.Dispose();
             return placed;
+        }
+
+        // owner stamp에서 이 셀의 RoadMaintenance 도장 중 최소 BFS 거리(없으면 int.MaxValue).
+        static int MinMaintenanceDist(in NativeParallelMultiHashMap<int2, SupplierRef> map, int2 cell)
+        {
+            int best = int.MaxValue;
+            if (!map.IsCreated) return best;
+            if (!map.TryGetFirstValue(cell, out var v, out var it)) return best;
+            do
+            {
+                if (v.Kind == StampKind.RoadMaintenance && v.Dist < best)
+                    best = v.Dist;
+            }
+            while (map.TryGetNextValue(out v, ref it));
+            return best;
         }
 
         // 블록 도로 링을 '그린-방향 연속 루프'로 수집 (Road==1 전용).
@@ -605,12 +655,21 @@ namespace CitySim
         // 평행 seam 거부: 기존 도로와 공유 없이 한 칸 평행으로 깔리는 블록을 차단.
         public bool RejectParallelSeam;
 
+        // 도로 관리시설 튜닝(Phase 4 베이스 자동 depot / Phase 5 AI depot 공용).
+        //   MaintenanceMaxDist  = 관리 도달 거리(도로 칸). Phase 4: >0이면 베이스 첫 입구 건물을
+        //     관리시설로 만들어 초기 coverage 보장(테스트). 0이면 비활성(전용 depot 프리팹 사용 시).
+        //   MaintenanceDepotKey = (Phase 5) AI가 배치할 전용 관리소 프리팹 MainKey. 0=미설정.
+        public int MaintenanceMaxDist;
+        public int MaintenanceDepotKey;
+
         public static GrowthConfig Default => new GrowthConfig
         {
-            BuildingKeyA       = 1004,
-            BuildingKeyB       = 1005,
-            BalanceDeadband    = 8,
-            RejectParallelSeam = true,
+            BuildingKeyA        = 1004,
+            BuildingKeyB        = 1005,
+            BalanceDeadband     = 8,
+            RejectParallelSeam  = true,
+            MaintenanceMaxDist  = 6,
+            MaintenanceDepotKey = 0,
         };
     }
 }

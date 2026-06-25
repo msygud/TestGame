@@ -55,6 +55,7 @@ namespace CitySim
             // 2) 건물 파괴 + 구역 귀속 — 사각형과 겹친 건물만 destroy(점유 해제) 후 구역에 사망 보고.
             var deadZones    = new NativeList<int2>(16, Allocator.Temp);   // 비워진 구역 원점
             var repairOwners = new NativeHashSet<int>(8, Allocator.Temp);  // 재연결 검증 대상 팀
+            var stampDirty   = new NativeHashSet<int>(8, Allocator.Temp);  // stamp 재빌드 대상 팀
             int razedBuildings = 0;
             foreach (var (bfRO, e) in SystemAPI.Query<RefRO<BuildingFootprint>>().WithEntityAccess())
             {
@@ -71,6 +72,12 @@ namespace CitySim
                 }
                 ecb.DestroyEntity(e);   // LinkedEntityGroup 시각까지 파괴
                 razedBuildings++;
+
+                // 파괴된 건물이 공급자/창고/관리시설이었을 수 있음 → 소유자 stamp 재빌드 필요.
+                //   안 하면 파괴된 depot의 coverage 도장이 stamp에 남아 그 도로가 영원히
+                //   '관리됨'으로 보여 decay가 안 됨(도로 제거가 없을 때 dirty 누락 버그).
+                if ((uint)bf.OwnerLocalId < StampLayers.MaxPlayers)
+                    stampDirty.Add(bf.OwnerLocalId);
 
                 // 구역 귀속 — 빈 구역이면 해체 목록에, 어느 경우든 소유 팀은 재연결 검증 대상.
                 if (hasZones && ZoneOps.AttributeDeath(zones, bf.Origin, out int2 zO, out int zOwner))
@@ -107,6 +114,14 @@ namespace CitySim
                 }
             }
 
+            // 6) 건물 파괴 팀의 stamp 무효화 — 다음 재빌드에서 파괴된 공급자/창고/관리시설의
+            //    coverage 도장이 사라진다(미관리로 바뀐 도로는 그 뒤 RoadDecaySystem이 철거).
+            foreach (var owner in stampDirty)
+            {
+                var de = ecb.CreateEntity();
+                ecb.AddComponent(de, new StampDirtyEvent { OwnerLocalId = owner });
+            }
+
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
 
@@ -115,6 +130,7 @@ namespace CitySim
             rects.Dispose();
             deadZones.Dispose();
             repairOwners.Dispose();
+            stampDirty.Dispose();
             removeCells.Dispose();
         }
 
