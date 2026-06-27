@@ -83,6 +83,10 @@ namespace CitySim
                     else if (layers.ResourceLayer.TryGetValue(c, out var res) && res.Amount > 0)
                         blocked = true;
 
+                    // 영역 거부 — 다른 플레이어 영역엔 도로 못 깐다 (Territory 게이트, 설계 점5).
+                    if (!blocked && TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, ownerLocalId))
+                        blocked = true;
+
                     // 지형 타입 거부 — 도로는 물 위에 못 깐다 (다리 미지원). Land 전용.
                     if (!layers.TerrainLayer.TryGetValue(c, out var ct))
                         blocked = true;          // 맵 밖

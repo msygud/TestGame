@@ -103,8 +103,6 @@ namespace CitySim
                         IsSupplier    = e.IsSupplier,
                         Relief        = e.Relief,
                         SupplyMaxDist = e.SupplyMaxDist,
-                        IsRoadMaintenance  = e.IsRoadMaintenance,
-                        MaintenanceMaxDist = e.MaintenanceMaxDist,
                     });
 
                     lookup.ValueRW.LoadedDlcIds.Add(e.DlcId);

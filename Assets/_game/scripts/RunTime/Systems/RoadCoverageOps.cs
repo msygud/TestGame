@@ -15,9 +15,8 @@ namespace CitySim
     //    · maxDist 도달 셀은 covered에 포함하되 더 확장하지 않음(0 이하=무제한).
     //
     //  쓰임:
-    //    · DepotPlaceController — 관리소 배치 프리뷰 커버리지(메인스레드, Temp 컨테이너).
-    //    · (예정) Phase 2 RoadMaintenance stamp 시스템 — covered를 도장으로 변환.
-    //  → 프리뷰와 런타임 coverage가 같은 fact를 공유해 항상 일치한다.
+    //    · StampRebuildSystem — 공급자/창고 입구 도로셀에서 도달 도로셀에 도장.
+    //  → 도장 시스템들이 같은 도달 fact를 공유해 일관된다.
     //
     //  Burst 호환: managed 타입 없음, 컨테이너는 호출자가 소유(in/ref).
     // ══════════════════════════════════════════════════════════════════════

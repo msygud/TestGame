@@ -35,10 +35,6 @@ namespace CitySim
         public bool         IsSupplier;
         public NeedType     Relief;
         public int          SupplyMaxDist;   // 0 이하 = 무제한
-
-        // 도로 관리시설 정보 (인게임 건물 배치 경로에서만 채움 — EmitSingle).
-        public bool         IsRoadMaintenance;
-        public int          MaintenanceMaxDist; // 0 이하 = 무제한
     }
 
     // ══════════════════════════════════════════════════════════════

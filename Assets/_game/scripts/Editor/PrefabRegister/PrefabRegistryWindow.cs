@@ -578,37 +578,6 @@ namespace CitySim.MapEditor
                         "Entrance", "MainKey 대표(V0)에서 편집", EditorStyles.miniLabel);
             }
 
-            // ── 8.7행: 도로 관리시설 (Building 전용) ──────────────────
-            //  IsRoadMaintenance=true면 배치 시 RoadMaintenanceDepot 부착 →
-            //  StampRebuildSystem이 입구 도로셀에서 MaxDist칸 BFS로 coverage 도장.
-            //  MaxDist=0(미설정)이면 무제한 = 도로 전체 유지 → 보통 유한값(예 6) 권장.
-            if (isBuilding)
-            {
-                var isMaintProp   = elem.FindPropertyRelative("IsRoadMaintenance");
-                var maintDistProp = elem.FindPropertyRelative("MaintenanceMaxDist");
-
-                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-                EditorGUILayout.PropertyField(isMaintProp,
-                    new GUIContent("Road Maintenance",
-                        "도로 관리시설 여부. true면 배치 시 RoadMaintenanceDepot 부착 → "
-                      + "도로망 BFS 범위 내 도로를 유지(decay 방지)."));
-
-                if (isMaintProp.boolValue)
-                {
-                    EditorGUI.indentLevel++;
-                    EditorGUILayout.PropertyField(maintDistProp,
-                        new GUIContent("Max Dist (cells)",
-                            "관리 도달 거리(도로 칸 수). 입구 도로셀에서 도로망을 따라 이 거리까지 유지. "
-                          + "0 이하면 무제한."));
-                    if (maintDistProp.intValue <= 0)
-                        EditorGUILayout.HelpBox(
-                            "0 이하 = 무제한(도로 전체 유지). 유한 순찰 반경을 원하면 양수로 설정하세요(예 6).",
-                            MessageType.Warning);
-                    EditorGUI.indentLevel--;
-                }
-                EditorGUILayout.EndVertical();
-            }
-
             // ── 9행: Usage (Flags, 폴드) ─────────────────────────
             int foldKey = (mainKeyProp.intValue << 16) | (variantKeyProp.intValue & 0xFFFF);
             if (!usageFolds.TryGetValue(foldKey, out bool usageOpen)) usageOpen = false;
