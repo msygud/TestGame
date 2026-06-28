@@ -436,16 +436,19 @@ namespace CitySim
                 if (first) { baseH = tc.Height; first = false; }
                 else if (tc.Height != baseH) return false;                                 // 단차
 
-                // 적 영역엔 블록(도로 링+건물) 못 깖 (Territory 게이트, 설계 점1·5).
-                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)) return false;
-
                 bool inInterior = dx >= Road && dx < Road + K && dz >= Road && dz < Road + K;
+
+                // Territory 게이트 — AI는 '구역 없는' 땅에만 확장.
+                //   내부(건물 영역) = 어떤 영역에도 안 걸려야 함(중립 땅 전용).
+                //   도로 링 = 적 영역만 거부(내 영역 공유·연결은 허용).
                 if (inInterior)
                 {
+                    if (TerritoryOps.InAnyTerritory(in layers.TerritoryLayer, c)) return false;
                     if (!CellBuildable(c, in layers)) return false;
                 }
                 else
                 {
+                    if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)) return false;
                     if (!CellBuildable(c, in layers) && !IsTeamRoad(c, in layers, owner)) return false;
                 }
             }

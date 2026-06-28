@@ -5,6 +5,25 @@
 
 ---
 
+## 🟢 Territory v2 — 중첩 전파 + 초단위 재계산 + AI 구역밖 확장 (2026-06-28)
+- ✅ **중첩 전파(nearest-N)로 교체** — 기존 고정 디스크(겹쳐도 경계 안 커짐)를 폐기.
+  소유자별로 모든 거주지의 셀 수(인구/PopPerCell)를 **합산한 예산**만큼 거주지 중심에서
+  **가장 가까운 셀**을 채운다(다중소스). → 거주지가 겹치면 예산이 합쳐져 경계가 바깥으로
+  밀려난다(중첩=확장). 셀 경합(다른 팀)은 **더 가까운 쪽**이 가짐(net by proximity).
+  [TerritorySystem.cs](Assets/_game/scripts/RunTime/Systems/TerritorySystem.cs).
+- ✅ **초단위 전체 재계산** — `HourChanged` 게이트 → `SystemAPI.Time.ElapsedTime` 1초 간격.
+  매번 클리어 후 재작성이라 **기존 결정 셀도 재결정**(PopPerCell 바꾸면 곧 반영).
+- ✅ **셀당 인구수 런타임 필드** — `TerritoryConfig`를 IComponentData 싱글톤으로 변경,
+  [Test.cs](Assets/_game/scripts/Test.cs)에 `PopPerCell` 인스펙터 필드 추가 → 매 프레임 싱글톤에 push.
+  없으면 TerritorySystem이 Default(PopPerCell=5, MaxRadius=64).
+- ✅ **AI는 '구역 없는' 땅에만 확장** — `AiCityGrowthSystem.BlockValid`: 블록 **내부(건물 영역)**는
+  어떤 영역에도 안 걸려야 함(`InAnyTerritory` 거부=중립 땅 전용), **도로 링**은 적 영역만 거부
+  (`InEnemyTerritory`, 내 영역 공유·연결 허용). → 도시는 영역 밖으로 자라고 인구가 영역을 따라 확장.
+- ⬜ 한계: 영향력 '합산(net)'은 거리 기반 근사(같은 팀은 합산 안 함). 윈도우 스캔+정렬은 1초 1회라
+  비용 OK. 영역=in-bounds 셀(물 포함) — Land 한정은 추후.
+
+---
+
 ## 🟢 건설 탭 건물 배치 UI (테스트용, 2026-06-28)
 > 물류·생산·영역 등을 손으로 건물 깔아 확인하려고 건설탭에 건물 버튼 + 배치 도구 추가.
 

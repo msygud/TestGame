@@ -8,15 +8,21 @@ using UnityEngine.InputSystem;
 // 디버그 입력 — 마우스로 가리킨 건물에:
 //   좌클릭 = 파괴 (RazeAreaCommand → RazeSystem이 점유 해제).
 //   우클릭 = '거주건물'로 지정 (ResidenceBuilding + BuildingOccupancy{Capacity=50}).
-//            → TerritorySystem이 다음 게임시간(HourChanged)에 그 건물 중심으로 영역을 그린다.
-//            영역 확인: F7(TerritoryDebugSystem 오버레이). 시간이 흘러야 갱신되니
-//            GameClockHud 배속(최대 120x)으로 한 시간 넘기면 즉시 보인다.
+//            → TerritorySystem이 1초마다 전체 재계산해 그 건물 중심으로 영역을 그린다.
+//            영역 확인: F7(TerritoryDebugSystem 오버레이). PopPerCell 필드로 영역 크기 조절.
 //   ※ 프로덕션은 프리팹에 BuildingAuthoring(Kind=Residence, Capacity)로 베이크하는 게 정석.
 //     우클릭 태깅은 프리팹 미설정 상태에서 영역 파이프라인을 즉시 검증하기 위한 테스트용.
 public class Test : MonoBehaviour
 {
+    [Header("Territory 테스트")]
+    [Tooltip("셀당 인구수 기준. 영역 셀 수 = 거주건물 인구 / 이 값. "
+           + "매 프레임 TerritoryConfig 싱글톤에 반영 → TerritorySystem이 1초마다 전체 재계산.")]
+    public int PopPerCell = 5;
+
     void Update()
     {
+        SyncTerritoryConfig();
+
         var mouse = Mouse.current;
         if (mouse == null) return;
         bool raze = mouse.leftButton.wasPressedThisFrame;
@@ -89,6 +95,24 @@ public class Test : MonoBehaviour
         {
             em.AddComponentData(target, new BuildingOccupancy { Current = 0, Capacity = 50 });
         }
-        Debug.Log($"[Test] 거주건물 지정 (Capacity≥50) @ {mn} — F7로 영역 확인, 시간 진행(배속) 필요");
+        Debug.Log($"[Test] 거주건물 지정 (Capacity≥50) @ {mn} — F7로 영역 확인 (1초마다 자동 재계산)");
+    }
+
+    // PopPerCell을 TerritoryConfig 싱글톤에 반영(없으면 생성). 매 프레임 — 인스펙터 변경 즉시 반영.
+    void SyncTerritoryConfig()
+    {
+        var world = World.DefaultGameObjectInjectionWorld;
+        if (world == null || !world.IsCreated) return;
+        var em = world.EntityManager;
+
+        var q = em.CreateEntityQuery(typeof(TerritoryConfig));
+        Entity e = q.IsEmpty ? em.CreateEntity(typeof(TerritoryConfig)) : q.GetSingletonEntity();
+        q.Dispose();
+
+        em.SetComponentData(e, new TerritoryConfig
+        {
+            PopPerCell = Mathf.Max(1, PopPerCell),
+            MaxRadius  = 64,
+        });
     }
 }
