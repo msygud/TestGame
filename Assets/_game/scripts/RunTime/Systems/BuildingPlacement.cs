@@ -57,14 +57,6 @@ namespace CitySim
         /// (EntranceOps가 "입구 없음 → 제약 없음"으로 처리).
         /// </summary>
         public bool  RequireRoadAccess;
-
-        /// <summary>
-        /// 테스트용 관리시설 override(도로 칸 수). &gt;0이면 EmitSingle이 이 배치를 관리시설로
-        /// 강제한다: IsRoadMaintenance=true(RoadMaintenanceDepot 태그 부착) + MaintenanceMaxDist=이 값
-        /// (프리팹 IsRoadMaintenance/MaxDist 미설정 상태에서 풀 루프 테스트). 0 = 프리팹 메타 그대로.
-        /// AI/베이스 경로는 0(미사용).
-        /// </summary>
-        public int   MaintenanceMaxDistOverride;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -80,6 +72,7 @@ namespace CitySim
         HeightMismatch = 5,  // 멀티셀 건물의 셀 높이가 다름
         NoRoadAccess   = 6,  // 입구가 도로에 닿지 않음 (RequireRoadAccess=true일 때만)
         ResourceBlocked = 7, // 채취 자원이 있는 셀 (자원은 보존 — 갈아엎지 않음)
+        EnemyTerritory  = 8, // 다른 플레이어 영역 안 (Territory 게이트)
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -269,6 +262,10 @@ namespace CitySim
                 if (layers.ResourceLayer.TryGetValue(cell, out var res) && res.Amount > 0)
                     return PlacementFailCode.ResourceBlocked;
 
+                // b3. 영역 확인 — 다른 플레이어 영역엔 신규 건설 불가 (Territory 게이트).
+                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerLocalId))
+                    return PlacementFailCode.EnemyTerritory;
+
                 // c. 지형 타입 확인
                 if (cellTypeLookup.TryGet(terrain.TypeId, out var typeInfo))
                 {
@@ -340,13 +337,6 @@ namespace CitySim
                 IsSupplier      = meta.IsSupplier,
                 Relief          = meta.Relief,
                 SupplyMaxDist   = meta.SupplyMaxDist,
-
-                // 테스트: MaintenanceMaxDistOverride>0이면 이 배치를 관리시설로 강제
-                //   (프리팹 IsRoadMaintenance 미설정 상태에서 RoadMaintenanceDepot 태그+범위 부여).
-                //   프리팹에 값을 설정·베이크한 뒤엔 override=0 → 프리팹 메타 그대로 사용.
-                IsRoadMaintenance  = req.MaintenanceMaxDistOverride > 0 || meta.IsRoadMaintenance,
-                MaintenanceMaxDist = req.MaintenanceMaxDistOverride > 0
-                    ? req.MaintenanceMaxDistOverride : meta.MaintenanceMaxDist,
             });
             ecb.AddComponent<MapLoaded>(e);
         }

@@ -74,8 +74,6 @@ namespace CitySim.Authoring
                         IsSupplier    = item.IsSupplier,
                         Relief        = item.Relief,
                         SupplyMaxDist = item.SupplyMaxDist,
-                        IsRoadMaintenance  = item.IsRoadMaintenance,
-                        MaintenanceMaxDist = item.MaintenanceMaxDist,
                     });
 
                     baked++;

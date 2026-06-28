@@ -5,17 +5,23 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-// 파괴 테스트 — 마우스 좌클릭으로 가리킨 건물 1개를 파괴.
-//   클릭 셀을 포함하는 건물의 footprint를 RazeAreaCommand로 발행
-//   → RazeSystem이 그 건물 파괴(점유 해제) + 주변 orphan 도로 정리.
-//   한 구역의 건물을 하나씩 부수면, 그 도로가 더는 라이브 건물에 안 닿는 순간 풀려 사라진다
-//   (구역이 비면 링이 끊기고 leaf-prune으로 풀려나감).
+// 디버그 입력 — 마우스로 가리킨 건물에:
+//   좌클릭 = 파괴 (RazeAreaCommand → RazeSystem이 점유 해제).
+//   우클릭 = '거주건물'로 지정 (ResidenceBuilding + BuildingOccupancy{Capacity=50}).
+//            → TerritorySystem이 다음 게임시간(HourChanged)에 그 건물 중심으로 영역을 그린다.
+//            영역 확인: F7(TerritoryDebugSystem 오버레이). 시간이 흘러야 갱신되니
+//            GameClockHud 배속(최대 120x)으로 한 시간 넘기면 즉시 보인다.
+//   ※ 프로덕션은 프리팹에 BuildingAuthoring(Kind=Residence, Capacity)로 베이크하는 게 정석.
+//     우클릭 태깅은 프리팹 미설정 상태에서 영역 파이프라인을 즉시 검증하기 위한 테스트용.
 public class Test : MonoBehaviour
 {
     void Update()
     {
         var mouse = Mouse.current;
-        if (mouse == null || !mouse.leftButton.wasPressedThisFrame) return;
+        if (mouse == null) return;
+        bool raze = mouse.leftButton.wasPressedThisFrame;
+        bool tag  = mouse.rightButton.wasPressedThisFrame;
+        if (!raze && !tag) return;
 
         var world = World.DefaultGameObjectInjectionWorld;
         if (world == null) return;
@@ -43,25 +49,46 @@ public class Test : MonoBehaviour
         else return;
         int2 cell = new int2((int)math.floor(p.x / cs), (int)math.floor(p.z / cs));
 
-        // 클릭 셀을 포함하는 건물 footprint 찾기
-        var bq  = em.CreateEntityQuery(ComponentType.ReadOnly<BuildingFootprint>());
-        var arr = bq.ToComponentDataArray<BuildingFootprint>(Allocator.Temp);
-        bool found = false; int2 mn = default, mx = default;
-        foreach (var bf in arr)
+        // 클릭 셀을 포함하는 건물 엔티티 찾기
+        var bq   = em.CreateEntityQuery(ComponentType.ReadOnly<BuildingFootprint>());
+        var ents = bq.ToEntityArray(Allocator.Temp);
+        Entity target = Entity.Null; int2 mn = default, mx = default;
+        foreach (var ent in ents)
         {
+            var bf = em.GetComponentData<BuildingFootprint>(ent);
             int2 eff = EntranceOps.RotateSize(bf.Size, bf.RotSteps);
             if (cell.x >= bf.Origin.x && cell.x < bf.Origin.x + eff.x &&
                 cell.y >= bf.Origin.y && cell.y < bf.Origin.y + eff.y)
             {
-                found = true; mn = bf.Origin; mx = bf.Origin + eff - 1; break;
+                target = ent; mn = bf.Origin; mx = bf.Origin + eff - 1; break;
             }
         }
-        arr.Dispose(); bq.Dispose();
+        ents.Dispose(); bq.Dispose();
 
-        if (!found) { Debug.Log($"[RazeTest] cell {cell} — 건물 없음"); return; }
+        if (target == Entity.Null) { Debug.Log($"[Test] cell {cell} — 건물 없음"); return; }
 
-        var e = em.CreateEntity();
-        em.AddComponentData(e, new RazeAreaCommand { Min = mn, Max = mx });
-        Debug.Log($"[RazeTest] 건물 파괴 {mn} ~ {mx}");
+        if (raze)
+        {
+            var e = em.CreateEntity();
+            em.AddComponentData(e, new RazeAreaCommand { Min = mn, Max = mx });
+            Debug.Log($"[Test] 건물 파괴 {mn} ~ {mx}");
+            return;
+        }
+
+        // 우클릭 = 거주건물로 지정 (영역 테스트)
+        if (!em.HasComponent<ResidenceBuilding>(target))
+            em.AddComponent<ResidenceBuilding>(target);
+
+        if (em.HasComponent<BuildingOccupancy>(target))
+        {
+            var occ = em.GetComponentData<BuildingOccupancy>(target);
+            occ.Capacity = math.max(occ.Capacity, 50);
+            em.SetComponentData(target, occ);
+        }
+        else
+        {
+            em.AddComponentData(target, new BuildingOccupancy { Current = 0, Capacity = 50 });
+        }
+        Debug.Log($"[Test] 거주건물 지정 (Capacity≥50) @ {mn} — F7로 영역 확인, 시간 진행(배속) 필요");
     }
 }

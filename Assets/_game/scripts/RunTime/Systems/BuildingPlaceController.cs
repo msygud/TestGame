@@ -1,0 +1,339 @@
+using Unity.Entities;
+using Unity.Mathematics;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.EventSystems;
+
+namespace CitySim
+{
+    // ══════════════════════════════════════════════════════════════════════════
+    //  BuildingPlaceController — 런타임 건물 배치 입력 컨트롤러 (MonoBehaviour)
+    //
+    //  RoadBuildController의 건물판. 책임:
+    //    1. 배치 모드 진입/해제 (EnterMode(mainKey) / ExitMode)
+    //    2. 마우스 호버 → footprint(meta.Size, 회전 반영) 프리뷰 마커
+    //       (RoadBuildPreview 싱글톤·렌더 시스템 재사용 — 도로 빌드와 상호배타)
+    //    3. R = 90° 회전 (0~3 step)
+    //    4. 좌클릭 = PlaceBuildingRequest 발행 (RequireRoadAccess=false — 자유 배치)
+    //
+    //  설계 메모:
+    //    - 프리뷰 유효성은 힌트일 뿐. 진짜 검증은 BuildingPlacementSystem이 한다.
+    //    - 좌표 변환·ECS 접근·팩션 해소는 RoadBuildController와 동일 규약(복제).
+    //      (추후 공용 베이스 추출 가능 — 지금은 테스트 우선.)
+    //    - 테스트 도구: 물류/생산/영역 등을 손으로 건물 깔아 확인하는 용도.
+    // ══════════════════════════════════════════════════════════════════════════
+    public class BuildingPlaceController : MonoBehaviour
+    {
+        [Header("참조")]
+        [Tooltip("레이캐스트에 쓸 카메라. 비우면 Camera.main.")]
+        public Camera BuildCamera;
+
+        [Tooltip("지면 레이캐스트용 레이어 마스크. 비우면 평면 y=0과 교차.")]
+        public LayerMask GroundLayerMask = ~0;
+
+        [Header("상태 (읽기용)")]
+        [SerializeField] bool _modeActive;
+        [SerializeField] int  _mainKey;
+        [SerializeField] int  _variantKey;
+        [SerializeField] int  _rotSteps;            // 0~3 (R로 회전)
+        [SerializeField] int  _playerSlot    = -1;
+        [SerializeField] int  _playerFaction = -1;
+
+        public bool IsModeActive   => _modeActive;
+        public int  SelectedMainKey => _mainKey;
+
+        PreviewStatus _hoverStatus = PreviewStatus.Valid;
+        bool          _hasHover;
+        public string StatusText => _modeActive
+            ? $"건물 #{_mainKey} (R 회전:{_rotSteps * 90}°) — {PreviewStatusOps.ToText(_hoverStatus)}"
+            : string.Empty;
+
+        EntityManager _em;
+        Entity        _previewEntity;
+        bool          _ecsReady;
+
+        void Awake()
+        {
+            if (BuildCamera == null) BuildCamera = Camera.main;
+        }
+
+        void Update()
+        {
+            if (!_modeActive) return;
+            if (!EnsureEcs()) return;
+
+            var kb = Keyboard.current;
+            if (kb != null && kb.rKey.wasPressedThisFrame)
+                _rotSteps = (_rotSteps + 1) & 3;
+
+            HandleClick();
+            RebuildPreviewBuffer();
+        }
+
+        void OnDisable()
+        {
+            if (_modeActive) ExitMode();
+        }
+
+        // ── 공개 API (GameHUD에서 호출) ─────────────────────────────
+        /// <summary>지정 MainKey 건물 배치 모드 진입.</summary>
+        public void EnterMode(int mainKey)
+        {
+            if (!EnsureEcs()) return;
+            _mainKey    = mainKey;
+            _variantKey = 0;
+            _rotSteps   = 0;
+            _modeActive = true;
+            SetPreviewActive(true);
+            RebuildPreviewBuffer();
+        }
+
+        public void ExitMode()
+        {
+            _modeActive = false;
+            if (_ecsReady)
+            {
+                SetPreviewActive(false);
+                ClearPreviewBuffer();
+            }
+        }
+
+        // ── 배치 ────────────────────────────────────────────────────
+        void HandleClick()
+        {
+            var mouse = Mouse.current;
+            if (mouse == null) return;
+
+            // UI 위 클릭은 무시 (버튼 누름이 배치로 새지 않게).
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+                return;
+            if (!mouse.leftButton.wasPressedThisFrame) return;
+            if (!TryGetHoverCell(out int2 cell)) return;
+
+            if (!ResolvePlayerFaction(out int slot, out int faction))
+            {
+                Debug.LogWarning("[BuildingPlaceController] 플레이어 팩션 해소 실패 — "
+                               + "UserPlayer/FactionConfig 싱글톤 확인.");
+                return;
+            }
+
+            var e = _em.CreateEntity();
+            _em.AddComponentData(e, new PlaceBuildingRequest
+            {
+                MainKey           = _mainKey,
+                VariantKey        = _variantKey,
+                Cell              = cell,
+                RotationY         = _rotSteps * 90f,
+                OwnerLocalId      = slot,
+                FactionId         = faction,
+                RequireRoadAccess = false,   // 테스트: 입구-도로 정렬 강제 안 함
+            });
+        }
+
+        // ── 프리뷰 ──────────────────────────────────────────────────
+        void RebuildPreviewBuffer()
+        {
+            if (!_ecsReady) return;
+
+            var previewState = _em.GetComponentData<RoadBuildPreviewState>(_previewEntity);
+            if (previewState.RoadSize != 1)
+            {
+                previewState.RoadSize = 1;             // 셀당 1×1 마커
+                _em.SetComponentData(_previewEntity, previewState);
+            }
+
+            var buf = _em.GetBuffer<PreviewCell>(_previewEntity);
+            buf.Clear();
+            _hasHover = false;
+            _hoverStatus = PreviewStatus.Valid;
+
+            if (!TryGetMeta(_mainKey, out var meta)) return;
+            if (!TryGetHoverCell(out int2 origin)) return;
+            _hasHover = true;
+
+            var layers = GetLayers(out bool hasLayers);
+            int ownerSlot = hasLayers && ResolvePlayerFaction(out int s, out _) ? s : -1;
+
+            int2 eff = EntranceOps.RotateSize(meta.Size, _rotSteps);
+            if (eff.x <= 0) eff.x = 1;
+            if (eff.y <= 0) eff.y = 1;
+
+            // footprint 전체 상태 = 가장 나쁜 셀 상태(하나라도 차단이면 전체 차단색).
+            PreviewStatus worst = PreviewStatus.Valid;
+            bool firstH = true; byte baseH = 0;
+            for (int dx = 0; dx < eff.x; dx++)
+            for (int dz = 0; dz < eff.y; dz++)
+            {
+                int2 c = origin + new int2(dx, dz);
+                PreviewStatus st = hasLayers ? EvalCell(c, ownerSlot, layers, ref firstH, ref baseH)
+                                             : PreviewStatus.Valid;
+                if (Severity(st) > Severity(worst)) worst = st;
+            }
+
+            _hoverStatus = worst;
+            for (int dx = 0; dx < eff.x; dx++)
+            for (int dz = 0; dz < eff.y; dz++)
+                buf.Add(new PreviewCell
+                {
+                    Cell   = origin + new int2(dx, dz),
+                    Status = worst,
+                    Kind   = PreviewKind.Dragging,
+                });
+        }
+
+        // 셀 상태(프리뷰 힌트). 진짜 검증은 BuildingPlacementSystem.
+        PreviewStatus EvalCell(int2 cell, int ownerSlot, GridLayers layers,
+                               ref bool firstH, ref byte baseH)
+        {
+            if (layers.TerrainLayer.IsCreated && !layers.TerrainLayer.ContainsKey(cell))
+                return PreviewStatus.OutOfBounds;
+
+            if (layers.OccupancyLayer.TryGetValue(cell, out var occ) && !occ.IsEmpty
+                && occ.Type != OccupantType.Environment)
+                return PreviewStatus.Occupied;
+
+            if (layers.ResourceLayer.IsCreated
+                && layers.ResourceLayer.TryGetValue(cell, out var res) && res.Amount > 0)
+                return PreviewStatus.ResourceBlocked;
+
+            // 적 영역 → 배치 불가(빨강). (전용 enum 없어 Occupied로 표시.)
+            if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerSlot))
+                return PreviewStatus.Occupied;
+
+            byte h = layers.TerrainLayer.IsCreated
+                  && layers.TerrainLayer.TryGetValue(cell, out var tc) ? tc.Height : (byte)0;
+            if (firstH) { baseH = h; firstH = false; }
+            else if (h != baseH) return PreviewStatus.HeightMismatch;
+
+            return PreviewStatus.Valid;
+        }
+
+        static int Severity(PreviewStatus s) => PreviewStatusOps.IsBlocking(s) ? 2
+            : s == PreviewStatus.Valid ? 0 : 1;
+
+        // ── ECS / 좌표 / 팩션 (RoadBuildController 규약 복제) ─────────
+        bool TryGetMeta(int mainKey, out PrefabMeta meta)
+        {
+            meta = default;
+            var q = _em.CreateEntityQuery(typeof(PrefabMetaLookup));
+            if (q.IsEmpty) { q.Dispose(); return false; }
+            var lookup = q.GetSingleton<PrefabMetaLookup>();
+            q.Dispose();
+            return lookup.TryGetMeta(mainKey, _variantKey, out meta);
+        }
+
+        bool TryGetHoverCell(out int2 cell)
+        {
+            cell = default;
+            if (BuildCamera == null) BuildCamera = Camera.main;
+            if (BuildCamera == null) return false;
+            if (!TryGetCellSize(out float cs) || cs <= 0f) return false;
+
+            var mouse = Mouse.current;
+            if (mouse == null) return false;
+            Ray ray = BuildCamera.ScreenPointToRay((Vector2)mouse.position.ReadValue());
+
+            if (Physics.Raycast(ray, out var hit, 5000f, GroundLayerMask))
+            { cell = WorldToCell(hit.point, cs); return true; }
+
+            if (math.abs(ray.direction.y) > 1e-5f)
+            {
+                float t = -ray.origin.y / ray.direction.y;
+                if (t > 0f) { cell = WorldToCell(ray.origin + ray.direction * t, cs); return true; }
+            }
+            return false;
+        }
+
+        static int2 WorldToCell(Vector3 world, float cs)
+            => new int2((int)math.floor(world.x / cs), (int)math.floor(world.z / cs));
+
+        bool EnsureEcs()
+        {
+            if (_ecsReady && _em != default && _em.Exists(_previewEntity)) return true;
+
+            var world = World.DefaultGameObjectInjectionWorld;
+            if (world == null || !world.IsCreated) return false;
+            _em = world.EntityManager;
+
+            var q = _em.CreateEntityQuery(typeof(RoadBuildPreviewState));
+            if (q.IsEmpty)
+            {
+                _previewEntity = _em.CreateEntity(typeof(RoadBuildPreviewState));
+                _em.AddBuffer<PreviewCell>(_previewEntity);
+                _em.SetComponentData(_previewEntity, new RoadBuildPreviewState { Active = false, RoadSize = 1 });
+            }
+            else
+            {
+                _previewEntity = q.GetSingletonEntity();
+                if (!_em.HasBuffer<PreviewCell>(_previewEntity))
+                    _em.AddBuffer<PreviewCell>(_previewEntity);
+            }
+            q.Dispose();
+
+            _ecsReady = true;
+            return true;
+        }
+
+        void SetPreviewActive(bool active)
+        {
+            if (!_ecsReady) return;
+            _em.SetComponentData(_previewEntity, new RoadBuildPreviewState { Active = active, RoadSize = 1 });
+        }
+
+        void ClearPreviewBuffer()
+        {
+            if (!_ecsReady) return;
+            var buf = _em.GetBuffer<PreviewCell>(_previewEntity);
+            buf.Clear();
+        }
+
+        GridLayers GetLayers(out bool ok)
+        {
+            ok = false;
+            var q = _em.CreateEntityQuery(typeof(GridLayers));
+            if (q.IsEmpty) { q.Dispose(); return default; }
+            var layers = q.GetSingleton<GridLayers>();
+            q.Dispose();
+            ok = layers.TerrainLayer.IsCreated;
+            return layers;
+        }
+
+        bool TryGetCellSize(out float cs)
+        {
+            cs = 0f;
+            var q = _em.CreateEntityQuery(typeof(GridSettings));
+            if (q.IsEmpty) { q.Dispose(); return false; }
+            cs = q.GetSingleton<GridSettings>().CellSize;
+            q.Dispose();
+            return true;
+        }
+
+        bool ResolvePlayerFaction(out int slot, out int faction)
+        {
+            if (_playerSlot >= 0 && _playerFaction >= 0)
+            { slot = _playerSlot; faction = _playerFaction; return true; }
+
+            slot = -1; faction = -1;
+
+            var upq = _em.CreateEntityQuery(ComponentType.ReadOnly<Game.Unit.UserPlayer>());
+            if (upq.IsEmpty) { upq.Dispose(); return false; }
+            var userPlayer = upq.GetSingleton<Game.Unit.UserPlayer>();
+            upq.Dispose();
+            slot = userPlayer.LocalID;
+            if (slot < 0) return false;
+
+            var fcq = _em.CreateEntityQuery(ComponentType.ReadOnly<FactionConfig>());
+            if (fcq.IsEmpty) { fcq.Dispose(); return false; }
+            var config = fcq.GetSingleton<FactionConfig>();
+            fcq.Dispose();
+
+            if (!config.Slots.IsCreated) return false;
+            if (!config.Slots.TryGetValue(slot, out var fslot)) return false;
+            if (fslot.FactionId < 0) return false;
+
+            faction = fslot.FactionId;
+            _playerSlot = slot; _playerFaction = faction;
+            return true;
+        }
+    }
+}

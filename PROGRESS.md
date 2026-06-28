@@ -5,6 +5,80 @@
 
 ---
 
+## 🟢 건설 탭 건물 배치 UI (테스트용, 2026-06-28)
+> 물류·생산·영역 등을 손으로 건물 깔아 확인하려고 건설탭에 건물 버튼 + 배치 도구 추가.
+
+- ✅ **[BuildingPlaceController.cs](Assets/_game/scripts/RunTime/Systems/BuildingPlaceController.cs)**
+  (`RoadBuildController`의 건물판): `EnterMode(mainKey)`/`ExitMode`, 마우스 호버 → footprint
+  (`PrefabMeta.Size`+회전) 프리뷰(RoadBuildPreview 싱글톤·렌더 재사용, 도로빌드와 상호배타),
+  **R = 90° 회전**, **좌클릭 = `PlaceBuildingRequest`**(`RequireRoadAccess=false` 자유배치).
+  프리뷰 유효성은 힌트(점유/범위/자원/적영역/단차) — 진짜 검증은 `BuildingPlacementSystem`.
+- ✅ **[GameHUD.cs](Assets/_game/scripts/RunTime/UI/GameHUD.cs) 건설탭**: `_registries`(SO)의
+  Building 카테고리 항목(V0, MainKey>0)마다 버튼 **자동 생성**(`_buildButtonTemplate` 복제 →
+  `_buildButtonContainer`). 클릭 → 그 MainKey로 배치 모드. Escape 해제, 탭 전환 시 모드 해제,
+  도로/건물 모드 상호배타. 호버 라벨(`_lblHoverStatus`) 공유.
+- 현재 Origin.asset 건물 = **1000 resitetal · 1001 residental · 1002 restarant · 1003 human_stock**
+  (DLC1.asset도 `_registries`에 넣으면 같이 버튼화).
+- ⬜ **Unity 와이어링**: GameHUD에 `_buildController`(BuildingPlaceController 부착 오브젝트)·
+  `_registries`(Origin/DLC1)·`_buildButtonContainer`(레이아웃 그룹)·`_buildButtonTemplate`(Button+자식 TMP_Text)
+  지정. PanelBuild 안에 컨테이너+템플릿 배치.
+- ❓ 회전/배치 프리뷰 색은 RoadBuildPreview enum 재사용(적영역=빨강 Occupied로 표시). 전용 색 필요시 enum 추가.
+
+---
+
+## 🟢 도로 maintenance 폐기 + Territory/Influence v1 (2026-06-27)
+> 아래 "🔴 방향 전환" 섹션의 결정(B)을 실행한 세션. **maintenance/zone 전체 제거 +
+> 인구 기반 영역 시스템 1차 구현**을 같이 했다. ⚠ **컴파일 검증은 Unity 에디터에서**
+> (이 환경엔 컴파일러 없음). 복구 기준점: git `road-maintenance-complete`(`ee368ae`).
+
+### ✅ maintenance/zone 제거 완료 (제거 스펙대로)
+- **파일 삭제(+meta)**: `RoadDecaySystem.cs` `RoadDecayTelegraphSystem.cs`
+  `RoadMaintenanceDebugSystem.cs` `DepotPlaceController.cs` `ZoneComponents.cs`
+  `NetworkRepairSystem.cs` `CityZoneInitSystem.cs`.
+- **필드 체인 제거**: `IsRoadMaintenance`/`MaintenanceMaxDist`(`RegistryItem`·`BakedPrefabEntry`·
+  `PrefabMeta`·`SpawnRequest`·authoring·`PrefabLookupBuildSystem`·`SpawnSystem`·`BuildingPlacement`·
+  `PrefabRegistryWindow`) / `StampKind.RoadMaintenance` + `RoadMaintenanceDepot` + 도장 루프
+  (`StampRebuildSystem`) / `MaintenanceMaxDistOverride` 전 체인.
+- **시스템 정리**: `FactionBaseSpawnSystem`(베이스 depot + decay Exempt 등록 제거) /
+  `AiCityGrowthSystem`(depot coverage Phase5 + `RegisterZone` + `GrowthConfig.Maintenance*` 제거,
+  `CityZones` 의존 제거 — 블록 선택엔 안 썼으므로 안전) / `RazeSystem`(zone 해체·NetworkRepair 제거,
+  **건물 파괴 + StampDirty만 남김**) / `BlockOps.FindReconnectPath` 제거(`FindRoadPath`는 유지) /
+  `GameHUD` 관리소 토글 제거.
+- **도로 연속성 제거**: `RoadBuildController.FilterConnectedToNetwork`/`ComputeAttached` 폐기 →
+  **유저 도로 자유 배치**(베이스 연결 강제 없음, 설계 점5/7). 프리뷰 `Disconnected`는 미적용(attached=null).
+- **★ 유지**: 공급자/창고 stamp 코어(`StampSupplier`/`WarehouseTag`/`StampLayers`/`StampRebuildSystem`)
+  + `RoadCoverageOps.Flood`(그 stamp가 사용) + `RazeAreaCommand`/`RemoveRoadCommand` + 그린-방향 도로 모델.
+  - grep 잔여 0건 확인. `PreviewStatus`의 Coverage/CoverageExisting/DepotExisting enum 값은 inert로 남겨둠
+    (제거하려면 renumber + ToText/StatusColor 손봐야 해 보류 — 무해).
+
+### ✅ Territory & Influence v1 구현 (설계 7점 1차)
+- **[TerritoryComponents.cs](Assets/_game/scripts/RunTime/Components/TerritoryComponents.cs)**:
+  `TerritoryConfig`(plain struct, `.Default` — PopPerCell=5, MaxRadius=24) + `TerritoryOps`
+  (`InEnemyTerritory`/`FootprintInEnemyTerritory` — `GridLayers.TerritoryLayer`만 읽는 순수 게이트 헬퍼).
+- **[TerritorySystem.cs](Assets/_game/scripts/RunTime/Systems/TerritorySystem.cs)** (메인스레드, `HourChanged` 게이트,
+  `[UpdateBefore(RazeSystem)]`): ① 거주건물(`ResidenceBuilding`+`BuildingFootprint`+`BuildingOccupancy`)마다
+  인구→셀수(`pop/PopPerCell`)→원형(디스크 r=√(N/π)) 영향력을 셀별 **8슬롯 누적 struct**(CellAccum,
+  중첩컨테이너 회피)로 합산 → 순 최대 팀이 셀 소유 → `TerritoryLayer` 클리어 후 재작성(유일 writer).
+  ② **capture**: 적 영역에 든 적 건물→`RazeAreaCommand`, 적 도로→`RemoveRoadCommand{Forced=1}`(설계 점1·6).
+  - 인구원: `Current>0 ? Current : Capacity`(시민 스폰 전엔 정원=잠재인구로 가시화. 스폰 붙으면 Current가 진짜).
+- **빌드 게이트(휴먼·AI 공통)**: 건물 `ValidateCells`(`PlacementFailCode.EnemyTerritory=8`) +
+  `RoadSystem` 배치 + AI `BlockValid` 전부 적 영역 셀 거부(설계 점1·5).
+- **[TerritoryDebugSystem.cs](Assets/_game/scripts/RunTime/Systems/TerritoryDebugSystem.cs)** (에디터/개발빌드,
+  **F7 토글**, 기본 OFF): `TerritoryLayer`를 소유자별 색 GL 반투명 채움(RoadBuildPreview GL 패턴).
+- **시스템 순서**: `TerritorySystem → RazeSystem → RoadSystem`(같은 프레임에 capture 명령 실행).
+- 재사용: `GridLayers.TerritoryLayer`(GridInit가 alloc/dispose, 이전엔 미사용) → 이제 TerritorySystem 전용.
+
+### ⬜ 다음 단계 / 한계 (v1)
+- ⚠ **에디터 컴파일 검증 필수** (이 환경 미검증). 거주건물에 `ResidenceBuilding` 태그 + `BuildingOccupancy.Capacity`
+  설정돼야 영역이 보임(없으면 빈 영역 — 게이트는 안전하게 no-op). F7로 확인.
+- 근사: 디스크 전파(정확 nearest-N 아님) / 선형 영향력 감쇠 / 영역은 in-bounds 셀만(물 셀도 현재 포함 — 추후 Land 한정 검토).
+- 영향력 순값 저장 안 함(현재 owner만 `TerritoryLayer`에 기록). 행복도·다용도(설계 점3·6) 미구현 → 추후 InfluenceLayer.
+- capture가 `HourChanged`마다 적 점유물 재스캔(파괴는 같은 프레임 1회). 잦은 전투에선 즉시성 위해 이벤트 구동 고려.
+- 멀티셀 도로(roadSize>1) capture는 셀당 RemoveRoadCommand(RoadSystem이 footprint 통째 제거로 근사).
+- 시민 초기 스폰 트리거(여전히 미착수)가 붙으면 인구원 `Current`로 자연 전환(공식 동일).
+
+---
+
 ## 프리팹 메타데이터 아키텍처 정리 (2026-06-25, 설계 합의)
 > 의견교환 세션. 코드 변경 없음, 골격 확정 + 문서화. 상세는 `CLAUDE.md`
 > "프리팹 메타데이터 3역할" 절. 여기엔 결론 요약 + 다음 작업만.
@@ -663,8 +737,10 @@
   `DepotPlaceController.DepotMainKey`(=관리소 MainKey) 지정. ④ 컴파일 검증은 에디터에서(이 환경엔 컴파일러 없음).
 - ❓ `DepotPlaceController`의 ECS접근/팩션해소/레이캐스트는 `RoadBuildController` 복사 — 추후 공용 베이스 추출 가능.
 
-### 🟢 현재 상태 (2026-06-26) — Road Maintenance Phase 0~5 완료
-> 다음 세션은 이 블록부터 읽으면 됨. **런타임 도로 유지 루프가 end-to-end 동작**(배치→도장→decay→베이스 면제→AI 자가유지).
+### 🟢 Road Maintenance Phase 0~5 완료 — ⚠ **(2026-06-26) 폐기 결정: Territory로 대체** (맨 아래 "방향 전환" 섹션 참조)
+> ⚠ 이 maintenance 시스템 **전체 폐기 예정**. 복구는 git `road-maintenance-complete` 브랜치/태그(`ee368ae`).
+> 아래 내용은 *무엇을 만들었었나*의 기록일 뿐 — **현행 방향은 PROGRESS 끝의 "🔴 방향 전환" 섹션**.
+> (참고) 그동안의 동작: **런타임 도로 유지 루프 end-to-end**(배치→도장→decay→베이스 면제→AI 자가유지).
 
 - **완료**: Phase 0(클레임 게이트 제거) · Phase 1(depot 컴포넌트+authoring) · Phase 2(`StampKind.RoadMaintenance`
   런타임 도장, BFS는 공용 `RoadCoverageOps.Flood`) · Phase 3(`RoadDecaySystem` 미관리 decay + 베이스 링 면제) ·
@@ -715,6 +791,43 @@
    - 밸런스: 하루 1회·행동 소모(즉시·무료 아님) → 스나이핑은 AI를 압박하는 유효 전술로 남되 한 방 붕괴는 불가.
    - 단계: (1) **decay 전 수복**=핵심 방어 / (2) 도로 이미 삭은 뒤 재건=어려움, Phase 5 재성장이 일부 흡수(추후).
    - 권장 순서: **1(은퇴) → 2(수복)**.
+
+---
+
+## 🔴 방향 전환 — 도로 maintenance 폐기 → 영역/영향력(Territory & Influence) (2026-06-26)
+> ✅ **(2026-06-27) 실행 완료** — 제거 + Territory v1 둘 다. 상세·다음단계는 **PROGRESS 최상단
+>   "🟢 도로 maintenance 폐기 + Territory/Influence v1" 섹션** 참조. 아래는 그 설계 원문.
+> **결정**: 위 Road Maintenance(Phase 0~5) **전체 폐기**. "누가 무엇을 지키고/파괴되나"를 **영역(Territory)** 이 대신.
+> 도로 decay·depot·zone-prune 모두 제거. 복구: git **`road-maintenance-complete`** 브랜치/태그(`ee368ae`).
+> **진행 결정(B)**: 제거 + Territory 구축을 **새 세션에서 함께**(같은 파일을 어차피 다시 건드림 → churn·리스크↓, 에디터 컴파일로 검증).
+
+### 영역/영향력 설계 (사용자, 2026-06-26)
+1. **영역 = 플레이어 고유 셀.** 적은 영역 안 신규 건설 불가. 영역에 새로 먹힌 적 기존 건물·도로는 파괴.
+2. **영역 원천 = 인구.** 거주건물 인구 ÷ 셀당 기준 = 영역 셀 수. 거주지 중심 **원형 전파**.
+   겹치는 셀은 합산, 잔여값은 가장 가까운 셀로 전파. (예: 인구 50, 셀당 5 → 10셀.)
+3. **영향력(Influence) = 영역의 힘.** 시민 행복도 등(팩션별 상이 가능). 향후 다용도(점6).
+4. **영역 겹침**: 영향력 가감 → 이긴 팀이 셀 소유, 영향력은 순값.
+5. **도로 자유 배치** — 베이스 연결 규칙 폐기(어디나). 단 적 영역엔 불가.
+6. **유일한 강제 파괴 = 남의 영역의 도로·건설물** (decay·zone-prune 없음).
+7. **AI 확장 = 기존 블록 방식 유지**(maintenance 추가분만 제거).
+- 재사용 자산: `GridLayers.TerritoryLayer`(int2→LocalId) **이미 존재** → 영역 셀 저장에 재활용.
+  폐기했던 Phase 0 클레임 게이트(`ClaimOps`)의 풍부판 = 인구 기반 + 영향력(되살리지 말고 새로).
+
+### 새 세션 제거 스펙 (걷어낼 것 / ★남길 것)
+- **삭제(파일)**: `RoadDecaySystem.cs` `RoadDecayTelegraphSystem.cs` `RoadMaintenanceDebugSystem.cs`
+  `DepotPlaceController.cs` · zone: `ZoneComponents.cs` `NetworkRepairSystem.cs` `CityZoneInitSystem.cs`.
+- **제거(코드)**: `StampKind.RoadMaintenance` + `RoadMaintenanceDepot` + depot 도장 루프(`StampRebuildSystem`) /
+  `IsRoadMaintenance`·`MaintenanceMaxDist`·`MaintenanceMaxDistOverride` 전 체인(`RegistryItem`·`PrefabMeta`·
+  `BakedPrefabEntry`·authoring·`PrefabLookupBuildSystem`·`SpawnRequest`·`SpawnSystem`·`BuildingPlacement`·
+  `PrefabRegistryWindow`) / Phase 4(`FactionBaseSpawnSystem` 베이스 depot + `RoadDecayState.Exempt` 등록) /
+  Phase 5(`AiCityGrowthSystem` depot coverage 검사 + stamp 전달 + `GrowthConfig`의 Maintenance 필드) /
+  `GameHUD` 관리소 토글 / zone(`RazeSystem`의 AttributeDeath·ReleaseZone·removeCells·NetworkRepairRequest,
+  `AiCityGrowthSystem.RegisterZone` + `CityZones` 사용).
+- **변경**: `RoadBuildController`의 `FilterConnectedToNetwork`/`ComputeAttached`(도로 연속성) 제거 → 자유 배치(점5/7).
+- **★ 남길 것 (maintenance 아님 — 타 시스템이 씀)**: 공급자·창고 stamp(`StampSupplier`/`WarehouseTag`/
+  `StampLayers`/`StampRebuildSystem` 코어) · **`RoadCoverageOps.Flood`**(그 stamp BFS가 사용) ·
+  `RazeSystem`의 건물 파괴 + **StampDirty 발행**(공급자/창고 coverage 갱신) · 도로/그리드/AI 블록성장/베이스스폰 코어.
+- **검증**: `AiCityGrowthSystem`이 `CityZones`를 블록 *선택*에 쓰는지 확인 — raze 정리용 외 안 쓰면 제거 안전.
 
 ---
 

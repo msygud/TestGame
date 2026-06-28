@@ -55,11 +55,6 @@ namespace CitySim
             var roadKeyLookup  = SystemAPI.GetSingleton<RoadKeyLookup>();
             var ecb            = new EntityCommandBuffer(Allocator.Temp);
 
-            // Phase 4: 베이스 자동 관리시설(첫 입구 건물을 depot으로 지정해 초기 coverage 보장).
-            //   거리 = GrowthConfig 공용 튜닝. 0이면 비활성(전용 depot 프리팹/베이스 config 사용 시).
-            bool hasEntranceLookup = SystemAPI.TryGetSingleton<EntranceLookup>(out var entranceLookup);
-            int  baseDepotMaxDist  = GrowthConfig.Default.MaintenanceMaxDist;
-
             // ── BakedFactionBase 버퍼 가져오기 ───────────────────
             DynamicBuffer<BakedFactionBase> bakedBuf = default;
             bool hasBuf = false;
@@ -142,15 +137,8 @@ namespace CitySim
                 byte roadSize  = roadKeyLookup.GetSize(slot.FactionId);
                 int2 buildOrigin = originCell + new int2(roadSize, roadSize);
 
-                // decay 면제 등록: 베이스 외곽 링은 모든 팀(휴먼·AI) 면제(베이스 brick 방지).
-                //   영구 구역 등록은 AI 전용(AiCityGrowthSystem)이라 면제를 거기 의존하면
-                //   휴먼 베이스가 빠진다 → 베이스 생성 지점에서 직접 등록.
-                NativeHashSet<int2> decayExempt = SystemAPI.HasSingleton<RoadDecayState>()
-                    ? SystemAPI.GetSingleton<RoadDecayState>().Exempt
-                    : default;
-
                 requestCount += EmitPerimeterRoads(
-                    ref ecb, originCell, campSize, roadSize, ownerLocalId, slot.FactionId, decayExempt);
+                    ref ecb, originCell, campSize, roadSize, ownerLocalId, slot.FactionId);
 
                 // ── 블록 그리드 정의 부착 (AI 도시 성장이 이걸 따라 블록식으로 자람) ──
                 //   Anchor=originCell, Block=campSize, Road=roadSize → 베이스=블록(0,0).
@@ -165,9 +153,6 @@ namespace CitySim
                 });
 
                 // ── 건물·유닛 배치 요청 발행 ──────────────────────────
-                //   Phase 4: 이 팀 베이스의 첫 '입구 있는' 건물을 관리시설로 지정(override) →
-                //   그 입구 도로셀에서 coverage가 퍼져 베이스 링+인근 도로가 decay 안 됨.
-                bool depotAssigned = false;
                 for (int i = 0; i < bakedBuf.Length; i++)
                 {
                     var b = bakedBuf[i];
@@ -179,15 +164,6 @@ namespace CitySim
 
                     int2 cell = buildOrigin + b.CellOffset;
 
-                    // 첫 입구 건물을 관리시설로(coverage 원점). baseDepotMaxDist=0이면 비활성.
-                    int maintOverride = 0;
-                    if (baseDepotMaxDist > 0 && !depotAssigned
-                        && hasEntranceLookup && entranceLookup.Has(b.MainKey))
-                    {
-                        maintOverride = baseDepotMaxDist;
-                        depotAssigned = true;
-                    }
-
                     var reqEntity = ecb.CreateEntity();
                     ecb.AddComponent(reqEntity, new PlaceBuildingRequest
                     {
@@ -198,7 +174,6 @@ namespace CitySim
                         OwnerLocalId               = ownerLocalId,
                         FactionId                  = slot.FactionId,
                         RequireRoadAccess          = true,
-                        MaintenanceMaxDistOverride = maintOverride,
                     });
 
                     requestCount++;
@@ -235,7 +210,7 @@ namespace CitySim
         static int EmitPerimeterRoads(
             ref EntityCommandBuffer ecb,
             int2 origin, int campSize, byte roadSize,
-            int ownerLocalId, int factionId, NativeHashSet<int2> exempt)
+            int ownerLocalId, int factionId)
         {
             int step       = math.max(1, roadSize);
             int innerMacro = math.max(1, campSize / step);
@@ -274,12 +249,6 @@ namespace CitySim
                     Axis                      = axis,
                 });
                 emitted++;
-
-                // 이 링 도로의 footprint 전체 셀을 decay 면제로 등록(모든 팀 공통).
-                if (exempt.IsCreated)
-                    for (int dz = 0; dz < step; dz++)
-                    for (int dx = 0; dx < step; dx++)
-                        exempt.Add(cell0 + new int2(dx, dz));
             }
 
             return emitted;

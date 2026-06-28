@@ -30,26 +30,6 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  RoadMaintenanceDepot  — "이 건물은 도로 관리시설이다" 표식
-    // ──────────────────────────────────────────────────────────────────────
-    //  StampSupplier와 형제(둘 다 입구 도로셀에서 도로망 BFS로 도장을 찍는
-    //  시설). 차이는 Relief가 없고 도장 Kind가 RoadMaintenance라는 점뿐.
-    //  도달 범위 안의 도로셀에 StampKind.RoadMaintenance 도장이 찍히고,
-    //  RoadDecaySystem이 도장 없는 도로를 미관리로 보고 decay시킨다.
-    //
-    //  부착: SpawnSystem이 SpawnRequest.IsRoadMaintenance일 때 건물에 부착.
-    //  BFS 시작점 = StampSupplier와 동일(입구 도로셀, BuildingEntrance 필요).
-    // ══════════════════════════════════════════════════════════════════════
-    public struct RoadMaintenanceDepot : IComponentData
-    {
-        /// <summary>이 관리시설을 소유한 플레이어 (0~7). 자기 도로망에만 도장.</summary>
-        public int OwnerLocalId;
-
-        /// <summary>관리 도달 거리 (BFS 최대 거리, 도로 칸 수). 0 이하면 무제한.</summary>
-        public int MaxDist;
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
     //  StampRebuildSystem  — stamp 재빌드 (라운드로빈 + DirtyMask)
     // ──────────────────────────────────────────────────────────────────────
     //  Stamp 인프라 3시스템 중 마지막:
@@ -158,22 +138,6 @@ namespace CitySim
                          ref map, in roadLayer, ref queue, ref visited);
             }
 
-            // ── ③-c 같은 플레이어 소유 도로 관리시설도 동일 BFS로 도장(Kind=RoadMaintenance) ──
-            //   Relief=None. 도달 범위 안의 도로셀에 RoadMaintenance 도장이 찍히고,
-            //   RoadDecaySystem(Phase 3)이 이 도장 없는 도로를 미관리로 보고 decay시킨다.
-            //   입구 없는 depot(BuildingEntrance 미부착)은 쿼리에서 자동 제외(BFS 시작점 없음).
-            foreach (var (depot, footprint, bEntrance, entity) in
-                     SystemAPI.Query<RefRO<RoadMaintenanceDepot>, RefRO<BuildingFootprint>,
-                                     RefRO<BuildingEntrance>>().WithEntityAccess())
-            {
-                if (depot.ValueRO.OwnerLocalId != target)
-                    continue;
-
-                StampOne(in footprint.ValueRO, in bEntrance.ValueRO, entity, target,
-                         NeedType.None, depot.ValueRO.MaxDist, StampKind.RoadMaintenance,
-                         ref map, in roadLayer, ref queue, ref visited);
-            }
-
             visited.Dispose();
             queue.Dispose();
 
@@ -185,8 +149,7 @@ namespace CitySim
         // ──────────────────────────────────────────────────────────────────
         //  시설 1개 도장 — 입구 도로셀에서 owner 도로망을 maxDist까지 확산.
         //
-        //  BFS는 공용 fact RoadCoverageOps.Flood에 위임한다 — 배치 프리뷰
-        //  (DepotPlaceController)와 **동일 규칙**이라 프리뷰 ≡ 런타임 coverage 보장.
+        //  BFS는 공용 fact RoadCoverageOps.Flood에 위임한다(공급자/창고 공통 규칙).
         //  · 입구 도로셀이 owner 도로가 아니면 Flood가 빈 결과(런타임 도로 철거 방어).
         //  · 도달 셀마다 SupplierRef(시설, Relief, dist, Kind) 도장.
         //  · 같은 셀에 다른 시설이 이미 있어도 무관 (MultiHashMap = 누적).
