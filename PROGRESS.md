@@ -5,6 +5,27 @@
 
 ---
 
+## 🟢 영역/구획 개편 — 덩이 1 (capture 표시화 + 완충 + 바깥확장) (2026-06-29)
+> 사용자 결정: 구획(parcel)=도로로 갇힌 빈 구역 / C1 골목분할 / D1 flood 파생 / 혼합 plot /
+> capture는 파괴 대신 표시(타팀 구조물은 나중에 별도 아이콘+후속효과) / 3+ 경합은 (i)최강소유+완충밴드.
+> 큰 작업이라 컴파일 체크포인트로 2덩이 분할. **덩이 1 = 영역 표시화 + 확장 중첩차단.**
+
+- ✅ **capture 파괴 폐기** — `TerritorySystem`에서 `RazeAreaCommand`/`RemoveRoadCommand` 발행 제거.
+  진 팀 건물/도로는 파괴 안 함. (`TerritoryOps.FootprintInEnemyTerritory`는 미사용으로 남김.)
+- ✅ **3+ 경합 완충밴드** — 셀마다 상위 2팀(거리) 추적(`Owner2`). 1등 소유, **1·2등 거리차 ≤
+  `ContestBuffer`(1.5)면 중립(미소유)** → 팀 사이 완충 띠. 3팀+도 상위 둘만 봐 별도 로직 불필요.
+- ✅ **영역 아웃라인 상시 렌더** — [TerritoryOutlineRenderSystem.cs](Assets/_game/scripts/RunTime/Systems/TerritoryOutlineRenderSystem.cs)
+  (PresentationGroup, GL, 상시 ON): TerritoryLayer에서 **소유자 다른 이웃과 맞닿은 경계 변만** 소유팀
+  색으로 그림(셀 전체 격자 X). (F7 디버그 fill `TerritoryDebugSystem`은 별개로 유지.)
+- ✅ **A: 확장 바깥-전용(중첩 차단)** — `AiCityGrowthSystem.GrowOneBlock`에 enclosure `outside` 전달,
+  후보 블록 **내부가 enclosed 포켓이면 거부**(`InteriorExterior`). → 비워진 8×8 안에 4×4 링 중첩 안 함.
+  갇힌 빈 구획은 채우기(+다음 골목)가 담당, 확장은 바깥 프런티어로만.
+- ⬜ **덩이 2 (다음)**: B 격자 정렬 패킹(혼합 plot) + C1 골목 분할(큰 빈 구획 도달) + D1 구획 flood 파생.
+  → 8×8 안쪽 깊은 셀까지 채우고, 4×4에 2×2 4개 정확히 패킹.
+- ⚠ 컴파일은 에디터에서 확인(이 환경 미검증). 타팀 구조물 아이콘/후속효과는 추후.
+
+---
+
 ## 🟢 AI 채우기-우선 성장 + 인구 베이킹값 존중 (2026-06-28)
 - ✅ **건물 단독 배치(채우기) 신규 — 폐쇄구역 중첩 해결** — 기존엔 성장 단위가 `DevelopBlock`
   (도로 링+건물) 하나뿐이라 이미 도로로 둘러싸인 빈 땅에도 또 링을 쳤음. 신규 `TryFillBesideRoad`:

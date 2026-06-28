@@ -87,12 +87,12 @@ namespace CitySim
                             in grid, owner, altKey, in outside, encLo, encHi, ref claimed, ref ecb))
                         continue;
 
-                    // 2) 채울 자리 없음 → 확장 1회(새 블록)
+                    // 2) 채울 자리 없음 → 확장 1회(새 블록, 바깥-전용)
                     bool grew = GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                        in grid, owner, chosenKey, clock.Day, in cfg, ref rng, ref ecb);
+                        in grid, owner, chosenKey, clock.Day, in cfg, in outside, encLo, encHi, ref rng, ref ecb);
                     if (!grew && altKey > 0 && altKey != chosenKey)
                         grew = GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                            in grid, owner, altKey, clock.Day, in cfg, ref rng, ref ecb);
+                            in grid, owner, altKey, clock.Day, in cfg, in outside, encLo, encHi, ref rng, ref ecb);
                     break;   // 확장은 틱당 1회
                 }
                 claimed.Dispose();
@@ -108,6 +108,7 @@ namespace CitySim
             in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner,
             int chosenKey, int day,
             in GrowthConfig cfg,
+            in NativeHashSet<int2> outside, int2 encLo, int2 encHi,
             ref Unity.Mathematics.Random rng, ref EntityCommandBuffer ecb)
         {
             if (!metaLookup.TryGetMeta(chosenKey, 0, out var meta)) return false;
@@ -165,6 +166,9 @@ namespace CitySim
                     if (!seen.Add(O)) continue;
                     if (!BlockValid(in layers, in cellTypeLookup, O, K, Road, owner)) continue;
                     if (cfg.RejectParallelSeam && IsParallelSeam(O, K, Road, owner, in layers)) continue;
+                    // 바깥-전용 확장: 블록 내부가 '갇힌(enclosed)' 포켓이면 거부(중첩 방지).
+                    //   갇힌 빈 구획은 채우기(+골목)가 담당, 확장은 바깥 프런티어로만.
+                    if (!InteriorExterior(O, K, in outside, encLo, encHi)) continue;
 
                     // 연결성은 앵커 도로 footprint(fo)가 링에 포함되어 보장됨 → 별도 게이트 불필요.
                     int massMask = SideMassMask(O, K, Road, owner, in layers);
@@ -280,6 +284,21 @@ namespace CitySim
         //   변 판정은 코너 돌출을 뺀 '내부 폭'만 스캔하므로(SideMassMask), 코너만 살짝
         //   닿는 볼록 확장이 오목으로 오판되지 않는다.
         static bool IsConcave(int massMask) => math.countbits(massMask) >= 2;
+
+        // 블록 내부(K×K)가 모두 '바깥(exterior)'인가 — 윈도우 밖이거나 outside 집합 소속.
+        //   하나라도 enclosed(윈도우 안 & outside 아님)면 false → 확장이 갇힌 포켓에 안 들어감.
+        static bool InteriorExterior(int2 O, int K, in NativeHashSet<int2> outside, int2 encLo, int2 encHi)
+        {
+            if (!outside.IsCreated) return true;   // enclosure 미계산 시 통과(안전)
+            for (int dz = 0; dz < K; dz++)
+            for (int dx = 0; dx < K; dx++)
+            {
+                int2 c = O + new int2(dx, dz);
+                bool outOfWindow = c.x < encLo.x || c.x > encHi.x || c.y < encLo.y || c.y > encHi.y;
+                if (!outOfWindow && !outside.Contains(c)) return false;   // enclosed 포켓
+            }
+            return true;
+        }
 
         // ── 블록 개발: 도로 링 + 건물 1개 ────────────────────────────────────
         static bool DevelopBlock(
