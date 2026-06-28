@@ -1913,7 +1913,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2de996b8a36ec4c4d9bad0e1026a0a3f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Game.CamCtrl.CamCtrl
-  moveSpeed: 10
+  moveSpeed: 20
   rotateSpeed: 120
   camRoot: {fileID: 1181421717}
   l:
@@ -3319,6 +3319,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1a5415c6536d154449d191160dafd801, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Test
+  PopPerCell: 1
+  TestResidenceCapacity: 10
 --- !u!1 &1734226377
 GameObject:
   m_ObjectHideFlags: 0

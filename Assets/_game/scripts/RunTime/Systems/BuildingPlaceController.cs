@@ -45,7 +45,7 @@ namespace CitySim
         PreviewStatus _hoverStatus = PreviewStatus.Valid;
         bool          _hasHover;
         public string StatusText => _modeActive
-            ? $"건물 #{_mainKey} (R 회전:{_rotSteps * 90}°) — {PreviewStatusOps.ToText(_hoverStatus)}"
+            ? $"Building #{_mainKey} (R rotate: {_rotSteps * 90}°) — {PreviewStatusOps.ToText(_hoverStatus)}"
             : string.Empty;
 
         EntityManager _em;

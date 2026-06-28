@@ -1,4 +1,5 @@
 using Unity.Collections;
+using Unity.Entities;
 using Unity.Mathematics;
 
 namespace CitySim
@@ -19,18 +20,24 @@ namespace CitySim
     //    TerritorySystem이 유일한 writer. 다른 시스템은 읽기만(빌드 게이트).
     // ══════════════════════════════════════════════════════════════════════════
 
-    /// <summary>영역 계산 튜닝(플레인 struct — GrowthConfig와 동일하게 .Default로 사용).</summary>
-    public struct TerritoryConfig
+    /// <summary>
+    /// 영역 계산 튜닝(싱글톤). 없으면 TerritorySystem이 Default 사용.
+    /// 테스트 스크립트(Test.cs)가 런타임에 PopPerCell을 써서 즉시 반영.
+    /// </summary>
+    public struct TerritoryConfig : IComponentData
     {
-        /// <summary>셀당 인구 기준. 영역 셀 수 = 인구 / PopPerCell.</summary>
-        public int PopPerCell;
-        /// <summary>한 거주건물 영역의 최대 반경(셀, 성능·폭주 가드).</summary>
+        /// <summary>
+        /// 셀 1칸 점유에 필요한 인구(충족값, float). 영역 셀 수 = floor(인구 / PopPerCell).
+        /// 인구(Capacity)는 int지만 나눗셈은 float, 나머지는 올림 없이 무조건 내림.
+        /// </summary>
+        public float PopPerCell;
+        /// <summary>영역 확산 윈도우 최대 반경(셀, 성능·폭주 가드).</summary>
         public int MaxRadius;
 
         public static TerritoryConfig Default => new TerritoryConfig
         {
-            PopPerCell = 5,
-            MaxRadius  = 24,
+            PopPerCell = 5f,
+            MaxRadius  = 64,
         };
     }
 
@@ -48,6 +55,13 @@ namespace CitySim
             if (!territory.IsCreated) return false;
             if (!territory.TryGetValue(cell, out int owner)) return false;
             return owner >= 0 && owner != myOwner;
+        }
+
+        /// <summary>cell이 누구의 것이든 영역(구역)에 속하면 true. (AI 확장 게이트용)</summary>
+        public static bool InAnyTerritory(in NativeHashMap<int2, int> territory, int2 cell)
+        {
+            if (!territory.IsCreated) return false;
+            return territory.TryGetValue(cell, out int owner) && owner >= 0;
         }
 
         /// <summary>footprint [origin, origin+size) 중 한 셀이라도 적 영역이면 true.</summary>

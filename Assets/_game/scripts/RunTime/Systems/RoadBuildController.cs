@@ -73,17 +73,17 @@ namespace CitySim
                 // 점유 셀이면 무엇이 막는지(건물/유닛/지형) 같이 표시.
                 if (_hoverStatus == PreviewStatus.Occupied
                     && _hoverOccupant != OccupantType.None)
-                    return $"건설 불가: {OccupantText(_hoverOccupant)} 점유";
+                    return $"Blocked: {OccupantText(_hoverOccupant)}";
                 return PreviewStatusOps.ToText(_hoverStatus);
             }
         }
 
         static string OccupantText(OccupantType t) => t switch
         {
-            OccupantType.Road        => "도로",
-            OccupantType.Building     => "건물",
-            OccupantType.Environment => "환경물",
-            _                        => "오브젝트",
+            OccupantType.Road        => "road",
+            OccupantType.Building     => "building",
+            OccupantType.Environment => "object",
+            _                        => "object",
         };
 
         // ── 내부 상태 ──────────────────────────────────────────────

@@ -5,6 +5,49 @@
 
 ---
 
+## 🟢 AI 채우기-우선 성장 + 인구 베이킹값 존중 (2026-06-28)
+- ✅ **건물 단독 배치(채우기) 신규 — 폐쇄구역 중첩 해결** — 기존엔 성장 단위가 `DevelopBlock`
+  (도로 링+건물) 하나뿐이라 이미 도로로 둘러싸인 빈 땅에도 또 링을 쳤음. 신규 `TryFillBesideRoad`:
+  **기존 도로에 인접한 빈 셀에 '건물만' 단독 배치**(새 도로 X, 입구가 기존 도로에 닿는 회전 선택,
+  footprint 평탄·Land·비점유·비적영역). `OnUpdate`는 한 틱에 `BuildPerTick`(기본 6)채까지 —
+  **① 채우기 우선**(가능한 한 많이, `claimed` 셋으로 같은 틱 중복 방지) **② 채울 자리 없을 때만
+  확장(DevelopBlock) 1회**. → 8×8 폐쇄구역 안에 2×2가 도로에 맞닿아 채워지고, 자리 다 차면 확장.
+  AI는 farm_h(1004)·stock_h(1005)만 짓고 둘 다 거주가 아니라 territory를 안 만들어 자기 영역에 안 막힘.
+- ✅ **자기-포위(stop) 수정 — 채우기는 enclosed 안쪽만** — 증상: 채우기가 바깥 빈 땅까지 양옆으로
+  메워 도로가 더 못 뻗고 멈춤(베이스 안쪽 꽉→바깥 ㄴ자→정지). 원인: 채우기가 프런티어(열린 땅)를
+  점유해 도로 확장 자리를 막음. 해결: `ComputeEnclosureOutside` — 팀 도로/건물을 벽으로 막고 도로
+  bbox±8 테두리에서 flood → '도시 바깥' 집합 산출. `TryFillBesideRoad`는 **enclosed(바깥 아님) 셀만**
+  채우고, **바깥 열린 땅은 도로 확장(DevelopBlock)용으로 보존**. → 안쪽 채우고 → 막히면 새 링으로
+  바깥 확장 → 새 링이 새 포켓을 가둠 → 다음 틱 그 포켓 채움. 계속 자람(정지 해소).
+- ❓ **구역(zone) 레이어 없음** — 예전 `CityZones`는 maintenance 폐기 때 삭제, `GridLayers.BlockLayer`는
+  정의만 있고 미사용. 채우기는 '도로 인접'으로 충분해 레이어 불필요. 명시적 지구 추적이 필요하면 추가.
+- ✅ **인구 = 베이킹값 존중 확인/수정** — TerritorySystem은 인스턴스별 `BuildingOccupancy`
+  (Current>0?Current:Capacity)를 읽음(전역 아님). `Capacity`는 `BuildingAuthoring`이 프리팹별 베이킹.
+  "일괄 적용" 원인 = **Test.cs 우클릭이 Capacity를 50으로 덮어쓰던 것** → 수정: 베이킹된
+  `BuildingOccupancy`가 있으면 그 값 존중, 없을 때만 `TestResidenceCapacity`(기본 10) 부여.
+- ⬜ 건물 종류 다양화(거주/식당 섞기)·수요 기반 선택은 추후. 명시적 지구 예약형(reserve→fill→expand
+  상태머신)도 원하면 추가 — 현재는 스코어러 emergent.
+
+## 🟢 Territory v2 — 중첩 전파 + 초단위 재계산 + AI 구역밖 확장 (2026-06-28)
+- ✅ **중첩 전파(nearest-N)로 교체** — 기존 고정 디스크(겹쳐도 경계 안 커짐)를 폐기.
+  소유자별로 모든 거주지의 셀 수(인구/PopPerCell)를 **합산한 예산**만큼 거주지 중심에서
+  **가장 가까운 셀**을 채운다(다중소스). → 거주지가 겹치면 예산이 합쳐져 경계가 바깥으로
+  밀려난다(중첩=확장). 셀 경합(다른 팀)은 **더 가까운 쪽**이 가짐(net by proximity).
+  [TerritorySystem.cs](Assets/_game/scripts/RunTime/Systems/TerritorySystem.cs).
+- ✅ **초단위 전체 재계산** — `HourChanged` 게이트 → `SystemAPI.Time.ElapsedTime` 1초 간격.
+  매번 클리어 후 재작성이라 **기존 결정 셀도 재결정**(PopPerCell 바꾸면 곧 반영).
+- ✅ **셀당 인구수 런타임 필드** — `TerritoryConfig`를 IComponentData 싱글톤으로 변경,
+  [Test.cs](Assets/_game/scripts/Test.cs)에 `PopPerCell` 인스펙터 필드 추가 → 매 프레임 싱글톤에 push.
+  없으면 TerritorySystem이 Default(PopPerCell=5, MaxRadius=64).
+- ✅ **AI 확장은 적 영역만 회피** (`AiCityGrowthSystem.BlockValid`) — 처음엔 '내부는 어떤 영역이라도
+  거부(`InAnyTerritory`)'로 했으나, **자기 베이스가 영역을 만들면 자기 영역 위에서 확장이 막혀 정지**하는
+  버그가 있어 **`InEnemyTerritory`(적 영역만)로 완화** (2026-06-28). 자기 영역엔 자유롭게 채우고 확장.
+  채우기·도로 링과 동일 규칙. ("구역 없을 때만 확장"의 의도는 '적 구역 침범 금지'로 재해석.)
+- ⬜ 한계: 영향력 '합산(net)'은 거리 기반 근사(같은 팀은 합산 안 함). 윈도우 스캔+정렬은 1초 1회라
+  비용 OK. 영역=in-bounds 셀(물 포함) — Land 한정은 추후.
+
+---
+
 ## 🟢 건설 탭 건물 배치 UI (테스트용, 2026-06-28)
 > 물류·생산·영역 등을 손으로 건물 깔아 확인하려고 건설탭에 건물 버튼 + 배치 도구 추가.
 

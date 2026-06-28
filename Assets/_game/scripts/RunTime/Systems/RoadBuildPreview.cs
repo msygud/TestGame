@@ -82,18 +82,18 @@ namespace CitySim
         /// <summary>유저에게 보일 사유 텍스트 (HUD 라벨용).</summary>
         public static string ToText(PreviewStatus s) => s switch
         {
-            PreviewStatus.Valid          => "건설 가능",
-            PreviewStatus.Occupied       => "건설 불가: 오브젝트 점유",
-            PreviewStatus.OutOfBounds    => "건설 불가: 맵 범위 밖",
-            PreviewStatus.HeightMismatch => "건설 불가: 단차 불일치",
-            PreviewStatus.ParallelWarn   => "경고: 평행 도로 — 연결 안 됨",
-            PreviewStatus.OwnerWarn      => "경고: 타 플레이어 도로 — 연결 안 됨",
-            PreviewStatus.ResourceBlocked => "건설 불가: 자원 점유",
-            PreviewStatus.WillClear      => "환경물 철거 후 건설",
-            PreviewStatus.Disconnected   => "건설 안 됨: 기존 도로와 연결 안 됨",
-            PreviewStatus.Coverage       => "관리 범위",
-            PreviewStatus.CoverageExisting => "기존 관리 범위",
-            PreviewStatus.DepotExisting  => "기존 관리소",
+            PreviewStatus.Valid          => "Buildable",
+            PreviewStatus.Occupied       => "Blocked: occupied",
+            PreviewStatus.OutOfBounds    => "Blocked: out of bounds",
+            PreviewStatus.HeightMismatch => "Blocked: height mismatch",
+            PreviewStatus.ParallelWarn   => "Warning: parallel road — not connected",
+            PreviewStatus.OwnerWarn      => "Warning: other player's road — not connected",
+            PreviewStatus.ResourceBlocked => "Blocked: resource",
+            PreviewStatus.WillClear      => "Clears object, then builds",
+            PreviewStatus.Disconnected   => "Not built: disconnected from road network",
+            PreviewStatus.Coverage       => "Coverage",
+            PreviewStatus.CoverageExisting => "Existing coverage",
+            PreviewStatus.DepotExisting  => "Existing depot",
             _                            => string.Empty,
         };
     }
