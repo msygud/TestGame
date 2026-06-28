@@ -62,6 +62,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 734d316f521be8648b1f98c357971ca0, type: 3}
       insertIndex: -1
       addedObject: {fileID: 9179914215499502316}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 734d316f521be8648b1f98c357971ca0, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: -1770978885109922493}
   m_SourcePrefab: {fileID: 100100000, guid: 734d316f521be8648b1f98c357971ca0, type: 3}
 --- !u!1 &3231845200399232809 stripped
 GameObject:
@@ -105,3 +108,19 @@ MonoBehaviour:
   FootprintSize: {x: 4, y: 4}
   FootprintRadius: 1
   ExtraPadding: 0.25
+--- !u!114 &-1770978885109922493
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3231845200399232809}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9fd4317e0230f934095b91167c97180f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.Authoring.BuildingAuthoring
+  Kind: 1
+  Capacity: 70
+  ProvidedJob: 0
+  Influence: 5

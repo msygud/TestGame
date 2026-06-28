@@ -26,14 +26,17 @@ namespace CitySim
     /// </summary>
     public struct TerritoryConfig : IComponentData
     {
-        /// <summary>셀당 인구 기준. 영역 셀 수 = 인구 / PopPerCell.</summary>
-        public int PopPerCell;
+        /// <summary>
+        /// 셀 1칸 점유에 필요한 인구(충족값, float). 영역 셀 수 = floor(인구 / PopPerCell).
+        /// 인구(Capacity)는 int지만 나눗셈은 float, 나머지는 올림 없이 무조건 내림.
+        /// </summary>
+        public float PopPerCell;
         /// <summary>영역 확산 윈도우 최대 반경(셀, 성능·폭주 가드).</summary>
         public int MaxRadius;
 
         public static TerritoryConfig Default => new TerritoryConfig
         {
-            PopPerCell = 5,
+            PopPerCell = 5f,
             MaxRadius  = 64,
         };
     }

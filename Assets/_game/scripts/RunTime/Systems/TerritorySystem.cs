@@ -44,11 +44,11 @@ namespace CitySim
             var layers = SystemAPI.GetSingleton<GridLayers>();
             if (!layers.TerritoryLayer.IsCreated) return;
 
-            int popPerCell = TerritoryConfig.Default.PopPerCell;
-            int maxRadius  = TerritoryConfig.Default.MaxRadius;
+            float popPerCell = TerritoryConfig.Default.PopPerCell;
+            int   maxRadius  = TerritoryConfig.Default.MaxRadius;
             if (SystemAPI.TryGetSingleton<TerritoryConfig>(out var cfg))
             {
-                popPerCell = math.max(1, cfg.PopPerCell);
+                popPerCell = cfg.PopPerCell > 0f ? cfg.PopPerCell : TerritoryConfig.Default.PopPerCell;
                 maxRadius  = math.max(1, cfg.MaxRadius);
             }
 
@@ -64,6 +64,10 @@ namespace CitySim
                 int pop = occ.ValueRO.Current > 0 ? occ.ValueRO.Current : occ.ValueRO.Capacity;
                 if (pop <= 0) continue;
 
+                // 셀 수 = floor(인구 / PopPerCell). float 나눗셈, 나머지는 무조건 내림.
+                int cells = (int)math.floor(pop / popPerCell);
+                if (cells <= 0) continue;   // 충족 인구 미달 → 영역 0칸
+
                 int2 eff    = EntranceOps.RotateSize(bf.ValueRO.Size, bf.ValueRO.RotSteps);
                 int2 center = bf.ValueRO.Origin + eff / 2;
 
@@ -71,7 +75,7 @@ namespace CitySim
                 {
                     Owner  = owner,
                     Center = center,
-                    Cells  = math.max(1, pop / popPerCell),
+                    Cells  = cells,
                 });
             }
 

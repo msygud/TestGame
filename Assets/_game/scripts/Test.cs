@@ -15,9 +15,13 @@ using UnityEngine.InputSystem;
 public class Test : MonoBehaviour
 {
     [Header("Territory 테스트")]
-    [Tooltip("셀당 인구수 기준. 영역 셀 수 = 거주건물 인구 / 이 값. "
+    [Tooltip("셀 1칸 점유에 필요한 인구(float). 영역 셀 수 = floor(거주건물 인구 / 이 값). "
            + "매 프레임 TerritoryConfig 싱글톤에 반영 → TerritorySystem이 1초마다 전체 재계산.")]
-    public int PopPerCell = 5;
+    public float PopPerCell = 5f;
+
+    [Tooltip("우클릭 태깅 시, BuildingOccupancy가 '없는' 건물에만 줄 정원(인구). "
+           + "이미 베이킹된 BuildingOccupancy가 있으면 그 값을 존중(덮어쓰지 않음).")]
+    public int TestResidenceCapacity = 10;
 
     void Update()
     {
@@ -85,17 +89,19 @@ public class Test : MonoBehaviour
         if (!em.HasComponent<ResidenceBuilding>(target))
             em.AddComponent<ResidenceBuilding>(target);
 
+        // 베이킹된 BuildingOccupancy가 있으면 그 정원(인구)을 존중 — 덮어쓰지 않음.
+        //   없을 때만 테스트용 정원을 부여(프리팹에 BuildingAuthoring 미설정 상태 대비).
+        int cap;
         if (em.HasComponent<BuildingOccupancy>(target))
         {
-            var occ = em.GetComponentData<BuildingOccupancy>(target);
-            occ.Capacity = math.max(occ.Capacity, 50);
-            em.SetComponentData(target, occ);
+            cap = em.GetComponentData<BuildingOccupancy>(target).Capacity;
         }
         else
         {
-            em.AddComponentData(target, new BuildingOccupancy { Current = 0, Capacity = 50 });
+            cap = Mathf.Max(1, TestResidenceCapacity);
+            em.AddComponentData(target, new BuildingOccupancy { Current = 0, Capacity = cap });
         }
-        Debug.Log($"[Test] 거주건물 지정 (Capacity≥50) @ {mn} — F7로 영역 확인 (1초마다 자동 재계산)");
+        Debug.Log($"[Test] 거주건물 지정 (Capacity={cap}, 베이킹값 존중) @ {mn} — F7로 영역 확인");
     }
 
     // PopPerCell을 TerritoryConfig 싱글톤에 반영(없으면 생성). 매 프레임 — 인스펙터 변경 즉시 반영.
@@ -111,7 +117,7 @@ public class Test : MonoBehaviour
 
         em.SetComponentData(e, new TerritoryConfig
         {
-            PopPerCell = Mathf.Max(1, PopPerCell),
+            PopPerCell = Mathf.Max(0.01f, PopPerCell),
             MaxRadius  = 64,
         });
     }
