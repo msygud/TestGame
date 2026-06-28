@@ -6,26 +6,31 @@ using Unity.Mathematics;
 namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════════════════
-    //  TerritorySystem — 인구 기반 영역 재계산 + 영역 침범물 파괴(capture)
+    //  TerritorySystem — 인구 기반 영역 재계산 (파괴 없음 — 표시 전용)
     // ──────────────────────────────────────────────────────────────────────────
-    //  ~1초마다(실시간) 전체 재계산(기존 결정 셀도 매번 재결정):
-    //    ① 거주건물(ResidenceBuilding)마다 영역 셀 수 = 인구 / PopPerCell.
-    //       소유자별로 모든 거주지의 셀 수를 합산한 예산(budget)만큼,
-    //       거주지 중심에서 '가장 가까운 셀'을 채운다(다중소스 nearest-N).
-    //       → 거주지가 겹치면 예산이 합산돼 경계가 바깥으로 밀려난다(중첩 전파).
-    //       셀 소유 경합(다른 팀)은 더 가까운 쪽이 가진다(net by proximity).
-    //       결과를 GridLayers.TerritoryLayer(int2→LocalId)에 기록(클리어 후 재작성).
-    //    ② capture — 영역이 적을 덮으면(셀 소유자 ≠ 건물/도로 소유자, 둘 다 실제 팀):
-    //         · 적 건물 footprint → RazeAreaCommand   (RazeSystem이 파괴)
-    //         · 적 도로 셀        → RemoveRoadCommand{Forced=1} (RoadSystem이 철거)
+    //  ~1초마다(실시간) 전체 재계산(기존 결정 셀도 매번 재결정). 두 개념을 분리한다:
     //
+    //    [영역 reach] = 물리적 범위. 거주건물마다 셀 수 = floor(인구 / PopPerCell).
+    //      소유자별 예산(셀 수 합)만큼 거주지 중심에서 '가장 가까운 셀'을 차지(다중소스 nearest-N).
+    //      → 어느 팀이 그 셀에 '닿는가(영역이 미치는가)'를 결정. 겹치면 경합.
+    //
+    //    [영향력 influence] = 그 셀에서 팀이 가진 '힘'. 여기선 Σ 거주지 인구/(1+거리)
+    //      (가까운/큰 인구일수록 강함). ※placeholder — 추후 시민 행복도·팩션 보정을 곱해 대체.
+    //      겹친(경합) 셀의 소유는 **영향력 1등**이 가진다. 동률(±ContestMargin)이면 중립(미소유).
+    //      3팀+ 경합도 영향력 상위 둘만 보면 되므로 별도 로직 불필요.
+    //
+    //    · 결과를 GridLayers.TerritoryLayer(int2→LocalId)에 기록(클리어 후 재작성).
+    //
+    //  ※ capture(영역 침범물 파괴)는 폐기 — 진 팀 건물/도로는 파괴하지 않는다.
+    //    소유 변화는 시각(아웃라인=TerritoryOutlineRenderSystem)으로만 표시.
     //  메인스레드·저빈도(1초). TerritoryLayer의 유일한 writer.
-    //  시스템 순서: RazeSystem·RoadSystem 전 → capture 명령이 같은 프레임에 실행.
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
-    [UpdateBefore(typeof(RazeSystem))]
     public partial struct TerritorySystem : ISystem
     {
+        // 경합 셀에서 1·2등 영향력 차가 (이 비율 × 1등) 이하면 동률로 보고 중립.
+        const float ContestMargin = 0.02f;
+
         double _nextRecompute;   // 다음 재계산 실시각(초)
 
         public void OnCreate(ref SystemState state)
@@ -76,11 +81,12 @@ namespace CitySim
                     Owner  = owner,
                     Center = center,
                     Cells  = cells,
+                    Pop    = pop,
                 });
             }
 
-            // ── 소유자별 nearest-N 배정 → 경합은 거리로 해소 ────────────────
-            var best = new NativeHashMap<int2, OwnerDist>(2048, Allocator.Temp);
+            // ── 소유자별 nearest-N 배정(영역) → 셀마다 상위 2팀(영향력) 추적 ──
+            var best = new NativeHashMap<int2, Owner2>(2048, Allocator.Temp);
             var cmp  = new ClaimComparer();
 
             for (int owner = 0; owner < StampLayers.MaxPlayers; owner++)
@@ -101,7 +107,8 @@ namespace CitySim
 
                 int margin = math.min(maxRadius, (int)math.ceil(math.sqrt(budget / math.PI)) + 2);
 
-                // 윈도우 내 후보 셀 + 가장 가까운 거주지까지 거리
+                // 윈도우 내 후보 셀: 영역 선택용 '최근접 거리(md)' + '영향력(inf)' 동시 계산.
+                //   inf = Σ 거주지 인구/(1+거리) — 가까운/큰 인구일수록 그 셀에서 강함.
                 var cand = new NativeList<Claim>(256, Allocator.Temp);
                 for (int z = bbMin.y - margin; z <= bbMax.y + margin; z++)
                 for (int x = bbMin.x - margin; x <= bbMax.x + margin; x++)
@@ -109,74 +116,55 @@ namespace CitySim
                     int2 cell = new int2(x, z);
                     if (!layers.TerrainLayer.ContainsKey(cell)) continue;   // 맵 안만
 
-                    float md = float.MaxValue;
+                    float md = float.MaxValue, inf = 0f;
                     for (int i = 0; i < residences.Length; i++)
                     {
                         if (residences[i].Owner != owner) continue;
                         float d = math.distance((float2)cell, (float2)residences[i].Center);
                         if (d < md) md = d;
+                        inf += residences[i].Pop / (1f + d);
                     }
-                    if (md < float.MaxValue) cand.Add(new Claim { Dist = md, Cell = cell });
+                    if (md < float.MaxValue) cand.Add(new Claim { Dist = md, Inf = inf, Cell = cell });
                 }
 
-                // 가까운 순으로 예산만큼만 배정
+                // [영역] 가까운 순으로 예산만큼만 reach. 각 reach 셀에 [영향력] 상위 2팀 기록.
                 var arr = cand.AsArray();
                 arr.Sort(cmp);
                 int take = math.min(budget, arr.Length);
                 for (int k = 0; k < take; k++)
                 {
                     var c = arr[k];
-                    if (!best.TryGetValue(c.Cell, out var b) || c.Dist < b.Dist)
-                        best[c.Cell] = new OwnerDist { Owner = owner, Dist = c.Dist };
+                    if (!best.TryGetValue(c.Cell, out var b))
+                        b = new Owner2 { O1 = -1, Inf1 = 0f, O2 = -1, Inf2 = 0f };
+                    // owner는 셀당 1회만 들어오므로 기존 O1/O2와 항상 다른 팀. 영향력 큰 순.
+                    if (c.Inf > b.Inf1)      { b.O2 = b.O1; b.Inf2 = b.Inf1; b.O1 = owner; b.Inf1 = c.Inf; }
+                    else if (c.Inf > b.Inf2) { b.O2 = owner; b.Inf2 = c.Inf; }
+                    best[c.Cell] = b;
                 }
                 cand.Dispose();
             }
 
-            // ── TerritoryLayer 재작성 ───────────────────────────────────────
+            // ── TerritoryLayer 재작성 — 경합은 영향력 1등 소유, 동률(±Margin)이면 중립 ──
             layers.TerritoryLayer.Clear();
             foreach (var kv in best)
-                layers.TerritoryLayer[kv.Key] = kv.Value.Owner;
+            {
+                var b = kv.Value;
+                if (b.O1 < 0) continue;
+                // 경합(2팀+ 도달)에서 1·2등 영향력이 박빙이면 중립(힘겨루기 무승부).
+                if (b.O2 >= 0 && (b.Inf1 - b.Inf2) <= ContestMargin * b.Inf1) continue;
+                layers.TerritoryLayer[kv.Key] = b.O1;
+            }
 
             residences.Dispose();
             best.Dispose();
-
-            // ── capture — 적 영역에 든 적 건물/도로 강제 파괴 ───────────────
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-
-            foreach (var bf in SystemAPI.Query<RefRO<BuildingFootprint>>())
-            {
-                int2 eff = EntranceOps.RotateSize(bf.ValueRO.Size, bf.ValueRO.RotSteps);
-                int2 org = bf.ValueRO.Origin;
-                if (!TerritoryOps.FootprintInEnemyTerritory(
-                        in layers.TerritoryLayer, org, eff, bf.ValueRO.OwnerLocalId))
-                    continue;
-
-                var e = ecb.CreateEntity();
-                ecb.AddComponent(e, new RazeAreaCommand { Min = org, Max = org + eff - 1 });
-            }
-
-            foreach (var kv in layers.RoadLayer)
-            {
-                var rc = kv.Value;
-                if (!TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, kv.Key, rc.OwnerLocalId))
-                    continue;
-
-                var e = ecb.CreateEntity();
-                ecb.AddComponent(e, new RemoveRoadCommand
-                {
-                    Cell = kv.Key, OwnerLocalId = rc.OwnerLocalId, Forced = 1,
-                });
-            }
-
-            ecb.Playback(state.EntityManager);
-            ecb.Dispose();
         }
 
-        struct ResInfo { public int Owner; public int2 Center; public int Cells; }
-        struct OwnerDist { public int Owner; public float Dist; }
-        struct Claim { public float Dist; public int2 Cell; }
+        struct ResInfo { public int Owner; public int2 Center; public int Cells; public int Pop; }
+        // 셀당 상위 2팀(영향력). O2=-1이면 단독(경합 아님).
+        struct Owner2 { public int O1; public float Inf1; public int O2; public float Inf2; }
+        struct Claim { public float Dist; public float Inf; public int2 Cell; }
 
-        // 거리 오름차순, 동률은 셀 좌표(결정적).
+        // 거리 오름차순(영역 reach 선택용), 동률은 셀 좌표(결정적).
         struct ClaimComparer : IComparer<Claim>
         {
             public int Compare(Claim a, Claim b)

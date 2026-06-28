@@ -59,11 +59,9 @@ namespace CitySim
                 var rng = Unity.Mathematics.Random.CreateFromIndex(
                     math.hash(new int2(clock.Day + 1, owner + 1)) ^ grid.Seed);
 
-                // 지구 채우기 → 확장: 한 틱에 BuildPerTick채까지.
-                //   1순위 = 채우기(TryFillBesideRoad): 기존 도로 옆 빈 자리에 '건물만' 단독 배치.
-                //     폐쇄구역 내부도 도로에 맞닿게 채운다(새 링 X). 가능한 한 많이.
-                //   채울 자리가 없을 때만 = 확장(DevelopBlock=새 도로 링+건물) '1회' 후 그 틱 종료.
-                //     (레이어가 틱 중 갱신 안 돼 확장 중복 위험 → 1회만; 채우기는 claimed로 중복 방지.)
+                // 구획 채우기 → 확장: 갇힌 구획을 격자 패킹/골목으로 개발(DevelopParcels),
+                //   개발할 갇힌 구획이 없으면 바깥으로 블록 1개 확장(GrowOneBlock).
+                //   한 틱 건물 상한 = BuildPerTick. claimed로 같은 틱 중복 방지.
                 int budget  = math.max(1, cfg.BuildPerTick);
                 var claimed = new NativeHashSet<int2>(128, Allocator.Temp);
 
@@ -72,29 +70,22 @@ namespace CitySim
                 var outside = new NativeHashSet<int2>(512, Allocator.Temp);
                 ComputeEnclosureOutside(in layers, owner, out int2 encLo, out int2 encHi, ref outside);
 
-                for (int k = 0; k < budget; k++)
+                // 1) 갇힌 구획 개발 (D1 구획 파생 + B 격자 패킹 + C1 골목 분할).
+                bool worked = DevelopParcels(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
+                    in grid, owner, in cfg, in outside, encLo, encHi, budget, ref claimed, ref ecb);
+
+                // 2) 개발할 갇힌 구획 없음 → 바깥 확장 1회(새 블록, 바깥-전용).
+                if (!worked)
                 {
                     int chosenKey = PickBuilding(in cfg, ref rng);
-                    if (chosenKey <= 0) break;
                     int altKey = chosenKey == cfg.BuildingKeyA ? cfg.BuildingKeyB : cfg.BuildingKeyA;
-
-                    // 1) 채우기 우선 (크기 폴백 포함) — enclosed 안쪽만
-                    if (TryFillBesideRoad(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                            in grid, owner, chosenKey, in outside, encLo, encHi, ref claimed, ref ecb))
-                        continue;
-                    if (altKey > 0 && altKey != chosenKey
-                        && TryFillBesideRoad(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                            in grid, owner, altKey, in outside, encLo, encHi, ref claimed, ref ecb))
-                        continue;
-
-                    // 2) 채울 자리 없음 → 확장 1회(새 블록)
-                    bool grew = GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                        in grid, owner, chosenKey, clock.Day, in cfg, ref rng, ref ecb);
+                    bool grew = chosenKey > 0 && GrowOneBlock(in layers, in entranceLookup, in metaLookup,
+                        in cellTypeLookup, in grid, owner, chosenKey, clock.Day, in cfg, in outside, encLo, encHi, ref rng, ref ecb);
                     if (!grew && altKey > 0 && altKey != chosenKey)
-                        grew = GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                            in grid, owner, altKey, clock.Day, in cfg, ref rng, ref ecb);
-                    break;   // 확장은 틱당 1회
+                        GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
+                            in grid, owner, altKey, clock.Day, in cfg, in outside, encLo, encHi, ref rng, ref ecb);
                 }
+
                 claimed.Dispose();
                 outside.Dispose();
             }
@@ -108,6 +99,7 @@ namespace CitySim
             in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner,
             int chosenKey, int day,
             in GrowthConfig cfg,
+            in NativeHashSet<int2> outside, int2 encLo, int2 encHi,
             ref Unity.Mathematics.Random rng, ref EntityCommandBuffer ecb)
         {
             if (!metaLookup.TryGetMeta(chosenKey, 0, out var meta)) return false;
@@ -165,6 +157,9 @@ namespace CitySim
                     if (!seen.Add(O)) continue;
                     if (!BlockValid(in layers, in cellTypeLookup, O, K, Road, owner)) continue;
                     if (cfg.RejectParallelSeam && IsParallelSeam(O, K, Road, owner, in layers)) continue;
+                    // 바깥-전용 확장: 블록 내부가 '갇힌(enclosed)' 포켓이면 거부(중첩 방지).
+                    //   갇힌 빈 구획은 채우기/골목이 담당, 확장은 바깥 프런티어로만.
+                    if (!InteriorExterior(O, K, in outside, encLo, encHi)) continue;
 
                     // 연결성은 앵커 도로 footprint(fo)가 링에 포함되어 보장됨 → 별도 게이트 불필요.
                     int massMask = SideMassMask(O, K, Road, owner, in layers);
@@ -280,6 +275,21 @@ namespace CitySim
         //   변 판정은 코너 돌출을 뺀 '내부 폭'만 스캔하므로(SideMassMask), 코너만 살짝
         //   닿는 볼록 확장이 오목으로 오판되지 않는다.
         static bool IsConcave(int massMask) => math.countbits(massMask) >= 2;
+
+        // 블록 내부(K×K)가 모두 '바깥(exterior)'인가 — 윈도우 밖이거나 outside 집합 소속.
+        //   하나라도 enclosed(윈도우 안 & outside 아님)면 false → 확장이 갇힌 포켓에 안 들어감.
+        static bool InteriorExterior(int2 O, int K, in NativeHashSet<int2> outside, int2 encLo, int2 encHi)
+        {
+            if (!outside.IsCreated) return true;   // enclosure 미계산 시 통과(안전)
+            for (int dz = 0; dz < K; dz++)
+            for (int dx = 0; dx < K; dx++)
+            {
+                int2 c = O + new int2(dx, dz);
+                bool outOfWindow = c.x < encLo.x || c.x > encHi.x || c.y < encLo.y || c.y > encHi.y;
+                if (!outOfWindow && !outside.Contains(c)) return false;   // enclosed 포켓
+            }
+            return true;
+        }
 
         // ── 블록 개발: 도로 링 + 건물 1개 ────────────────────────────────────
         static bool DevelopBlock(
@@ -524,6 +534,188 @@ namespace CitySim
                     if (IsTeamRoad(c + RoadDirOps.Offsets[d], in layers, owner)) return true;
             }
             return false;
+        }
+
+        // ── D1+B+C1: 갇힌 빈 구획 개발 ──────────────────────────────────────
+        //  enclosed empty 셀(=outside 아님, buildable, Land)을 4-연결 '구획'으로 묶고(D1):
+        //    · B: 구획 bbox 원점 기준 격자로 건물 패킹(큰 plot 먼저, 작은 나중 = 혼합).
+        //         → 4×4 구획에 2×2 4개 정확히. 격자 정렬이라 빈틈/낭비 없음.
+        //    · C1: 최소 변 ≥6인 깊은 구획은 중앙 직선 '골목' 1줄을 깔아 분할(다음 틱에 재평가).
+        //  반환: 건물/골목을 하나라도 발행했으면 true.
+        static bool DevelopParcels(
+            in GridLayers layers, in EntranceLookup entranceLookup, in PrefabMetaLookup metaLookup,
+            in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner, in GrowthConfig cfg,
+            in NativeHashSet<int2> outside, int2 encLo, int2 encHi,
+            int budget, ref NativeHashSet<int2> claimed, ref EntityCommandBuffer ecb)
+        {
+            if (encHi.x < encLo.x || encHi.y < encLo.y) return false;   // 도로 없음
+
+            // enclosed empty 셀 수집
+            var enc = new NativeHashSet<int2>(512, Allocator.Temp);
+            for (int z = encLo.y; z <= encHi.y; z++)
+            for (int x = encLo.x; x <= encHi.x; x++)
+            {
+                int2 c = new int2(x, z);
+                if (outside.Contains(c)) continue;
+                if (!CellBuildable(c, in layers)) continue;                 // 도로/건물/자원/맵밖 제외
+                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)) continue;
+                if (layers.TerrainLayer.TryGetValue(c, out var tc)
+                    && cellTypeLookup.TryGet(tc.TypeId, out var ti)
+                    && ti.TerrainCategory == TerrainCategory.Water) continue;
+                enc.Add(c);
+            }
+            if (enc.IsEmpty) { enc.Dispose(); return false; }
+
+            // plot 크게→작게 (혼합): 두 키 중 큰 것 먼저.
+            int keyBig = cfg.BuildingKeyB, keySmall = cfg.BuildingKeyA;
+            if (metaLookup.TryGetMeta(cfg.BuildingKeyA, 0, out var mA)
+                && metaLookup.TryGetMeta(cfg.BuildingKeyB, 0, out var mB)
+                && math.max(mA.Size.x, mA.Size.y) > math.max(mB.Size.x, mB.Size.y))
+            { keyBig = cfg.BuildingKeyA; keySmall = cfg.BuildingKeyB; }
+
+            bool didAny = false, alleyDone = false;
+            int placed = 0;
+
+            var visited = new NativeHashSet<int2>(512, Allocator.Temp);
+            var q = new NativeQueue<int2>(Allocator.Temp);
+
+            foreach (var seed in enc)
+            {
+                if (!visited.Add(seed)) continue;
+
+                // 구획(연결요소) BFS + bbox
+                q.Clear(); q.Enqueue(seed);
+                int2 mn = seed, mx = seed;
+                while (q.TryDequeue(out int2 cur))
+                {
+                    mn = math.min(mn, cur); mx = math.max(mx, cur);
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int2 nb = cur + RoadDirOps.Offsets[d];
+                        if (enc.Contains(nb) && visited.Add(nb)) q.Enqueue(nb);
+                    }
+                }
+
+                // B: 격자 패킹 (큰 plot 먼저, 작은 나중)
+                if (placed < budget)
+                    placed += PackOnGrid(keyBig, mn, mx, in enc, in layers, in entranceLookup,
+                        in metaLookup, in cellTypeLookup, in grid, owner, budget - placed, ref claimed, ref ecb);
+                if (placed < budget)
+                    placed += PackOnGrid(keySmall, mn, mx, in enc, in layers, in entranceLookup,
+                        in metaLookup, in cellTypeLookup, in grid, owner, budget - placed, ref claimed, ref ecb);
+                if (placed > 0) didAny = true;
+
+                // C1: 깊은 구획(최소 변 ≥6)이면 중앙 직선 골목 1줄(틱당 1회).
+                if (!alleyDone && math.min(mx.x - mn.x + 1, mx.y - mn.y + 1) >= 6
+                    && LayAlley(mn, mx, in enc, in grid, owner, ref claimed, ref ecb))
+                { alleyDone = true; didAny = true; }
+
+                if (placed >= budget && alleyDone) break;
+            }
+
+            q.Dispose(); visited.Dispose(); enc.Dispose();
+            return didAny;
+        }
+
+        // 구획 bbox를 plot(정사각 P) 격자로 채운다 — footprint가 구획(enc) 안 + 미예약 + 입구 도로닿음.
+        static int PackOnGrid(
+            int key, int2 mn, int2 mx, in NativeHashSet<int2> enc,
+            in GridLayers layers, in EntranceLookup entranceLookup, in PrefabMetaLookup metaLookup,
+            in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner, int budget,
+            ref NativeHashSet<int2> claimed, ref EntityCommandBuffer ecb)
+        {
+            if (key <= 0 || budget <= 0) return 0;
+            if (!metaLookup.TryGetMeta(key, 0, out var meta)) return 0;
+            int2 sz = meta.Size;
+            if (sz.x <= 0 || sz.y <= 0) return 0;
+            int P = math.max(sz.x, sz.y);
+
+            bool hasEnt = meta.HasEntrance && entranceLookup.TryGet(key, out _);
+            EntranceInfo ent = default;
+            if (hasEnt) entranceLookup.TryGet(key, out ent);
+            int stepCount = hasEnt ? 4 : 1;
+
+            int count = 0;
+            for (int gz = mn.y; gz + P - 1 <= mx.y; gz += P)
+            for (int gx = mn.x; gx + P - 1 <= mx.x; gx += P)
+            {
+                if (count >= budget) return count;
+                int2 origin = new int2(gx, gz);
+                for (int steps = 0; steps < stepCount; steps++)
+                {
+                    int2 eff = EntranceOps.RotateSize(sz, steps);
+                    if (!FootprintBuildableFlat(origin, eff, meta.BuildableOn, in layers, in cellTypeLookup))
+                        continue;
+
+                    bool ok = true;
+                    for (int dz = 0; dz < eff.y && ok; dz++)
+                    for (int dx = 0; dx < eff.x && ok; dx++)
+                    {
+                        int2 c = origin + new int2(dx, dz);
+                        if (!enc.Contains(c) || claimed.Contains(c)) ok = false;
+                    }
+                    if (!ok) continue;
+
+                    if (hasEnt)
+                    { if (!EntranceOps.IsEntranceOnRoad(origin, sz, in ent, steps, in layers.RoadLayer)) continue; }
+                    else if (!FootprintTouchesTeamRoad(origin, eff, owner, in layers)) continue;
+
+                    var be = ecb.CreateEntity();
+                    ecb.AddComponent(be, new PlaceBuildingRequest
+                    {
+                        MainKey = key, VariantKey = 0, Cell = origin,
+                        RotationY = EntranceOps.StepsToRotationY(steps),
+                        OwnerLocalId = owner, FactionId = grid.FactionId, RequireRoadAccess = true,
+                    });
+                    for (int dz = 0; dz < eff.y; dz++)
+                    for (int dx = 0; dx < eff.x; dx++)
+                        claimed.Add(origin + new int2(dx, dz));
+                    count++;
+                    break;   // 이 격자 칸 배치됨 → 다음 칸
+                }
+            }
+            return count;
+        }
+
+        // 구획 중앙에 직선 골목(1-wide 도로) 1줄 — 긴 축 방향. 다음 틱에 구획이 분할돼 깊은 셀이 도로에 닿음.
+        static bool LayAlley(int2 mn, int2 mx, in NativeHashSet<int2> enc, in CityGrid grid, int owner,
+            ref NativeHashSet<int2> claimed, ref EntityCommandBuffer ecb)
+        {
+            bool horizontal = (mx.x - mn.x) >= (mx.y - mn.y);
+            bool any = false;
+            if (horizontal)
+            {
+                int z = (mn.y + mx.y) / 2;
+                for (int x = mn.x; x <= mx.x; x++)
+                {
+                    int2 c = new int2(x, z);
+                    if (!enc.Contains(c) || claimed.Contains(c)) continue;
+                    EmitAlleyRoad(c, RoadDir.E | RoadDir.W, owner, grid.FactionId, ref ecb);
+                    claimed.Add(c); any = true;
+                }
+            }
+            else
+            {
+                int x = (mn.x + mx.x) / 2;
+                for (int z = mn.y; z <= mx.y; z++)
+                {
+                    int2 c = new int2(x, z);
+                    if (!enc.Contains(c) || claimed.Contains(c)) continue;
+                    EmitAlleyRoad(c, RoadDir.N | RoadDir.S, owner, grid.FactionId, ref ecb);
+                    claimed.Add(c); any = true;
+                }
+            }
+            return any;
+        }
+
+        static void EmitAlleyRoad(int2 cell, RoadDir dirs, int owner, int faction, ref EntityCommandBuffer ecb)
+        {
+            var e = ecb.CreateEntity();
+            ecb.AddComponent(e, new PlaceRoadCommand
+            {
+                Cell = cell, OwnerLocalId = owner, LaneCount = 2, FactionId = faction,
+                Size = 1, Axis = RoadPlacedAxis.Any, Directions = dirs,
+            });
         }
 
         // 도시 '바깥(프런티어)' 셀 집합 계산 — 팀 도로/건물을 벽으로 막고 bbox 테두리에서 flood.

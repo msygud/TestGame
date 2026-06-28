@@ -5,6 +5,33 @@
 
 ---
 
+## 🟢 영역/구획 개편 — 덩이 1+2 (2026-06-29)
+> 용어: **영역(territory)**=인구로 점유한 셀 / **구획(parcel)**=도로로 갇힌 빈 구역.
+> 결정: C1 골목분할 / D1 flood 파생 / 혼합 plot / capture는 파괴 대신 표시(타팀 구조물 아이콘+후속효과는 나중) /
+> 3+ 경합은 최강소유+완충밴드. ⚠ 컴파일은 에디터에서(이 환경 미검증).
+
+### 덩이 1 — 영역 표시화 + 확장 중첩차단
+- ✅ **capture 파괴 폐기** — `TerritorySystem`이 적 영역 건물/도로 파괴 안 함(`RazeAreaCommand`/`RemoveRoadCommand` 제거).
+- ✅ **영역(reach) ≠ 영향력(influence) 분리** — 영역 = `floor(인구/PopPerCell)`만큼 최근접 셀(물리 범위,
+  '닿는가' 결정). 영향력 = `Σ 거주지 인구/(1+거리)`(그 셀의 힘, placeholder — 추후 행복도/팩션 보정 곱).
+  **경합(2팀+ 도달) 셀은 영향력 1등이 소유**, 1·2등 영향력 동률(±`ContestMargin` 2%)이면 **중립**.
+  3팀+도 상위 둘만 봄. (이전 '거리차 ≤1.5 완충밴드'는 이 영향력 해소로 대체.) `Owner2{O1,Inf1,O2,Inf2}`.
+- ✅ **영역 아웃라인 상시** — [TerritoryOutlineRenderSystem.cs](Assets/_game/scripts/RunTime/Systems/TerritoryOutlineRenderSystem.cs):
+  소유자 다른 이웃과 맞닿은 **경계 변만** 소유팀 색 GL 렌더(상시). F7 fill(`TerritoryDebugSystem`)은 별개 유지.
+- ✅ **A: 확장 바깥-전용** — `GrowOneBlock` 후보 내부가 enclosed 포켓이면 거부(`InteriorExterior`) → 비워진 8×8 안 4×4 링 중첩 안 함.
+
+### 덩이 2 — 구획 격자패킹 + 골목 (DevelopParcels)
+- ✅ **D1 구획 파생** — enclosed empty(=outside 아님·buildable·Land) 셀을 4-연결 연결요소(구획)로 묶음.
+- ✅ **B 격자 패킹** — 구획 bbox 원점 기준 plot 격자로 배치. 큰 plot(stock) 먼저 → 작은(farm) 나중 = **혼합**.
+  격자 정렬이라 **4×4에 2×2 4개 정확히**(첫 도로옆 greedy의 3개 낭비 해결). 입구 도로닿음 필수, claimed 중복방지.
+- ✅ **C1 골목 분할** — 구획 최소 변 ≥6이면 중앙 직선 골목(1줄 도로) 발행 → 다음 틱 분할 → 깊은 셀이 도로에 닿아 채워짐(8×8 안쪽).
+- ✅ OnUpdate: `DevelopParcels`(구획 채움)가 1순위, 개발할 갇힌 구획 없으면 `GrowOneBlock` 바깥 확장 1회.
+- ⬜ 정리: `TryFillBesideRoad`(구 first-fit 채우기)는 대체돼 **미사용**(데드코드, 추후 삭제).
+- ⬜ 한계/튜닝: C1 트리거 `min변≥6` 휴리스틱 / 골목-링 BFS연결은 그린모델 OR 의존(입구엔 충분, 시민보행 추후검증) /
+  혼합 패킹 stock→farm 2패스(최적 빈패킹 아님). 타팀 구조물 아이콘+후속효과는 나중.
+
+---
+
 ## 🟢 AI 채우기-우선 성장 + 인구 베이킹값 존중 (2026-06-28)
 - ✅ **건물 단독 배치(채우기) 신규 — 폐쇄구역 중첩 해결** — 기존엔 성장 단위가 `DevelopBlock`
   (도로 링+건물) 하나뿐이라 이미 도로로 둘러싸인 빈 땅에도 또 링을 쳤음. 신규 `TryFillBesideRoad`:
