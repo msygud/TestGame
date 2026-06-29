@@ -121,6 +121,15 @@ namespace CitySim
             return roadLayer.ContainsKey(EntranceRoadCell(origin, size, in entrance, rotSteps));
         }
 
+        // 입구가 닿는 도로셀이 owner '자기 소유' 도로인가 (건물-도로 #2). 빈 도로/타소유=false.
+        public static bool IsEntranceOnOwnRoad(
+            int2 origin, int2 size, in EntranceInfo entrance, int rotSteps,
+            in NativeHashMap<int2, RoadCell> roadLayer, int owner)
+        {
+            int2 c = EntranceRoadCell(origin, size, in entrance, rotSteps);
+            return roadLayer.TryGetValue(c, out var rc) && rc.OwnerLocalId == owner;
+        }
+
         // ──────────────────────────────────────────────────────────────
         //  입구가 향하는 도로셀 좌표 — "그 셀이 어디냐" (좌표 반환).
         //

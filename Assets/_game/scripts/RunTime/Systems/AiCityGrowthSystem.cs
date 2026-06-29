@@ -498,10 +498,10 @@ namespace CitySim
                         }
                         if (bad) continue;
 
-                        // 입구가 기존 도로에 닿아야(입구 없으면 footprint가 팀 도로에 4-인접해야).
+                        // 입구가 '자기' 도로에 닿아야(#2, 게이트와 동일). 입구 없으면 팀 도로 4-인접.
                         if (hasEnt)
                         {
-                            if (!EntranceOps.IsEntranceOnRoad(origin, sz, in ent, steps, in layers.RoadLayer))
+                            if (!EntranceOps.IsEntranceOnOwnRoad(origin, sz, in ent, steps, in layers.RoadLayer, owner))
                                 continue;
                         }
                         else if (!FootprintTouchesTeamRoad(origin, eff, owner, in layers))
@@ -658,7 +658,7 @@ namespace CitySim
                     if (!ok) continue;
 
                     if (hasEnt)
-                    { if (!EntranceOps.IsEntranceOnRoad(origin, sz, in ent, steps, in layers.RoadLayer)) continue; }
+                    { if (!EntranceOps.IsEntranceOnOwnRoad(origin, sz, in ent, steps, in layers.RoadLayer, owner)) continue; }
                     else if (!FootprintTouchesTeamRoad(origin, eff, owner, in layers)) continue;
 
                     var be = ecb.CreateEntity();

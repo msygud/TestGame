@@ -1,5 +1,6 @@
 using Unity.Entities;
 using Unity.Mathematics;
+using Unity.Transforms;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.EventSystems;
@@ -52,6 +53,9 @@ namespace CitySim
         Entity        _previewEntity;
         bool          _ecsReady;
 
+        Entity _ghost = Entity.Null;   // 프리뷰 고스트 건물(인스턴스). 호버 따라 이동.
+        int    _ghostKey = -1;
+
         void Awake()
         {
             if (BuildCamera == null) BuildCamera = Camera.main;
@@ -101,6 +105,57 @@ namespace CitySim
                 SetPreviewActive(false);
                 ClearPreviewBuffer();
             }
+            DestroyGhost();
+        }
+
+        void DestroyGhost()
+        {
+            if (_ghost != Entity.Null && _em != default && _em.Exists(_ghost))
+                _em.DestroyEntity(_ghost);
+            _ghost = Entity.Null; _ghostKey = -1;
+        }
+
+        // 프리뷰 고스트 건물 — 실제 스폰과 같은 위치식(CellCenter+Offset)·회전으로 호버에 띄운다.
+        //   인스턴스화 후 게임플레이 태그(거주/직장/서비스/정원/공급) 제거 → 시각 전용(영역·시민 영향 X).
+        void UpdateGhost(int mainKey, in PrefabMeta meta, int2 origin, byte baseHeight)
+        {
+            // 프리팹 조회
+            var pq = _em.CreateEntityQuery(typeof(PrefabLookup));
+            if (pq.IsEmpty) { pq.Dispose(); DestroyGhost(); return; }
+            var lookup = pq.GetSingleton<PrefabLookup>();
+            pq.Dispose();
+            Entity prefab = lookup.Get(mainKey, _variantKey);
+            if (prefab == Entity.Null) { DestroyGhost(); return; }
+
+            // 키 바뀌면 재생성
+            if (_ghost == Entity.Null || !_em.Exists(_ghost) || _ghostKey != mainKey)
+            {
+                DestroyGhost();
+                _ghost = _em.Instantiate(prefab);
+                _ghostKey = mainKey;
+                // 게임플레이 컴포넌트 제거 — 고스트는 시각 전용.
+                RemoveIfHas<ResidenceBuilding>(_ghost);
+                RemoveIfHas<WorkplaceBuilding>(_ghost);
+                RemoveIfHas<ServiceBuilding>(_ghost);
+                RemoveIfHas<BuildingOccupancy>(_ghost);
+                RemoveIfHas<StampSupplier>(_ghost);
+                RemoveIfHas<WarehouseTag>(_ghost);
+            }
+
+            float3 pos = default;
+            var gq = _em.CreateEntityQuery(typeof(GridSettings));
+            if (!gq.IsEmpty)
+                pos = gq.GetSingleton<GridSettings>().CellCenter(origin.x, origin.y, meta.Size, baseHeight) + meta.Offset;
+            gq.Dispose();
+
+            quaternion rot = quaternion.RotateY(math.radians(_rotSteps * 90f));
+            if (_em.HasComponent<LocalTransform>(_ghost))
+                _em.SetComponentData(_ghost, LocalTransform.FromPositionRotationScale(pos, rot, 1f));
+        }
+
+        void RemoveIfHas<T>(Entity e) where T : unmanaged, IComponentData
+        {
+            if (_em.HasComponent<T>(e)) _em.RemoveComponent<T>(e);
         }
 
         // ── 배치 ────────────────────────────────────────────────────
@@ -131,7 +186,7 @@ namespace CitySim
                 RotationY         = _rotSteps * 90f,
                 OwnerLocalId      = slot,
                 FactionId         = faction,
-                RequireRoadAccess = false,   // 인간 배치는 자유(입구는 프리뷰로 정렬 안내). 엄격화는 추후.
+                RequireRoadAccess = true,    // #2: 입구가 자기 도로에 닿아야 건설(프리뷰로 정렬).
             });
         }
 
@@ -150,8 +205,8 @@ namespace CitySim
             _hasHover = false;
             _hoverStatus = PreviewStatus.Valid;
 
-            if (!TryGetMeta(_mainKey, out var meta)) return;
-            if (!TryGetHoverCell(out int2 origin)) return;
+            if (!TryGetMeta(_mainKey, out var meta)) { DestroyGhost(); return; }
+            if (!TryGetHoverCell(out int2 origin))   { DestroyGhost(); return; }
             _hasHover = true;
 
             // 그리드 중심 = 호버 origin
@@ -194,6 +249,11 @@ namespace CitySim
                 int2 erc = EntranceOps.EntranceRoadCell(origin, meta.Size, in ent, _rotSteps);
                 buf.Add(new PreviewCell { Cell = erc, Status = PreviewStatus.Entrance, Kind = PreviewKind.Dragging });
             }
+
+            // 프리뷰 고스트 건물 (실제 위치/회전으로 호버에 띄움).
+            byte gh = 0;
+            if (hasLayers && layers.TerrainLayer.TryGetValue(origin, out var oc)) gh = oc.Height;
+            UpdateGhost(_mainKey, in meta, origin, gh);
         }
 
         bool TryGetEntrance(int mainKey, out EntranceInfo ent)
