@@ -193,29 +193,34 @@ namespace CitySim
             var layers = GetLayers(out bool hasLayers);
             byte roadSize = 1;
 
-            // 건설 가능한 세그먼트만 추림(2칸 이상 + 비차단). 한 셀이라도 무효
-            //   (건물/자원/단차/범위/적 영역)면 그 구간 전체를 건설하지 않음.
-            var build = new List<List<int2>>();
+            // #1 ALL-OR-NOTHING: 예약(드래그)한 곳 중 한 곳이라도 부적합하면 전체 무효.
+            //   부적합 = 2칸 미만 / 차단(건물·자원·단차·범위·적영역·경합지) / 베이스 미연결.
+            //   하나라도 걸리면 아무것도 발행하지 않는다(부분 건설 금지).
+            var attached = (hasLayers && slot >= 0)
+                ? ComputeAttached(_segments, null, slot, layers) : null;
+
+            bool allValid = _segments.Count > 0;
             foreach (var seg in _segments)
             {
-                if (seg.Count < 2) continue;
+                if (seg.Count < 2) { allValid = false; break; }
                 if (hasLayers &&
                     PreviewStatusOps.IsBlocking(SegmentBlockStatus(seg, slot, layers)))
-                    continue;
-                build.Add(seg);
+                { allValid = false; break; }
+                if (attached != null)
+                {
+                    bool connected = false;
+                    foreach (var c in seg) if (attached.Contains(c)) { connected = true; break; }
+                    if (!connected) { allValid = false; break; }
+                }
             }
 
-            // #1 도로 연속성: 내 기존 도로망(=베이스에서 이어짐)에 연결된 세그먼트만 발행.
-            //   기존 내 도로와 겹치는 pending 셀을 시드로 4-인접 flood → 닿은 구간만 건설.
-            //   (그린 모델: 겹쳐야 연결. 떠다니는 도로/베이스 미연결 도로 차단.)
-            if (hasLayers && slot >= 0)
+            if (!allValid)
             {
-                int dropped = FilterConnectedToNetwork(build, slot, layers);
-                if (dropped > 0)
-                    Debug.LogWarning($"[RoadBuildController] 기존 도로(베이스)에 연결 안 된 {dropped}구간 건설 안 함.");
+                Debug.LogWarning("[RoadBuildController] 부적합한 구간이 있어 전체 무효(부분 건설 안 함). pending 유지.");
+                return;   // 아무것도 발행 안 함. pending은 남겨 사용자가 수정 가능.
             }
 
-            foreach (var seg in build)
+            foreach (var seg in _segments)
                 EmitDrawnDirections(seg, drawn);
 
             foreach (var kv in drawn)
@@ -412,6 +417,12 @@ namespace CitySim
 
             foreach (var cell in seg)
             {
+                // 적 영역·경합지엔 도로 불가 (RoadSystem 게이트와 일치 → all-or-nothing이 잡음).
+                if (ownerSlot >= 0 && TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerSlot))
+                    return PreviewStatus.Occupied;
+                if (TerritoryOps.IsContested(in layers.TerritoryLayer, cell))
+                    return PreviewStatus.Occupied;
+
                 if (layers.RoadLayer.TryGetValue(cell, out var hereRoad))
                 {
                     if (ownerSlot >= 0 && hereRoad.OwnerLocalId != ownerSlot)
