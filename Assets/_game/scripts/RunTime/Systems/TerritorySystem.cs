@@ -208,17 +208,14 @@ namespace CitySim
                 }
                 if (win < 0) continue;
 
-                float wi = teamInf[win];
-                float si = second >= 0 ? teamInf[second] : 0f;
-                int   T  = comp.Length;
-                int   K  = wi > 0f ? (int)math.floor(T * (wi - si) / wi) : 0;
-                if (K <= 0) continue;   // 동률/열세 → 전부 경합지 유지(잠김)
-
-                // 승자팀 거주지에 가까운 순으로 K칸
+                // ★승자는 '자기가 닿은(reach)' 경합 칸만 차지한다 — 안 닿은 칸(다른 팀만 닿음)을
+                //   가져가면 reach(인구) 초과 + 남의 땅 침탈. 후보 = 승자 비트가 있는 comp 칸.
+                int winBit = 1 << win;
                 var rank = new NativeList<Claim>(comp.Length, Allocator.Temp);
                 for (int i = 0; i < comp.Length; i++)
                 {
                     int2 c = comp[i];
+                    if (!reach.TryGetValue(c, out int rm) || (rm & winBit) == 0) continue;  // 승자 미도달 칸 제외
                     float md = float.MaxValue;
                     for (int r = 0; r < residences.Length; r++)
                     {
@@ -228,10 +225,18 @@ namespace CitySim
                     }
                     rank.Add(new Claim { Dist = md, Cell = c });
                 }
-                var ra = rank.AsArray();
-                ra.Sort(cmp);
-                int kk = math.min(K, ra.Length);
-                for (int i = 0; i < kk; i++) layers.TerritoryLayer[ra[i].Cell] = win;
+
+                float wi = teamInf[win];
+                float si = second >= 0 ? teamInf[second] : 0f;
+                int   Tw = rank.Length;                       // 승자가 닿은 경합 칸 수
+                int   K  = wi > 0f ? (int)math.floor(Tw * (wi - si) / wi) : 0;
+                if (K > 0)
+                {
+                    var ra = rank.AsArray();
+                    ra.Sort(cmp);
+                    int kk = math.min(K, ra.Length);
+                    for (int i = 0; i < kk; i++) layers.TerritoryLayer[ra[i].Cell] = win;
+                }
                 rank.Dispose();
             }
 
