@@ -195,14 +195,14 @@ namespace CitySim
             if (req.RequireRoadAccess && meta.HasEntrance &&
                 entranceLookup.TryGet(req.MainKey, out var entrance))
             {
-                // 입구가 닿는 도로셀이 '자기 소유' 도로여야 건설 가능(설계 #2).
-                int2 erc = EntranceOps.EntranceRoadCell(req.Cell, meta.Size, in entrance, rotSteps);
-                bool onOwnRoad = layers.RoadLayer.TryGetValue(erc, out var ercRoad)
-                                 && ercRoad.OwnerLocalId == req.OwnerLocalId;
-                if (!onOwnRoad)
+                // 입구가 도로에 닿는지 검증(아무 도로). ※엄격 '자기 도로'(#2)는 입구 프리뷰로
+                //   정렬 확인 후 재도입 예정 — 우선 배치가 되도록 원복.
+                bool onRoad = EntranceOps.IsEntranceOnRoad(
+                    req.Cell, meta.Size, in entrance, rotSteps, in layers.RoadLayer);
+                if (!onRoad)
                 {
                     LogFail(req, PlacementFailCode.NoRoadAccess,
-                        $"입구가 자기 도로에 닿지 않음 at cell {req.Cell} rotY={req.RotationY}");
+                        $"입구가 도로에 닿지 않음 at cell {req.Cell} rotY={req.RotationY}");
                     return;
                 }
             }

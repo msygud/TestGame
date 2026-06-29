@@ -63,8 +63,13 @@ namespace CitySim
             if (!EnsureEcs()) return;
 
             var kb = Keyboard.current;
-            if (kb != null && kb.rKey.wasPressedThisFrame)
-                _rotSteps = (_rotSteps + 1) & 3;
+            if (kb != null)
+            {
+                if (kb.rKey.wasPressedThisFrame || kb.rightBracketKey.wasPressedThisFrame)
+                    _rotSteps = (_rotSteps + 1) & 3;          // R 또는 ] = 시계
+                else if (kb.leftBracketKey.wasPressedThisFrame)
+                    _rotSteps = (_rotSteps + 3) & 3;          // [ = 반시계
+            }
 
             HandleClick();
             RebuildPreviewBuffer();
@@ -126,7 +131,7 @@ namespace CitySim
                 RotationY         = _rotSteps * 90f,
                 OwnerLocalId      = slot,
                 FactionId         = faction,
-                RequireRoadAccess = true,    // #2: 입구가 자기 도로에 닿아야 건설
+                RequireRoadAccess = false,   // 인간 배치는 자유(입구는 프리뷰로 정렬 안내). 엄격화는 추후.
             });
         }
 
@@ -136,11 +141,9 @@ namespace CitySim
             if (!_ecsReady) return;
 
             var previewState = _em.GetComponentData<RoadBuildPreviewState>(_previewEntity);
-            if (previewState.RoadSize != 1)
-            {
-                previewState.RoadSize = 1;             // 셀당 1×1 마커
-                _em.SetComponentData(_previewEntity, previewState);
-            }
+            previewState.RoadSize  = 1;                 // 셀당 1×1 마커
+            previewState.HasCenter = false;            // 호버 확정 전엔 그리드 off
+            _em.SetComponentData(_previewEntity, previewState);
 
             var buf = _em.GetBuffer<PreviewCell>(_previewEntity);
             buf.Clear();
@@ -150,6 +153,11 @@ namespace CitySim
             if (!TryGetMeta(_mainKey, out var meta)) return;
             if (!TryGetHoverCell(out int2 origin)) return;
             _hasHover = true;
+
+            // 그리드 중심 = 호버 origin
+            previewState.Center    = origin;
+            previewState.HasCenter = true;
+            _em.SetComponentData(_previewEntity, previewState);
 
             var layers = GetLayers(out bool hasLayers);
             int ownerSlot = hasLayers && ResolvePlayerFaction(out int s, out _) ? s : -1;
@@ -179,6 +187,23 @@ namespace CitySim
                     Status = worst,
                     Kind   = PreviewKind.Dragging,
                 });
+
+            // 입구가 향하는 도로셀을 사각 테두리로 표시(입구 방향 안내). [/]로 회전.
+            if (meta.HasEntrance && TryGetEntrance(_mainKey, out var ent))
+            {
+                int2 erc = EntranceOps.EntranceRoadCell(origin, meta.Size, in ent, _rotSteps);
+                buf.Add(new PreviewCell { Cell = erc, Status = PreviewStatus.Entrance, Kind = PreviewKind.Dragging });
+            }
+        }
+
+        bool TryGetEntrance(int mainKey, out EntranceInfo ent)
+        {
+            ent = default;
+            var q = _em.CreateEntityQuery(typeof(EntranceLookup));
+            if (q.IsEmpty) { q.Dispose(); return false; }
+            var look = q.GetSingleton<EntranceLookup>();
+            q.Dispose();
+            return look.TryGet(mainKey, out ent);
         }
 
         // 셀 상태(프리뷰 힌트). 진짜 검증은 BuildingPlacementSystem.

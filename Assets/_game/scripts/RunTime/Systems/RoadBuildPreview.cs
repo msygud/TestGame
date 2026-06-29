@@ -54,6 +54,7 @@ namespace CitySim
         Coverage         = 9,  // 새로 배치할 관리시설의 도달 범위 (청색, 비차단)
         CoverageExisting = 10, // 기존 관리시설들의 도달 범위 = 현재 관리되는 도로(연결성, 초록, 비차단)
         DepotExisting    = 11, // 기존 관리시설 위치 마커 (금색, 비차단)
+        Entrance         = 12, // 건물 입구가 향하는 도로셀 — 사각 테두리로 표시 (비차단)
     }
 
     /// <summary>프리뷰 마커 한 칸.</summary>
@@ -77,7 +78,8 @@ namespace CitySim
 
         /// <summary>대상 오브젝트(점유물/철거 예정물)에 외곽선 강조를 줄지.</summary>
         public static bool ShowOutline(PreviewStatus s)
-            => s == PreviewStatus.Occupied || s == PreviewStatus.WillClear;
+            => s == PreviewStatus.Occupied || s == PreviewStatus.WillClear
+            || s == PreviewStatus.Entrance;
 
         /// <summary>유저에게 보일 사유 텍스트 (HUD 라벨용).</summary>
         public static string ToText(PreviewStatus s) => s switch
@@ -94,6 +96,7 @@ namespace CitySim
             PreviewStatus.Coverage       => "Coverage",
             PreviewStatus.CoverageExisting => "Existing coverage",
             PreviewStatus.DepotExisting  => "Existing depot",
+            PreviewStatus.Entrance       => "Entrance",
             _                            => string.Empty,
         };
     }
@@ -105,7 +108,9 @@ namespace CitySim
     public struct RoadBuildPreviewState : IComponentData
     {
         public bool Active;
-        public byte RoadSize;  // 도로 한 변 셀 수 (1이상), 프리뷰 쿼드 크기 결정
+        public byte RoadSize;   // 도로 한 변 셀 수 (1이상), 프리뷰 쿼드 크기 결정
+        public int2 Center;     // 페이딩 그리드 중심(현재 호버/드래그 셀). 컨트롤러가 매 프레임 set.
+        public bool HasCenter;  // Center 유효 여부(호버 없음 시 false → 그리드 안 그림)
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -131,14 +136,19 @@ namespace CitySim
             PreviewStatus.Coverage       => new Color(0.20f, 0.55f, 1.00f, 1f), // 청색 (새 관리 범위)
             PreviewStatus.CoverageExisting => new Color(0.30f, 0.80f, 0.45f, 1f), // 초록 (기존 관리 범위)
             PreviewStatus.DepotExisting  => new Color(1.00f, 0.80f, 0.20f, 1f), // 금색 (기존 관리소 위치)
+            PreviewStatus.Entrance       => new Color(0.20f, 0.95f, 1.00f, 1f), // 밝은 청록 (입구 테두리)
             _                            => Color.white,
         };
 
         // 콜백이 그릴 데이터의 스냅샷 (메인스레드 캐시)
         struct DrawCell { public float3 Center; public Color Color; public bool Outline; }
         readonly List<DrawCell> _cells = new(128);
+        struct GridLine { public float3 A, B; public Color C; }
+        readonly List<GridLine> _grid = new(1024);
         float _cellSize;
         bool  _hasData;
+        bool  _hasGrid;
+        const int GridRadius = 8;   // 프리뷰 중심에서 이 반경(셀)까지 그리드, 멀수록 옅게
 
         protected override void OnCreate()
         {
@@ -168,8 +178,8 @@ namespace CitySim
         // 메인스레드: 버퍼 → 그리기 캐시로 스냅샷.
         protected override void OnUpdate()
         {
-            _hasData = false;
-            _cells.Clear();
+            _hasData = false; _hasGrid = false;
+            _cells.Clear(); _grid.Clear();
 
             var state = SystemAPI.GetSingleton<RoadBuildPreviewState>();
             if (!state.Active) return;
@@ -181,15 +191,40 @@ namespace CitySim
             int roadSize = math.max(1, state.RoadSize);
             _halfExtent = roadSize * _cellSize * 0.5f;
 
+            // 지형 높이 소스 (그리드·마커 Y).
+            bool hasTerrain = SystemAPI.TryGetSingleton<GridLayers>(out var layers)
+                              && layers.TerrainLayer.IsCreated;
+
+            // ── 페이딩 그리드 (프리뷰 중심 ±GridRadius, 멀수록 옅게) ──────────
+            if (state.HasCenter)
+            {
+                int2 ctr  = state.Center;
+                float inv = 1f / GridRadius;
+                for (int dz = -GridRadius; dz <= GridRadius; dz++)
+                for (int dx = -GridRadius; dx <= GridRadius; dx++)
+                {
+                    float dist = math.sqrt(dx * dx + dz * dz);
+                    if (dist > GridRadius) continue;
+                    float a = (1f - dist * inv) * 0.35f;   // 멀수록 옅게(최대 0.35)
+                    if (a <= 0.02f) continue;
+                    int2 cc = ctr + new int2(dx, dz);
+                    float gh = 0.04f;
+                    if (hasTerrain && layers.TerrainLayer.TryGetValue(cc, out var tg))
+                        gh += tg.Height * _cellSize;
+                    float x0 = cc.x * _cellSize, x1 = x0 + _cellSize;
+                    float z0 = cc.y * _cellSize, z1 = z0 + _cellSize;
+                    Color gc = new Color(1f, 1f, 1f, a);
+                    _grid.Add(new GridLine { A = new float3(x0, gh, z0), B = new float3(x1, gh, z0), C = gc }); // S변
+                    _grid.Add(new GridLine { A = new float3(x0, gh, z0), B = new float3(x0, gh, z1), C = gc }); // W변
+                }
+            }
+            _hasGrid = _grid.Count > 0;
+
             var previewEntity = SystemAPI.GetSingletonEntity<RoadBuildPreviewState>();
             if (!EntityManager.HasBuffer<PreviewCell>(previewEntity)) return;
 
             var buf = EntityManager.GetBuffer<PreviewCell>(previewEntity);
             if (buf.Length == 0) return;
-
-            // 지형 높이를 따라 마커 Y를 올린다 (단차 지형 대응).
-            bool hasTerrain = SystemAPI.TryGetSingleton<GridLayers>(out var layers)
-                              && layers.TerrainLayer.IsCreated;
 
             for (int i = 0; i < buf.Length; i++)
             {
@@ -220,7 +255,7 @@ namespace CitySim
         // URP 콜백: 카메라 렌더 직후 GL 즉시모드로 그림.
         void OnEndCameraRendering(ScriptableRenderContext ctx, Camera cam)
         {
-            if (!_hasData || _mat == null) return;
+            if (_mat == null || (!_hasData && !_hasGrid)) return;
 
             // 게임/씬 카메라만 (프리뷰·리플렉션 카메라 제외)
             if (cam.cameraType != CameraType.Game && cam.cameraType != CameraType.SceneView)
@@ -230,6 +265,21 @@ namespace CitySim
 
             _mat.SetPass(0);
             GL.PushMatrix();
+
+            // 0) 페이딩 그리드 (프리뷰 중심 기준, 멀수록 옅음)
+            if (_hasGrid)
+            {
+                GL.Begin(GL.LINES);
+                for (int i = 0; i < _grid.Count; i++)
+                {
+                    var g = _grid[i];
+                    GL.Color(g.C);
+                    GL.Vertex3(g.A.x, g.A.y, g.A.z);
+                    GL.Vertex3(g.B.x, g.B.y, g.B.z);
+                }
+                GL.End();
+            }
+            if (!_hasData) { GL.PopMatrix(); return; }
 
             // 1) 채움 쿼드
             GL.Begin(GL.QUADS);

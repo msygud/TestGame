@@ -23,8 +23,12 @@
 - ✅ **#1 도로 베이스 연결 필수** — `RoadBuildController`에 `FilterConnectedToNetwork`/`ComputeAttached` 재도입.
   유저 드래그는 **내 기존 도로망(=베이스에서 이어짐)에 연결된 구간만** 발행, 떠다니는 도로 차단. 프리뷰도 미연결=회색.
   (이전 'free 배치' 폐기 — 재반영. AI/라우터는 원래 기존망에서 출발해 무영향.)
-- ✅ **#2 건물 입구 = 자기 도로** — `BuildingPlacement`의 RequireRoadAccess 검증을 `IsEntranceOnRoad(any)` →
-  **입구 도로셀 소유자 == 배치자**로 강화. `BuildingPlaceController`도 `RequireRoadAccess=true`(인간 배치도 강제).
+- ⚠ **#2 건물 입구 = 자기 도로 — 되돌림(2026-06-29)** — 엄격 own-road가 AI·사람 배치를 막아(입구-도로 정렬 실패)
+  `BuildingPlacement`는 `IsEntranceOnRoad`(아무 도로)로 원복, `BuildingPlaceController`도 `RequireRoadAccess=false`(인간 자유).
+  → 입구 프리뷰(아래)로 정렬을 눈으로 확인한 뒤 own-road 강제를 재도입 예정.
+- ✅ **프리뷰 도구** — ① **입구 표시**: 입구가 향하는 도로셀을 `PreviewStatus.Entrance`(밝은 청록 사각 테두리)로.
+  ② **[ / ] 회전**(R도 유지). ③ **페이딩 그리드**: `RoadBuildPreviewState.Center/HasCenter` 추가 →
+  `RoadBuildPreviewRenderSystem`이 프리뷰 중심 ±8셀 그리드를 거리비례 알파로(멀수록 옅게) 상시 렌더(도로·건물 배치 중).
 - ✅ **#3 경합지(Contested) ≠ 중립** — `TerritoryLayer` 값에 **`-2`(경합지, 잠김)** 추가(`TerritoryOps.Contested`/`IsContested`).
   미배분 경합 칸은 absent(중립·열림)이 아니라 **-2로 마킹** → **누구도 건설/도로 불가**(건물·도로·AI 게이트 전원 차단).
   시각: **경합지=흰색 테두리**(팀=팀색, 중립=테두리 없음 — 셋 구분). 동률/박빙 경합지도 -2로 잠김.

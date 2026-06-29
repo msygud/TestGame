@@ -478,14 +478,12 @@ namespace CitySim
         {
             if (!_ecsReady) return;
 
-            // RoadSize를 매 프레임 동기화 (Registry.DefaultSize 변경 대응)
+            // RoadSize + 그리드 중심(호버 셀)을 매 프레임 동기화.
             var previewState = _em.GetComponentData<RoadBuildPreviewState>(_previewEntity);
-            byte curSize = CurrentRoadSize();
-            if (previewState.RoadSize != curSize)
-            {
-                previewState.RoadSize = curSize;
-                _em.SetComponentData(_previewEntity, previewState);
-            }
+            previewState.RoadSize  = CurrentRoadSize();
+            previewState.Center    = _hoverCell;
+            previewState.HasCenter = _hasHover;
+            _em.SetComponentData(_previewEntity, previewState);
 
             var buf = _em.GetBuffer<PreviewCell>(_previewEntity);
             buf.Clear();
