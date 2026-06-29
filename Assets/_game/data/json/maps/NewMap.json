@@ -19,6 +19,20 @@
                 "x": 37,
                 "y": 32
             }
+        },
+        {
+            "TeamIndex": 2,
+            "Cell": {
+                "x": 37,
+                "y": 0
+            }
+        },
+        {
+            "TeamIndex": 3,
+            "Cell": {
+                "x": 5,
+                "y": 32
+            }
         }
     ],
     "TerrainCells": [
@@ -8425,1201 +8439,1201 @@
         {
             "X": 25,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 25,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 25,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 25,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 25,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 25,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 25,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 25,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 25,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 25,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 26,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 27,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 28,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 29,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 30,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 31,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 32,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 33,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 34,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 35,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 36,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 37,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 38,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 39,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 40,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 41,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 42,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 43,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 0,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 1,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 2,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 3,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 4,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 5,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 6,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 7,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 8,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
             "X": 44,
             "Y": 9,
-            "TypeId": 1,
+            "TypeId": 0,
             "Height": 0
         },
         {
@@ -15237,94 +15251,6 @@
         {
             "MainKey": 10001,
             "VariantKey": 0,
-            "CellX": 25,
-            "CellZ": 0,
-            "PositionY": 0.0,
-            "OffsetX": 0.0,
-            "OffsetZ": 0.0,
-            "RotationY": 0.0,
-            "Scale": 1.0
-        },
-        {
-            "MainKey": 10001,
-            "VariantKey": 0,
-            "CellX": 25,
-            "CellZ": 5,
-            "PositionY": 0.0,
-            "OffsetX": 0.0,
-            "OffsetZ": 0.0,
-            "RotationY": 0.0,
-            "Scale": 1.0
-        },
-        {
-            "MainKey": 10001,
-            "VariantKey": 0,
-            "CellX": 30,
-            "CellZ": 5,
-            "PositionY": 0.0,
-            "OffsetX": 0.0,
-            "OffsetZ": 0.0,
-            "RotationY": 0.0,
-            "Scale": 1.0
-        },
-        {
-            "MainKey": 10001,
-            "VariantKey": 0,
-            "CellX": 30,
-            "CellZ": 0,
-            "PositionY": 0.0,
-            "OffsetX": 0.0,
-            "OffsetZ": 0.0,
-            "RotationY": 0.0,
-            "Scale": 1.0
-        },
-        {
-            "MainKey": 10001,
-            "VariantKey": 0,
-            "CellX": 35,
-            "CellZ": 5,
-            "PositionY": 0.0,
-            "OffsetX": 0.0,
-            "OffsetZ": 0.0,
-            "RotationY": 0.0,
-            "Scale": 1.0
-        },
-        {
-            "MainKey": 10001,
-            "VariantKey": 0,
-            "CellX": 35,
-            "CellZ": 0,
-            "PositionY": 0.0,
-            "OffsetX": 0.0,
-            "OffsetZ": 0.0,
-            "RotationY": 0.0,
-            "Scale": 1.0
-        },
-        {
-            "MainKey": 10001,
-            "VariantKey": 0,
-            "CellX": 40,
-            "CellZ": 5,
-            "PositionY": 0.0,
-            "OffsetX": 0.0,
-            "OffsetZ": 0.0,
-            "RotationY": 0.0,
-            "Scale": 1.0
-        },
-        {
-            "MainKey": 10001,
-            "VariantKey": 0,
-            "CellX": 40,
-            "CellZ": 0,
-            "PositionY": 0.0,
-            "OffsetX": 0.0,
-            "OffsetZ": 0.0,
-            "RotationY": 0.0,
-            "Scale": 1.0
-        },
-        {
-            "MainKey": 10001,
-            "VariantKey": 0,
             "CellX": 45,
             "CellZ": 0,
             "PositionY": 0.0,
@@ -16009,6 +15935,28 @@
             "VariantKey": 0,
             "CellX": 19,
             "CellZ": 12,
+            "PositionY": 0.0,
+            "OffsetX": 0.0,
+            "OffsetZ": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 10002,
+            "VariantKey": 0,
+            "CellX": 25,
+            "CellZ": 0,
+            "PositionY": 0.0,
+            "OffsetX": 0.0,
+            "OffsetZ": 0.0,
+            "RotationY": 0.0,
+            "Scale": 1.0
+        },
+        {
+            "MainKey": 10002,
+            "VariantKey": 0,
+            "CellX": 35,
+            "CellZ": 0,
             "PositionY": 0.0,
             "OffsetX": 0.0,
             "OffsetZ": 0.0,

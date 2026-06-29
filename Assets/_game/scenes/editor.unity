@@ -3319,7 +3319,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1a5415c6536d154449d191160dafd801, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Test
-  PopPerCell: 1
+  PopPerCell: 1.5
   TestResidenceCapacity: 10
 --- !u!1 &1734226377
 GameObject:

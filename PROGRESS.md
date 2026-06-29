@@ -12,10 +12,22 @@
 
 ### 덩이 1 — 영역 표시화 + 확장 중첩차단
 - ✅ **capture 파괴 폐기** — `TerritorySystem`이 적 영역 건물/도로 파괴 안 함(`RazeAreaCommand`/`RemoveRoadCommand` 제거).
-- ✅ **영역(reach) ≠ 영향력(influence) 분리** — 영역 = `floor(인구/PopPerCell)`만큼 최근접 셀(물리 범위,
-  '닿는가' 결정). 영향력 = `Σ 거주지 인구/(1+거리)`(그 셀의 힘, placeholder — 추후 행복도/팩션 보정 곱).
-  **경합(2팀+ 도달) 셀은 영향력 1등이 소유**, 1·2등 영향력 동률(±`ContestMargin` 2%)이면 **중립**.
-  3팀+도 상위 둘만 봄. (이전 '거리차 ≤1.5 완충밴드'는 이 영향력 해소로 대체.) `Owner2{O1,Inf1,O2,Inf2}`.
+- ✅ **영역(reach) ≠ 영향력(influence) + 팀 모델** — 영역 = `floor(인구/PopPerCell)`만큼 최근접 셀(물리 범위),
+  각 셀을 그 플레이어의 **팀**으로 태깅. `TerritoryLayer`가 이제 **팀 id**를 담음. 같은 팀끼리는 경합 아님(동맹 공유).
+  - **영향력 = 플레이어별 스칼라(입력)**, 같은 팀은 **합산**(동맹 연합). placeholder — 추후 행복도/팩션으로 대체.
+  - **경합 구역(연결요소 T칸)**: 승자팀=영향력1등, `K = floor(T×(승자−2등)/승자)` 칸을 **승자 거주지 가까운 순**으로
+    차지, 나머지 **중립**. **동률→K=0(전부 중립)**. 3+ 경합은 2등이 세져 K↓로 자연 반영(연합 가정 없음).
+  - 입력: [TerritoryComponents.cs](Assets/_game/scripts/RunTime/Components/TerritoryComponents.cs)에
+    `PlayerInfluenceConfig`+`PlayerInfluenceElement{Influence,Team}` 버퍼(인덱스=LocalId). Test.cs가 매 프레임 채움.
+  - ⚠ 게이트(`InEnemyTerritory`)는 셀값(팀)을 플레이어 owner와 비교 → **team=localId 기본에서만 정확**(동맹 게이트 후속).
+- ✅ **#1 도로 베이스 연결 필수** — `RoadBuildController`에 `FilterConnectedToNetwork`/`ComputeAttached` 재도입.
+  유저 드래그는 **내 기존 도로망(=베이스에서 이어짐)에 연결된 구간만** 발행, 떠다니는 도로 차단. 프리뷰도 미연결=회색.
+  (이전 'free 배치' 폐기 — 재반영. AI/라우터는 원래 기존망에서 출발해 무영향.)
+- ✅ **#2 건물 입구 = 자기 도로** — `BuildingPlacement`의 RequireRoadAccess 검증을 `IsEntranceOnRoad(any)` →
+  **입구 도로셀 소유자 == 배치자**로 강화. `BuildingPlaceController`도 `RequireRoadAccess=true`(인간 배치도 강제).
+- ✅ **#3 경합지(Contested) ≠ 중립** — `TerritoryLayer` 값에 **`-2`(경합지, 잠김)** 추가(`TerritoryOps.Contested`/`IsContested`).
+  미배분 경합 칸은 absent(중립·열림)이 아니라 **-2로 마킹** → **누구도 건설/도로 불가**(건물·도로·AI 게이트 전원 차단).
+  시각: **경합지=흰색 테두리**(팀=팀색, 중립=테두리 없음 — 셋 구분). 동률/박빙 경합지도 -2로 잠김.
 - ✅ **영역 아웃라인 상시** — [TerritoryOutlineRenderSystem.cs](Assets/_game/scripts/RunTime/Systems/TerritoryOutlineRenderSystem.cs):
   소유자 다른 이웃과 맞닿은 **경계 변만** 소유팀 색 GL 렌더(상시). F7 fill(`TerritoryDebugSystem`)은 별개 유지.
 - ✅ **A: 확장 바깥-전용** — `GrowOneBlock` 후보 내부가 enclosed 포켓이면 거부(`InteriorExterior`) → 비워진 8×8 안 4×4 링 중첩 안 함.

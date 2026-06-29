@@ -6,32 +6,30 @@ using Unity.Mathematics;
 namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════════════════
-    //  TerritorySystem — 인구 기반 영역 재계산 (파괴 없음 — 표시 전용)
+    //  TerritorySystem — 인구 기반 영역(reach) + 팀 영향력 경합 (파괴 없음·표시 전용)
     // ──────────────────────────────────────────────────────────────────────────
-    //  ~1초마다(실시간) 전체 재계산(기존 결정 셀도 매번 재결정). 두 개념을 분리한다:
+    //  ~1초마다 전체 재계산. 두 개념 분리:
     //
-    //    [영역 reach] = 물리적 범위. 거주건물마다 셀 수 = floor(인구 / PopPerCell).
-    //      소유자별 예산(셀 수 합)만큼 거주지 중심에서 '가장 가까운 셀'을 차지(다중소스 nearest-N).
-    //      → 어느 팀이 그 셀에 '닿는가(영역이 미치는가)'를 결정. 겹치면 경합.
+    //   [영역 reach] 물리 범위 = 거주건물 인구. 셀 수 = floor(인구/PopPerCell),
+    //     소유자별 예산만큼 거주지 최근접 셀(nearest-N). 각 셀을 그 플레이어의 '팀'으로 태깅.
+    //     → 한 셀에 여러 팀이 닿으면 경합. 같은 팀끼리는 경합 아님(동맹은 영역 공유).
     //
-    //    [영향력 influence] = 그 셀에서 팀이 가진 '힘'. 여기선 Σ 거주지 인구/(1+거리)
-    //      (가까운/큰 인구일수록 강함). ※placeholder — 추후 시민 행복도·팩션 보정을 곱해 대체.
-    //      겹친(경합) 셀의 소유는 **영향력 1등**이 가진다. 동률(±ContestMargin)이면 중립(미소유).
-    //      3팀+ 경합도 영향력 상위 둘만 보면 되므로 별도 로직 불필요.
+    //   [영향력 influence] 경합 해소용 '힘' = 플레이어별 스칼라(입력). 같은 팀은 합산(동맹 연합).
+    //     경합 구역(연결요소, T칸)에서: 승자팀=영향력 1등, 2등팀과의 차로 차지 칸수
+    //       K = floor(T × (승자 − 2등) / 승자)  (동률이면 K=0 → 전부 중립).
+    //     K칸은 승자팀 거주지에 가까운 순으로 차지(연속·결정적), 나머지는 중립.
+    //     ※ "많은 팀 경합 시 이득↓"은 2등이 세질수록 K↓로 자연 반영(연합 가정 없음).
     //
-    //    · 결과를 GridLayers.TerritoryLayer(int2→LocalId)에 기록(클리어 후 재작성).
-    //
-    //  ※ capture(영역 침범물 파괴)는 폐기 — 진 팀 건물/도로는 파괴하지 않는다.
-    //    소유 변화는 시각(아웃라인=TerritoryOutlineRenderSystem)으로만 표시.
-    //  메인스레드·저빈도(1초). TerritoryLayer의 유일한 writer.
+    //   결과 → GridLayers.TerritoryLayer(int2 → 팀 id, 없으면 중립).
+    //   ※ capture(파괴) 없음. 영향력 스칼라는 추후 행복도/팩션으로 대체(여기선 입력 placeholder).
+    //   ⚠ TerritoryLayer가 '팀 id'라 빌드 게이트는 team=localId 기본에서만 정확(동맹 게이트 후속).
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct TerritorySystem : ISystem
     {
-        // 경합 셀에서 1·2등 영향력 차가 (이 비율 × 1등) 이하면 동률로 보고 중립.
-        const float ContestMargin = 0.02f;
+        const int MP = StampLayers.MaxPlayers;   // 8
 
-        double _nextRecompute;   // 다음 재계산 실시각(초)
+        double _nextRecompute;
 
         public void OnCreate(ref SystemState state)
         {
@@ -41,7 +39,6 @@ namespace CitySim
 
         public void OnUpdate(ref SystemState state)
         {
-            // ── 초단위 게이트 ───────────────────────────────────────────────
             double now = SystemAPI.Time.ElapsedTime;
             if (now < _nextRecompute) return;
             _nextRecompute = now + 1.0;
@@ -57,6 +54,22 @@ namespace CitySim
                 maxRadius  = math.max(1, cfg.MaxRadius);
             }
 
+            // ── 플레이어 영향력/팀 입력 (없으면 team=localId, influence=1) ──────
+            var pInf  = new NativeArray<float>(MP, Allocator.Temp);
+            var pTeam = new NativeArray<int>(MP, Allocator.Temp);
+            for (int i = 0; i < MP; i++) { pInf[i] = 1f; pTeam[i] = i; }
+            if (SystemAPI.TryGetSingletonEntity<PlayerInfluenceConfig>(out var cfgE)
+                && state.EntityManager.HasBuffer<PlayerInfluenceElement>(cfgE))
+            {
+                var buf = state.EntityManager.GetBuffer<PlayerInfluenceElement>(cfgE);
+                for (int i = 0; i < MP && i < buf.Length; i++)
+                {
+                    pInf[i]  = buf[i].Influence;
+                    int t = buf[i].Team;
+                    pTeam[i] = (uint)t < MP ? t : i;
+                }
+            }
+
             // ── 거주건물 수집 ──────────────────────────────────────────────
             var residences = new NativeList<ResInfo>(64, Allocator.Temp);
             foreach (var (occ, bf) in
@@ -64,34 +77,32 @@ namespace CitySim
                               .WithAll<ResidenceBuilding>())
             {
                 int owner = bf.ValueRO.OwnerLocalId;
-                if ((uint)owner >= StampLayers.MaxPlayers) continue;
-
+                if ((uint)owner >= MP) continue;
                 int pop = occ.ValueRO.Current > 0 ? occ.ValueRO.Current : occ.ValueRO.Capacity;
                 if (pop <= 0) continue;
-
-                // 셀 수 = floor(인구 / PopPerCell). float 나눗셈, 나머지는 무조건 내림.
                 int cells = (int)math.floor(pop / popPerCell);
-                if (cells <= 0) continue;   // 충족 인구 미달 → 영역 0칸
+                if (cells <= 0) continue;
 
                 int2 eff    = EntranceOps.RotateSize(bf.ValueRO.Size, bf.ValueRO.RotSteps);
                 int2 center = bf.ValueRO.Origin + eff / 2;
-
-                residences.Add(new ResInfo
-                {
-                    Owner  = owner,
-                    Center = center,
-                    Cells  = cells,
-                    Pop    = pop,
-                });
+                residences.Add(new ResInfo { Owner = owner, Center = center, Cells = cells });
             }
 
-            // ── 소유자별 nearest-N 배정(영역) → 셀마다 상위 2팀(영향력) 추적 ──
-            var best = new NativeHashMap<int2, Owner2>(2048, Allocator.Temp);
-            var cmp  = new ClaimComparer();
-
-            for (int owner = 0; owner < StampLayers.MaxPlayers; owner++)
+            // ── 팀 영향력 합 (멤버 플레이어 1회씩) ───────────────────────────
+            var teamInf   = new NativeArray<float>(MP, Allocator.Temp);
+            var ownerSeen = new NativeHashSet<int>(MP, Allocator.Temp);
+            for (int i = 0; i < residences.Length; i++)
             {
-                // 이 소유자의 예산 + 경계 박스
+                int o = residences[i].Owner;
+                if (ownerSeen.Add(o)) teamInf[pTeam[o]] += pInf[o];
+            }
+            ownerSeen.Dispose();
+
+            // ── reach: 소유자별 nearest-N → 셀별 '팀 비트마스크' ──────────────
+            var reach = new NativeHashMap<int2, int>(2048, Allocator.Temp);
+            var cmp   = new ClaimComparer();
+            for (int owner = 0; owner < MP; owner++)
+            {
                 int budget = 0;
                 int2 bbMin = default, bbMax = default;
                 bool any = false;
@@ -107,64 +118,130 @@ namespace CitySim
 
                 int margin = math.min(maxRadius, (int)math.ceil(math.sqrt(budget / math.PI)) + 2);
 
-                // 윈도우 내 후보 셀: 영역 선택용 '최근접 거리(md)' + '영향력(inf)' 동시 계산.
-                //   inf = Σ 거주지 인구/(1+거리) — 가까운/큰 인구일수록 그 셀에서 강함.
                 var cand = new NativeList<Claim>(256, Allocator.Temp);
                 for (int z = bbMin.y - margin; z <= bbMax.y + margin; z++)
                 for (int x = bbMin.x - margin; x <= bbMax.x + margin; x++)
                 {
                     int2 cell = new int2(x, z);
-                    if (!layers.TerrainLayer.ContainsKey(cell)) continue;   // 맵 안만
-
-                    float md = float.MaxValue, inf = 0f;
+                    if (!layers.TerrainLayer.ContainsKey(cell)) continue;
+                    float md = float.MaxValue;
                     for (int i = 0; i < residences.Length; i++)
                     {
                         if (residences[i].Owner != owner) continue;
                         float d = math.distance((float2)cell, (float2)residences[i].Center);
                         if (d < md) md = d;
-                        inf += residences[i].Pop / (1f + d);
                     }
-                    if (md < float.MaxValue) cand.Add(new Claim { Dist = md, Inf = inf, Cell = cell });
+                    if (md < float.MaxValue) cand.Add(new Claim { Dist = md, Cell = cell });
                 }
 
-                // [영역] 가까운 순으로 예산만큼만 reach. 각 reach 셀에 [영향력] 상위 2팀 기록.
                 var arr = cand.AsArray();
                 arr.Sort(cmp);
                 int take = math.min(budget, arr.Length);
+                int bit  = 1 << pTeam[owner];
                 for (int k = 0; k < take; k++)
                 {
-                    var c = arr[k];
-                    if (!best.TryGetValue(c.Cell, out var b))
-                        b = new Owner2 { O1 = -1, Inf1 = 0f, O2 = -1, Inf2 = 0f };
-                    // owner는 셀당 1회만 들어오므로 기존 O1/O2와 항상 다른 팀. 영향력 큰 순.
-                    if (c.Inf > b.Inf1)      { b.O2 = b.O1; b.Inf2 = b.Inf1; b.O1 = owner; b.Inf1 = c.Inf; }
-                    else if (c.Inf > b.Inf2) { b.O2 = owner; b.Inf2 = c.Inf; }
-                    best[c.Cell] = b;
+                    int2 cell = arr[k].Cell;
+                    reach.TryGetValue(cell, out int m);
+                    reach[cell] = m | bit;
                 }
                 cand.Dispose();
             }
 
-            // ── TerritoryLayer 재작성 — 경합은 영향력 1등 소유, 동률(±Margin)이면 중립 ──
+            // ── 해소: 단독 팀 셀 = 소유, 경합 셀(2팀+) = 모아서 구역 비례 배분 ──
             layers.TerritoryLayer.Clear();
-            foreach (var kv in best)
+            var contested = new NativeHashSet<int2>(512, Allocator.Temp);
+            foreach (var kv in reach)
             {
-                var b = kv.Value;
-                if (b.O1 < 0) continue;
-                // 경합(2팀+ 도달)에서 1·2등 영향력이 박빙이면 중립(힘겨루기 무승부).
-                if (b.O2 >= 0 && (b.Inf1 - b.Inf2) <= ContestMargin * b.Inf1) continue;
-                layers.TerritoryLayer[kv.Key] = b.O1;
+                int m = kv.Value;
+                if (math.countbits(m) == 1) layers.TerritoryLayer[kv.Key] = math.tzcnt(m);
+                else                        contested.Add(kv.Key);
             }
 
-            residences.Dispose();
-            best.Dispose();
+            AllocateContested(in contested, in reach, in residences, in pTeam, in teamInf, cmp, ref layers);
+
+            pInf.Dispose(); pTeam.Dispose(); teamInf.Dispose();
+            residences.Dispose(); reach.Dispose(); contested.Dispose();
         }
 
-        struct ResInfo { public int Owner; public int2 Center; public int Cells; public int Pop; }
-        // 셀당 상위 2팀(영향력). O2=-1이면 단독(경합 아님).
-        struct Owner2 { public int O1; public float Inf1; public int O2; public float Inf2; }
-        struct Claim { public float Dist; public float Inf; public int2 Cell; }
+        // 경합 구역(연결요소)별: 승자팀 K = floor(T×(승자−2등)/승자) 칸을 승자 거주지 가까운 순으로.
+        static void AllocateContested(
+            in NativeHashSet<int2> contested, in NativeHashMap<int2, int> reach,
+            in NativeList<ResInfo> residences, in NativeArray<int> pTeam, in NativeArray<float> teamInf,
+            ClaimComparer cmp, ref GridLayers layers)
+        {
+            if (contested.IsEmpty) return;
 
-        // 거리 오름차순(영역 reach 선택용), 동률은 셀 좌표(결정적).
+            var visited = new NativeHashSet<int2>(512, Allocator.Temp);
+            var q       = new NativeQueue<int2>(Allocator.Temp);
+            var comp    = new NativeList<int2>(128, Allocator.Temp);
+
+            foreach (var seed in contested)
+            {
+                if (!visited.Add(seed)) continue;
+
+                // 연결요소 수집 + 등장 팀 union
+                comp.Clear(); q.Clear(); q.Enqueue(seed);
+                int teamsMask = 0;
+                while (q.TryDequeue(out int2 cur))
+                {
+                    comp.Add(cur);
+                    if (reach.TryGetValue(cur, out int m)) teamsMask |= m;
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int2 nb = cur + RoadDirOps.Offsets[d];
+                        if (contested.Contains(nb) && visited.Add(nb)) q.Enqueue(nb);
+                    }
+                }
+
+                // 구역 전체를 '경합지(-2, 잠김)'로 먼저 마킹 — 승자 K칸만 이후 덮어씀.
+                //   → 미배분 경합 칸은 중립(열림)이 아니라 경합지(누구도 불가)로 남는다.
+                for (int i = 0; i < comp.Length; i++)
+                    layers.TerritoryLayer[comp[i]] = TerritoryOps.Contested;
+
+                // 승자/2등 팀 (영향력)
+                int win = -1, second = -1;
+                for (int t = 0; t < MP; t++)
+                {
+                    if ((teamsMask & (1 << t)) == 0) continue;
+                    if (win < 0 || teamInf[t] > teamInf[win]) { second = win; win = t; }
+                    else if (second < 0 || teamInf[t] > teamInf[second]) second = t;
+                }
+                if (win < 0) continue;
+
+                float wi = teamInf[win];
+                float si = second >= 0 ? teamInf[second] : 0f;
+                int   T  = comp.Length;
+                int   K  = wi > 0f ? (int)math.floor(T * (wi - si) / wi) : 0;
+                if (K <= 0) continue;   // 동률/열세 → 전부 경합지 유지(잠김)
+
+                // 승자팀 거주지에 가까운 순으로 K칸
+                var rank = new NativeList<Claim>(comp.Length, Allocator.Temp);
+                for (int i = 0; i < comp.Length; i++)
+                {
+                    int2 c = comp[i];
+                    float md = float.MaxValue;
+                    for (int r = 0; r < residences.Length; r++)
+                    {
+                        if (pTeam[residences[r].Owner] != win) continue;
+                        float d = math.distance((float2)c, (float2)residences[r].Center);
+                        if (d < md) md = d;
+                    }
+                    rank.Add(new Claim { Dist = md, Cell = c });
+                }
+                var ra = rank.AsArray();
+                ra.Sort(cmp);
+                int kk = math.min(K, ra.Length);
+                for (int i = 0; i < kk; i++) layers.TerritoryLayer[ra[i].Cell] = win;
+                rank.Dispose();
+            }
+
+            comp.Dispose(); q.Dispose(); visited.Dispose();
+        }
+
+        struct ResInfo { public int Owner; public int2 Center; public int Cells; }
+        struct Claim   { public float Dist; public int2 Cell; }
+
+        // 거리 오름차순, 동률은 셀 좌표(결정적).
         struct ClaimComparer : IComparer<Claim>
         {
             public int Compare(Claim a, Claim b)

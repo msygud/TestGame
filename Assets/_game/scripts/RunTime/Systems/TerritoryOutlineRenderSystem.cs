@@ -77,11 +77,15 @@ namespace CitySim
 
             foreach (var kv in layers.TerritoryLayer)
             {
-                int2 cell  = kv.Key;
-                int  owner = kv.Value;
-                if ((uint)owner >= OwnerColors.Length) continue;
+                int2 cell = kv.Key;
+                int  v    = kv.Value;
 
-                Color col = OwnerColors[owner];
+                // 팀=팀색 / 경합지(-2)=흰색 / 그 외=스킵.
+                Color col;
+                if (v == TerritoryOps.Contested)        col = Color.white;
+                else if ((uint)v < OwnerColors.Length)  col = OwnerColors[v];
+                else                                    continue;
+
                 float h = (hasTerrain && layers.TerrainLayer.TryGetValue(cell, out var tc))
                     ? tc.Height * cs : 0f;
                 h += 0.06f;
@@ -91,8 +95,8 @@ namespace CitySim
 
                 for (int d = 0; d < 4; d++)
                 {
-                    // 같은 소유자 이웃과 맞닿은 변은 내부 → 스킵. 다르면 경계 변 → 그림.
-                    if (layers.TerritoryLayer.TryGetValue(cell + NB[d], out int no) && no == owner)
+                    // 같은 값(팀/경합) 이웃과 맞닿은 변은 내부 → 스킵. 다르면 경계 변 → 그림.
+                    if (layers.TerritoryLayer.TryGetValue(cell + NB[d], out int no) && no == v)
                         continue;
 
                     float3 a, b;

@@ -41,12 +41,34 @@ namespace CitySim
         };
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    //  플레이어별 영향력/팀 입력 (테스트용) — Test.cs가 매 프레임 채운다.
+    //   · Influence = 경합 해소용 스칼라(팀 합산 후 승자팀−2등팀). 추후 행복도/팩션으로 대체.
+    //   · Team      = 동맹 id(같은 Team = 동맹, 영향력 합산·서로 경합 안 함).
+    //   인덱스 = LocalId(0~7). 싱글톤 엔티티(PlayerInfluenceConfig 태그)에 버퍼로 붙는다.
+    // ══════════════════════════════════════════════════════════════════════════
+    public struct PlayerInfluenceConfig : IComponentData { }
+
+    [InternalBufferCapacity(8)]
+    public struct PlayerInfluenceElement : IBufferElementData
+    {
+        public float Influence;
+        public int   Team;
+    }
+
     /// <summary>
     /// 영역 조회 순수 헬퍼(빌드 게이트 공용 — 건물/도로/AI). TerritoryLayer만 읽는다.
+    /// ⚠ TerritoryLayer가 팀 id를 담으므로, 동맹(team≠localId) 시 게이트가 팀-인지여야 정확.
+    ///   현재는 team=localId 기본에서만 정확(동맹 게이트는 후속).
     /// </summary>
     public static class TerritoryOps
     {
-        public const int Neutral = -1;
+        public const int Neutral   = -1;   // 미점유(열림) — absent도 중립 취급
+        public const int Contested = -2;   // 경합지(잠김) — 누구도 건설/도로 불가
+
+        /// <summary>cell이 경합지(-2)인가 — 모든 플레이어 건설 차단.</summary>
+        public static bool IsContested(in NativeHashMap<int2, int> territory, int2 cell)
+            => territory.IsCreated && territory.TryGetValue(cell, out int v) && v == Contested;
 
         /// <summary>cell이 myOwner가 아닌 '실제 플레이어'의 영역이면 true(= 적 영역).</summary>
         public static bool InEnemyTerritory(

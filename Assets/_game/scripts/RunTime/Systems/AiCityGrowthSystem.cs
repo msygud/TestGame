@@ -558,7 +558,8 @@ namespace CitySim
                 int2 c = new int2(x, z);
                 if (outside.Contains(c)) continue;
                 if (!CellBuildable(c, in layers)) continue;                 // 도로/건물/자원/맵밖 제외
-                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)) continue;
+                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)
+                    || TerritoryOps.IsContested(in layers.TerritoryLayer, c)) continue;
                 if (layers.TerrainLayer.TryGetValue(c, out var tc)
                     && cellTypeLookup.TryGet(tc.TypeId, out var ti)
                     && ti.TerrainCategory == TerrainCategory.Water) continue;
@@ -786,7 +787,8 @@ namespace CitySim
                 // Territory 게이트 — 적 영역만 피한다(자기 영역엔 자유롭게 채우고 확장).
                 //   ※ 예전 '내부는 어떤 영역이라도 거부'는 자기 베이스가 영역을 만들면
                 //     자기 영역 위에서 확장이 막혀 정지하는 버그가 있었음 → 적 영역 전용으로 완화.
-                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)) return false;
+                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)
+                    || TerritoryOps.IsContested(in layers.TerritoryLayer, c)) return false;
 
                 if (inInterior)
                 {

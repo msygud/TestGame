@@ -126,7 +126,7 @@ namespace CitySim
                 RotationY         = _rotSteps * 90f,
                 OwnerLocalId      = slot,
                 FactionId         = faction,
-                RequireRoadAccess = false,   // 테스트: 입구-도로 정렬 강제 안 함
+                RequireRoadAccess = true,    // #2: 입구가 자기 도로에 닿아야 건설
             });
         }
 

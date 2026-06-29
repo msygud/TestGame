@@ -23,9 +23,16 @@ public class Test : MonoBehaviour
            + "이미 베이킹된 BuildingOccupancy가 있으면 그 값을 존중(덮어쓰지 않음).")]
     public int TestResidenceCapacity = 10;
 
+    [Header("Territory 팀/영향력 테스트 (인덱스 = LocalId 0~7)")]
+    [Tooltip("플레이어별 영향력(경합 해소용 스칼라). 같은 팀끼리 합산해 승자팀−2등팀으로 경합 결정.")]
+    public float[] PlayerInfluence = { 10, 10, 10, 10, 10, 10, 10, 10 };
+    [Tooltip("플레이어별 팀(동맹) id. 같은 값 = 동맹(영향력 합산·서로 경합 안 함). 기본 각자 자기 팀.")]
+    public int[]   PlayerTeam      = { 0, 1, 2, 3, 4, 5, 6, 7 };
+
     void Update()
     {
         SyncTerritoryConfig();
+        SyncPlayerInfluence();
 
         var mouse = Mouse.current;
         if (mouse == null) return;
@@ -120,5 +127,32 @@ public class Test : MonoBehaviour
             PopPerCell = Mathf.Max(0.01f, PopPerCell),
             MaxRadius  = 64,
         });
+    }
+
+    // PlayerInfluence/PlayerTeam을 싱글톤 버퍼에 반영(없으면 생성). 인덱스=LocalId 0~7.
+    void SyncPlayerInfluence()
+    {
+        var world = World.DefaultGameObjectInjectionWorld;
+        if (world == null || !world.IsCreated) return;
+        var em = world.EntityManager;
+
+        var q = em.CreateEntityQuery(typeof(PlayerInfluenceConfig));
+        Entity e;
+        if (q.IsEmpty)
+        {
+            e = em.CreateEntity(typeof(PlayerInfluenceConfig));
+            em.AddBuffer<PlayerInfluenceElement>(e);
+        }
+        else e = q.GetSingletonEntity();
+        q.Dispose();
+
+        var buf = em.GetBuffer<PlayerInfluenceElement>(e);
+        buf.Clear();
+        for (int i = 0; i < 8; i++)
+            buf.Add(new PlayerInfluenceElement
+            {
+                Influence = (PlayerInfluence != null && i < PlayerInfluence.Length) ? PlayerInfluence[i] : 1f,
+                Team      = (PlayerTeam      != null && i < PlayerTeam.Length)      ? PlayerTeam[i]      : i,
+            });
     }
 }

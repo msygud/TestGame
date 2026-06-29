@@ -195,13 +195,14 @@ namespace CitySim
             if (req.RequireRoadAccess && meta.HasEntrance &&
                 entranceLookup.TryGet(req.MainKey, out var entrance))
             {
-                bool onRoad = EntranceOps.IsEntranceOnRoad(
-                    req.Cell, meta.Size, in entrance, rotSteps, in layers.RoadLayer);
-
-                if (!onRoad)
+                // 입구가 닿는 도로셀이 '자기 소유' 도로여야 건설 가능(설계 #2).
+                int2 erc = EntranceOps.EntranceRoadCell(req.Cell, meta.Size, in entrance, rotSteps);
+                bool onOwnRoad = layers.RoadLayer.TryGetValue(erc, out var ercRoad)
+                                 && ercRoad.OwnerLocalId == req.OwnerLocalId;
+                if (!onOwnRoad)
                 {
                     LogFail(req, PlacementFailCode.NoRoadAccess,
-                        $"입구가 도로에 닿지 않음 at cell {req.Cell} rotY={req.RotationY}");
+                        $"입구가 자기 도로에 닿지 않음 at cell {req.Cell} rotY={req.RotationY}");
                     return;
                 }
             }
@@ -262,8 +263,9 @@ namespace CitySim
                 if (layers.ResourceLayer.TryGetValue(cell, out var res) && res.Amount > 0)
                     return PlacementFailCode.ResourceBlocked;
 
-                // b3. 영역 확인 — 다른 플레이어 영역엔 신규 건설 불가 (Territory 게이트).
-                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerLocalId))
+                // b3. 영역 확인 — 다른 팀 영역·경합지엔 신규 건설 불가 (Territory 게이트).
+                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerLocalId)
+                    || TerritoryOps.IsContested(in layers.TerritoryLayer, cell))
                     return PlacementFailCode.EnemyTerritory;
 
                 // c. 지형 타입 확인
