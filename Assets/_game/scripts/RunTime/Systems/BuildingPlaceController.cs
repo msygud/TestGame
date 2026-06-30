@@ -215,6 +215,7 @@ namespace CitySim
             _em.SetComponentData(_previewEntity, previewState);
 
             var layers = GetLayers(out bool hasLayers);
+            var teams = GetTeamTable();
             int ownerSlot = hasLayers && ResolvePlayerFaction(out int s, out _) ? s : -1;
 
             int2 eff = EntranceOps.RotateSize(meta.Size, _rotSteps);
@@ -228,7 +229,7 @@ namespace CitySim
             for (int dz = 0; dz < eff.y; dz++)
             {
                 int2 c = origin + new int2(dx, dz);
-                PreviewStatus st = hasLayers ? EvalCell(c, ownerSlot, layers, ref firstH, ref baseH)
+                PreviewStatus st = hasLayers ? EvalCell(c, ownerSlot, layers, in teams, ref firstH, ref baseH)
                                              : PreviewStatus.Valid;
                 if (Severity(st) > Severity(worst)) worst = st;
             }
@@ -267,7 +268,7 @@ namespace CitySim
         }
 
         // 셀 상태(프리뷰 힌트). 진짜 검증은 BuildingPlacementSystem.
-        PreviewStatus EvalCell(int2 cell, int ownerSlot, GridLayers layers,
+        PreviewStatus EvalCell(int2 cell, int ownerSlot, GridLayers layers, in TeamTable teams,
                                ref bool firstH, ref byte baseH)
         {
             if (layers.TerrainLayer.IsCreated && !layers.TerrainLayer.ContainsKey(cell))
@@ -282,7 +283,7 @@ namespace CitySim
                 return PreviewStatus.ResourceBlocked;
 
             // 적 영역 → 배치 불가(빨강). (전용 enum 없어 Occupied로 표시.)
-            if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerSlot))
+            if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerSlot, in teams))
                 return PreviewStatus.Occupied;
 
             byte h = layers.TerrainLayer.IsCreated
@@ -381,6 +382,17 @@ namespace CitySim
             q.Dispose();
             ok = layers.TerrainLayer.IsCreated;
             return layers;
+        }
+
+        // 영역 게이트(InEnemyTerritory)는 TerritoryLayer의 '팀 id'와 '내 팀'을 비교 →
+        //   LocalId→팀 매핑(TeamTable, TeamTableSystem이 유지)을 읽는다. 없으면 Identity.
+        TeamTable GetTeamTable()
+        {
+            var q = _em.CreateEntityQuery(typeof(TeamTable));
+            if (q.IsEmpty) { q.Dispose(); return TeamTable.Identity; }
+            var t = q.GetSingleton<TeamTable>();
+            q.Dispose();
+            return t;
         }
 
         bool TryGetCellSize(out float cs)

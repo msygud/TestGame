@@ -117,6 +117,9 @@ namespace CitySim
             // OccupancyLayer / TerrainLayer 수정이 필요하므로 RW
             ref var layers = ref SystemAPI.GetSingletonRW<GridLayers>().ValueRW;
 
+            // 영역 게이트는 TerritoryLayer의 '팀 id'와 '내 팀'을 비교 → LocalId→팀 매핑 필요.
+            if (!SystemAPI.TryGetSingleton<TeamTable>(out var teams)) teams = TeamTable.Identity;
+
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
             foreach (var (req, reqEntity) in
@@ -124,7 +127,7 @@ namespace CitySim
             {
                 var r = req.ValueRO;
                 ProcessRequest(ref r, ref layers, prefabLookup, prefabMetaLookup,
-                    cellTypeLookup, entranceLookup, gridMap, gridSettings, roadKeyLookup, ecb);
+                    cellTypeLookup, entranceLookup, gridMap, gridSettings, roadKeyLookup, in teams, ecb);
 
                 ecb.DestroyEntity(reqEntity);
             }
@@ -145,6 +148,7 @@ namespace CitySim
             GridMap                  gridMap,
             GridSettings             settings,
             RoadKeyLookup            roadKeyLookup,
+            in TeamTable             teams,
             EntityCommandBuffer      ecb)
         {
             // ── 1. 메타 조회 ─────────────────────────────────────────
@@ -176,7 +180,7 @@ namespace CitySim
                 : EntranceOps.RotateSize(meta.Size, rotSteps);
 
             var  fail = ValidateCells(req.Cell, size, meta.BuildableOn, req.OwnerLocalId,
-                ref layers, cellTypeLookup, out byte baseHeight);
+                ref layers, cellTypeLookup, in teams, out byte baseHeight);
 
             if (fail != PlacementFailCode.None)
             {
@@ -239,6 +243,7 @@ namespace CitySim
             int               ownerLocalId,
             ref GridLayers    layers,
             CellTypeLookup    cellTypeLookup,
+            in TeamTable      teams,
             out byte          baseHeight)
         {
             baseHeight = 0;
@@ -263,7 +268,7 @@ namespace CitySim
                     return PlacementFailCode.ResourceBlocked;
 
                 // b3. 영역 확인 — 다른 팀 영역·경합지엔 신규 건설 불가 (Territory 게이트).
-                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerLocalId)
+                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerLocalId, in teams)
                     || TerritoryOps.IsContested(in layers.TerritoryLayer, cell))
                     return PlacementFailCode.EnemyTerritory;
 

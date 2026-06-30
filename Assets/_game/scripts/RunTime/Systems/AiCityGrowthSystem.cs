@@ -45,6 +45,9 @@ namespace CitySim
             var cellTypeLookup = SystemAPI.GetSingleton<CellTypeLookup>();
             var cfg            = GrowthConfig.Default;
 
+            // 영역 게이트는 TerritoryLayer의 '팀 id'와 '내 팀'을 비교 → LocalId→팀 매핑 필요.
+            if (!SystemAPI.TryGetSingleton<TeamTable>(out var teams)) teams = TeamTable.Identity;
+
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
             foreach (var (teamRO, gridRO) in
@@ -72,7 +75,7 @@ namespace CitySim
 
                 // 1) 갇힌 구획 개발 (D1 구획 파생 + B 격자 패킹 + C1 골목 분할).
                 bool worked = DevelopParcels(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                    in grid, owner, in cfg, in outside, encLo, encHi, budget, ref claimed, ref ecb);
+                    in grid, owner, in cfg, in outside, encLo, encHi, in teams, budget, ref claimed, ref ecb);
 
                 // 2) 개발할 갇힌 구획 없음 → 바깥 확장 1회(새 블록, 바깥-전용).
                 if (!worked)
@@ -80,10 +83,10 @@ namespace CitySim
                     int chosenKey = PickBuilding(in cfg, ref rng);
                     int altKey = chosenKey == cfg.BuildingKeyA ? cfg.BuildingKeyB : cfg.BuildingKeyA;
                     bool grew = chosenKey > 0 && GrowOneBlock(in layers, in entranceLookup, in metaLookup,
-                        in cellTypeLookup, in grid, owner, chosenKey, clock.Day, in cfg, in outside, encLo, encHi, ref rng, ref ecb);
+                        in cellTypeLookup, in grid, owner, chosenKey, clock.Day, in cfg, in outside, encLo, encHi, in teams, ref rng, ref ecb);
                     if (!grew && altKey > 0 && altKey != chosenKey)
                         GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                            in grid, owner, altKey, clock.Day, in cfg, in outside, encLo, encHi, ref rng, ref ecb);
+                            in grid, owner, altKey, clock.Day, in cfg, in outside, encLo, encHi, in teams, ref rng, ref ecb);
                 }
 
                 claimed.Dispose();
@@ -99,7 +102,7 @@ namespace CitySim
             in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner,
             int chosenKey, int day,
             in GrowthConfig cfg,
-            in NativeHashSet<int2> outside, int2 encLo, int2 encHi,
+            in NativeHashSet<int2> outside, int2 encLo, int2 encHi, in TeamTable teams,
             ref Unity.Mathematics.Random rng, ref EntityCommandBuffer ecb)
         {
             if (!metaLookup.TryGetMeta(chosenKey, 0, out var meta)) return false;
@@ -155,7 +158,7 @@ namespace CitySim
                 {
                     int2 O = QuadrantOrigin(fo, q, K, Road);
                     if (!seen.Add(O)) continue;
-                    if (!BlockValid(in layers, in cellTypeLookup, O, K, Road, owner)) continue;
+                    if (!BlockValid(in layers, in cellTypeLookup, O, K, Road, owner, in teams)) continue;
                     if (cfg.RejectParallelSeam && IsParallelSeam(O, K, Road, owner, in layers)) continue;
                     // 바깥-전용 확장: 블록 내부가 '갇힌(enclosed)' 포켓이면 거부(중첩 방지).
                     //   갇힌 빈 구획은 채우기/골목이 담당, 확장은 바깥 프런티어로만.
@@ -450,80 +453,6 @@ namespace CitySim
             return false;
         }
 
-        // ── 채우기: 기존 도로 옆 빈 자리에 '건물만' 단독 배치(새 도로 없음) ──────
-        //   도시의 1순위 성장 수단. 이미 도로로 둘러싸인 빈 구역(예: 8×8 내부)에
-        //   건물을 도로에 맞닿게 채운다. 새 링을 치지 않으므로 폐쇄구역 중첩이 없다.
-        //   claimed = 이번 틱에 이미 잡은 셀(레이어가 틱 중 안 갱신돼 중복 방지).
-        //   첫 유효 자리에 배치(first-fit). 없으면 false → 호출자가 확장(DevelopBlock).
-        static bool TryFillBesideRoad(
-            in GridLayers layers, in EntranceLookup entranceLookup, in PrefabMetaLookup metaLookup,
-            in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner, int chosenKey,
-            in NativeHashSet<int2> outside, int2 encLo, int2 encHi,
-            ref NativeHashSet<int2> claimed, ref EntityCommandBuffer ecb)
-        {
-            if (!metaLookup.TryGetMeta(chosenKey, 0, out var meta)) return false;
-            int2 sz = meta.Size;
-            if (sz.x <= 0 || sz.y <= 0) return false;
-
-            bool hasEnt = meta.HasEntrance && entranceLookup.TryGet(chosenKey, out _);
-            EntranceInfo ent = default;
-            if (hasEnt) entranceLookup.TryGet(chosenKey, out ent);
-            int stepCount = hasEnt ? 4 : 1;
-
-            // 팀 도로에 인접한 빈 셀을 origin 후보로 — 첫 유효 자리에 배치.
-            foreach (var kv in layers.RoadLayer)
-            {
-                if (kv.Value.OwnerLocalId != owner) continue;
-                int2 r = kv.Key;
-                for (int d = 0; d < 4; d++)
-                {
-                    int2 origin = r + RoadDirOps.Offsets[d];
-                    for (int steps = 0; steps < stepCount; steps++)
-                    {
-                        int2 eff = EntranceOps.RotateSize(sz, steps);
-                        if (!FootprintBuildableFlat(origin, eff, meta.BuildableOn, in layers, in cellTypeLookup))
-                            continue;
-
-                        // 이번 틱 예약 셀 / 적 영역 / 도시 바깥(프런티어) 회피
-                        bool bad = false;
-                        for (int dz = 0; dz < eff.y && !bad; dz++)
-                        for (int dx = 0; dx < eff.x && !bad; dx++)
-                        {
-                            int2 c = origin + new int2(dx, dz);
-                            if (claimed.Contains(c)) bad = true;
-                            else if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)) bad = true;
-                            // enclosed(도로로 둘러싸인 안쪽)만 채운다. 바깥 열린 땅은 도로 확장용으로 보존.
-                            else if (c.x < encLo.x || c.x > encHi.x || c.y < encLo.y || c.y > encHi.y) bad = true;
-                            else if (outside.Contains(c)) bad = true;
-                        }
-                        if (bad) continue;
-
-                        // 입구가 '자기' 도로에 닿아야(#2, 게이트와 동일). 입구 없으면 팀 도로 4-인접.
-                        if (hasEnt)
-                        {
-                            if (!EntranceOps.IsEntranceOnOwnRoad(origin, sz, in ent, steps, in layers.RoadLayer, owner))
-                                continue;
-                        }
-                        else if (!FootprintTouchesTeamRoad(origin, eff, owner, in layers))
-                            continue;
-
-                        var be = ecb.CreateEntity();
-                        ecb.AddComponent(be, new PlaceBuildingRequest
-                        {
-                            MainKey = chosenKey, VariantKey = 0, Cell = origin,
-                            RotationY = EntranceOps.StepsToRotationY(steps),
-                            OwnerLocalId = owner, FactionId = grid.FactionId, RequireRoadAccess = true,
-                        });
-                        for (int dz = 0; dz < eff.y; dz++)
-                        for (int dx = 0; dx < eff.x; dx++)
-                            claimed.Add(origin + new int2(dx, dz));
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-
         static bool FootprintTouchesTeamRoad(int2 origin, int2 eff, int owner, in GridLayers layers)
         {
             for (int dz = 0; dz < eff.y; dz++)
@@ -545,7 +474,7 @@ namespace CitySim
         static bool DevelopParcels(
             in GridLayers layers, in EntranceLookup entranceLookup, in PrefabMetaLookup metaLookup,
             in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner, in GrowthConfig cfg,
-            in NativeHashSet<int2> outside, int2 encLo, int2 encHi,
+            in NativeHashSet<int2> outside, int2 encLo, int2 encHi, in TeamTable teams,
             int budget, ref NativeHashSet<int2> claimed, ref EntityCommandBuffer ecb)
         {
             if (encHi.x < encLo.x || encHi.y < encLo.y) return false;   // 도로 없음
@@ -558,7 +487,7 @@ namespace CitySim
                 int2 c = new int2(x, z);
                 if (outside.Contains(c)) continue;
                 if (!CellBuildable(c, in layers)) continue;                 // 도로/건물/자원/맵밖 제외
-                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)
+                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner, in teams)
                     || TerritoryOps.IsContested(in layers.TerritoryLayer, c)) continue;
                 if (layers.TerrainLayer.TryGetValue(c, out var tc)
                     && cellTypeLookup.TryGet(tc.TypeId, out var ti)
@@ -766,7 +695,7 @@ namespace CitySim
 
         // footprint(내부 K + 도로 링 Road) 전체 유효? 맵 안·같은 높이·Land·내부 빈·링 빈/팀도로.
         static bool BlockValid(
-            in GridLayers layers, in CellTypeLookup cellTypeLookup, int2 O, int K, int Road, int owner)
+            in GridLayers layers, in CellTypeLookup cellTypeLookup, int2 O, int K, int Road, int owner, in TeamTable teams)
         {
             int2 ro = O - new int2(Road, Road);
             int  rs = K + 2 * Road;
@@ -787,7 +716,7 @@ namespace CitySim
                 // Territory 게이트 — 적 영역만 피한다(자기 영역엔 자유롭게 채우고 확장).
                 //   ※ 예전 '내부는 어떤 영역이라도 거부'는 자기 베이스가 영역을 만들면
                 //     자기 영역 위에서 확장이 막혀 정지하는 버그가 있었음 → 적 영역 전용으로 완화.
-                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner)
+                if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner, in teams)
                     || TerritoryOps.IsContested(in layers.TerritoryLayer, c)) return false;
 
                 if (inInterior)

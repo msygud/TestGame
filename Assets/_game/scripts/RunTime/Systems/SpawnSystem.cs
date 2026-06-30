@@ -20,6 +20,10 @@ namespace CitySim
     [UpdateAfter(typeof(MapLoaderSystem))]
     public partial struct SpawnSystem : ISystem
     {
+        // 건물 기본 체력(균일, 임시) — 전투로 파괴 가능하게 부여.
+        //   TODO: 프리팹별 값이 필요하면 BuildingAuthoring 베이킹으로 이전(능력=컴포넌트 원칙).
+        const float BuildingDefaultHealth = 500f;
+
         public void OnUpdate(ref SystemState state)
         {
             if (!SystemAPI.HasSingleton<PrefabLookup>()) return;
@@ -92,6 +96,19 @@ namespace CitySim
                             Relief       = req.ValueRO.Relief,
                             MaxDist      = req.ValueRO.SupplyMaxDist,
                         });
+
+                    // ── 건물 전투 타겟화: 공격으로 파괴 가능(캡처 후 적 건물 제거의 토대) ──
+                    //   타겟 쿼리 요건: CombatTargetable + CombatHealth + TeamInfoData + LocalTransform(스폰 시 부여).
+                    //   CombatDestroyOnDeath → 사망 시 CombatDeathSystem이 destroy.
+                    //   CombatTargetBounds는 선택(없으면 ResolveAimPosition이 transform 위치로 폴백) → 1차 생략.
+                    int ownerLid = math.clamp(req.ValueRO.OwnerLocalId, 0, 7);
+                    ecb.AddComponent(instance, new CombatTargetable { TargetType = CombatTargetMask.Building });
+                    ecb.AddComponent(instance, new CombatHealth { Health = BuildingDefaultHealth, MaxHealth = BuildingDefaultHealth });
+                    ecb.AddComponent<CombatDestroyOnDeath>(instance);
+                    // friend/foe 판정용 팀 — 프리팹에 TeamInfoData 없을 때만 owner 팀으로 부여
+                    //   (있으면 위 ApplySpawnTeam이 이미 set).
+                    if (hasTeamByLocalId[ownerLid] == 1 && !state.EntityManager.HasComponent<TeamInfoData>(prefab))
+                        ecb.AddComponent(instance, teamsByLocalId[ownerLid]);
                 }
 
                 ecb.DestroyEntity(reqEntity);

@@ -114,12 +114,30 @@ namespace CitySim
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    //  렌더 시스템 (관리형 — URP 콜백 + GL)
+    //  렌더 시스템 (관리형 — 동적 Mesh + Graphics.DrawMesh)
+    // ──────────────────────────────────────────────────────────────────────────
+    //  렌더 경로: GL 즉시모드/endCameraRendering은 Unity 6 URP에서 Overlay UI '위'로
+    //  그려진다(UI가 파이프라인 내부 패스로 먼저, 콜백이 그 뒤). 그래서 동적 Mesh를
+    //  renderQueue=Transparent로 DrawMesh → 투명 패스(=UI 패스보다 앞)에서 그려져
+    //  Overlay UI가 위에 온다. 빌드 툴 특성상 마커는 항상 보여야 하므로 ZTest=Always
+    //  유지(유닛/건물에 안 가림). (TerritoryOutlineRenderSystem과 동일 이행, ZTest만 다름.)
     // ──────────────────────────────────────────────────────────────────────────
     [UpdateInGroup(typeof(PresentationSystemGroup))]
     public partial class RoadBuildPreviewRenderSystem : SystemBase
     {
         Material _mat;
+        Mesh     _lineMesh;   // 그리드 + 점유 외곽선 (MeshTopology.Lines)
+        Mesh     _quadMesh;   // 채움 쿼드 (삼각형)
+
+        // 메시 빌드 버퍼(재사용).
+        readonly List<Vector3> _lv = new(2048);
+        readonly List<Color>   _lc = new(2048);
+        readonly List<int>     _li = new(2048);
+        readonly List<Vector3> _qv = new(512);
+        readonly List<Color>   _qc = new(512);
+        readonly List<int>     _qi = new(768);
+
+        const int GridRadius = 8;   // 프리뷰 중심에서 이 반경(셀)까지 그리드, 멀수록 옅게
 
         // 상태별 색 (RGBA). 알파는 Kind(Pending/Dragging)로 가감.
         static Color StatusColor(PreviewStatus s) => s switch
@@ -140,56 +158,49 @@ namespace CitySim
             _                            => Color.white,
         };
 
-        // 콜백이 그릴 데이터의 스냅샷 (메인스레드 캐시)
-        struct DrawCell { public float3 Center; public Color Color; public bool Outline; }
-        readonly List<DrawCell> _cells = new(128);
-        struct GridLine { public float3 A, B; public Color C; }
-        readonly List<GridLine> _grid = new(1024);
-        float _cellSize;
-        bool  _hasData;
-        bool  _hasGrid;
-        const int GridRadius = 8;   // 프리뷰 중심에서 이 반경(셀)까지 그리드, 멀수록 옅게
-
         protected override void OnCreate()
         {
             var shader = Shader.Find("Hidden/Internal-Colored");
             _mat = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+            _mat.SetColor("_Color", Color.white);
             _mat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
             _mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
             _mat.SetInt("_Cull",   (int)CullMode.Off);
             _mat.SetInt("_ZWrite", 0);
-            _mat.SetInt("_ZTest",  (int)CompareFunction.Always); // 항상 위에 그림
+            _mat.SetInt("_ZTest",  (int)CompareFunction.Always); // 빌드 툴 — 항상 위에 그림
+            _mat.renderQueue = (int)RenderQueue.Transparent;     // 투명 패스(UI 패스보다 앞) → UI 아래
+
+            _lineMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+            _quadMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+            _lineMesh.MarkDynamic();
+            _quadMesh.MarkDynamic();
 
             RequireForUpdate<RoadBuildPreviewState>();
             RequireForUpdate<GridSettings>();
-
-            // URP: 카메라 렌더가 끝나는 시점에 GL로 덧그린다.
-            RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
         }
 
         protected override void OnDestroy()
         {
-            RenderPipelineManager.endCameraRendering -= OnEndCameraRendering;
-            if (_mat != null) Object.DestroyImmediate(_mat);
+            if (_mat != null)      Object.DestroyImmediate(_mat);
+            if (_lineMesh != null) Object.DestroyImmediate(_lineMesh);
+            if (_quadMesh != null) Object.DestroyImmediate(_quadMesh);
         }
 
-        float _halfExtent;  // = RoadSize * cellSize * 0.5f
-
-        // 메인스레드: 버퍼 → 그리기 캐시로 스냅샷.
+        // 메인스레드: 버퍼 → 메시 빌드 → DrawMesh.
         protected override void OnUpdate()
         {
-            _hasData = false; _hasGrid = false;
-            _cells.Clear(); _grid.Clear();
+            _lv.Clear(); _lc.Clear(); _li.Clear();
+            _qv.Clear(); _qc.Clear(); _qi.Clear();
 
             var state = SystemAPI.GetSingleton<RoadBuildPreviewState>();
-            if (!state.Active) return;
+            if (!state.Active) { Flush(); return; }
 
             var settings = SystemAPI.GetSingleton<GridSettings>();
-            _cellSize = settings.CellSize;
-            if (_cellSize <= 0f) return;
+            float cs = settings.CellSize;
+            if (cs <= 0f) { Flush(); return; }
 
-            int roadSize = math.max(1, state.RoadSize);
-            _halfExtent = roadSize * _cellSize * 0.5f;
+            int   roadSize   = math.max(1, state.RoadSize);
+            float halfExtent = roadSize * cs * 0.5f;
 
             // 지형 높이 소스 (그리드·마커 Y).
             bool hasTerrain = SystemAPI.TryGetSingleton<GridLayers>(out var layers)
@@ -210,108 +221,96 @@ namespace CitySim
                     int2 cc = ctr + new int2(dx, dz);
                     float gh = 0.04f;
                     if (hasTerrain && layers.TerrainLayer.TryGetValue(cc, out var tg))
-                        gh += tg.Height * _cellSize;
-                    float x0 = cc.x * _cellSize, x1 = x0 + _cellSize;
-                    float z0 = cc.y * _cellSize, z1 = z0 + _cellSize;
+                        gh += tg.Height * cs;
+                    float x0 = cc.x * cs, x1 = x0 + cs;
+                    float z0 = cc.y * cs, z1 = z0 + cs;
                     Color gc = new Color(1f, 1f, 1f, a);
-                    _grid.Add(new GridLine { A = new float3(x0, gh, z0), B = new float3(x1, gh, z0), C = gc }); // S변
-                    _grid.Add(new GridLine { A = new float3(x0, gh, z0), B = new float3(x0, gh, z1), C = gc }); // W변
+                    AddLine(new Vector3(x0, gh, z0), new Vector3(x1, gh, z0), gc); // S변
+                    AddLine(new Vector3(x0, gh, z0), new Vector3(x0, gh, z1), gc); // W변
                 }
             }
-            _hasGrid = _grid.Count > 0;
 
             var previewEntity = SystemAPI.GetSingletonEntity<RoadBuildPreviewState>();
-            if (!EntityManager.HasBuffer<PreviewCell>(previewEntity)) return;
-
-            var buf = EntityManager.GetBuffer<PreviewCell>(previewEntity);
-            if (buf.Length == 0) return;
-
-            for (int i = 0; i < buf.Length; i++)
+            if (EntityManager.HasBuffer<PreviewCell>(previewEntity))
             {
-                var pc = buf[i];
-
-                Color c = StatusColor(pc.Status);
-                // 확정 대기는 살짝 옅게, 드래그 중은 진하게.
-                c.a = pc.Kind == PreviewKind.Dragging ? 0.65f : 0.45f;
-
-                // Cell은 footprint 원점(좌하단). 쿼드 중심 = 원점 + halfExtent
-                float cx = pc.Cell.x * _cellSize + _halfExtent;
-                float cz = pc.Cell.y * _cellSize + _halfExtent;
-
-                float height = 0f;
-                if (hasTerrain && layers.TerrainLayer.TryGetValue(pc.Cell, out var tc))
-                    height = tc.Height * _cellSize;
-
-                _cells.Add(new DrawCell
+                var buf = EntityManager.GetBuffer<PreviewCell>(previewEntity);
+                for (int i = 0; i < buf.Length; i++)
                 {
-                    Center  = new float3(cx, height + 0.05f, cz),
-                    Color   = c,
-                    Outline = PreviewStatusOps.ShowOutline(pc.Status),
-                });
+                    var pc = buf[i];
+
+                    Color c = StatusColor(pc.Status);
+                    // 확정 대기는 살짝 옅게, 드래그 중은 진하게.
+                    c.a = pc.Kind == PreviewKind.Dragging ? 0.65f : 0.45f;
+
+                    // Cell은 footprint 원점(좌하단). 쿼드 중심 = 원점 + halfExtent
+                    float cx = pc.Cell.x * cs + halfExtent;
+                    float cz = pc.Cell.y * cs + halfExtent;
+                    float height = 0f;
+                    if (hasTerrain && layers.TerrainLayer.TryGetValue(pc.Cell, out var tc))
+                        height = tc.Height * cs;
+                    float y = height + 0.05f;
+
+                    AddQuad(cx, y, cz, halfExtent, c);
+                    if (PreviewStatusOps.ShowOutline(pc.Status))
+                        AddOutline(cx, y + 0.02f, cz, halfExtent, new Color(1f, 1f, 1f, 0.95f));
+                }
             }
-            _hasData = _cells.Count > 0;
+
+            Flush();
         }
 
-        // URP 콜백: 카메라 렌더 직후 GL 즉시모드로 그림.
-        void OnEndCameraRendering(ScriptableRenderContext ctx, Camera cam)
+        // ── 메시 빌드 헬퍼 ──────────────────────────────────────────────────────
+        void AddLine(Vector3 a, Vector3 b, Color c)
         {
-            if (_mat == null || (!_hasData && !_hasGrid)) return;
+            int i = _lv.Count;
+            _lv.Add(a); _lv.Add(b);
+            _lc.Add(c); _lc.Add(c);
+            _li.Add(i); _li.Add(i + 1);
+        }
 
-            // 게임/씬 카메라만 (프리뷰·리플렉션 카메라 제외)
-            if (cam.cameraType != CameraType.Game && cam.cameraType != CameraType.SceneView)
-                return;
+        // 중심(cx,y,cz) 기준 한 변 2*h 쿼드(삼각형 2개).
+        void AddQuad(float cx, float y, float cz, float h, Color c)
+        {
+            int i = _qv.Count;
+            _qv.Add(new Vector3(cx - h, y, cz - h));
+            _qv.Add(new Vector3(cx - h, y, cz + h));
+            _qv.Add(new Vector3(cx + h, y, cz + h));
+            _qv.Add(new Vector3(cx + h, y, cz - h));
+            _qc.Add(c); _qc.Add(c); _qc.Add(c); _qc.Add(c);
+            _qi.Add(i); _qi.Add(i + 1); _qi.Add(i + 2);
+            _qi.Add(i); _qi.Add(i + 2); _qi.Add(i + 3);
+        }
 
-            float h = _halfExtent;
+        // 사각 외곽선 4변(라인).
+        void AddOutline(float cx, float y, float cz, float h, Color c)
+        {
+            var p0 = new Vector3(cx - h, y, cz - h);
+            var p1 = new Vector3(cx - h, y, cz + h);
+            var p2 = new Vector3(cx + h, y, cz + h);
+            var p3 = new Vector3(cx + h, y, cz - h);
+            AddLine(p0, p1, c); AddLine(p1, p2, c); AddLine(p2, p3, c); AddLine(p3, p0, c);
+        }
 
-            _mat.SetPass(0);
-            GL.PushMatrix();
-
-            // 0) 페이딩 그리드 (프리뷰 중심 기준, 멀수록 옅음)
-            if (_hasGrid)
+        // 빌드된 버퍼를 메시에 올리고 DrawMesh로 큐잉(투명 패스 → UI 아래).
+        void Flush()
+        {
+            _lineMesh.Clear();
+            if (_lv.Count > 0)
             {
-                GL.Begin(GL.LINES);
-                for (int i = 0; i < _grid.Count; i++)
-                {
-                    var g = _grid[i];
-                    GL.Color(g.C);
-                    GL.Vertex3(g.A.x, g.A.y, g.A.z);
-                    GL.Vertex3(g.B.x, g.B.y, g.B.z);
-                }
-                GL.End();
+                _lineMesh.SetVertices(_lv);
+                _lineMesh.SetColors(_lc);
+                _lineMesh.SetIndices(_li, MeshTopology.Lines, 0, false);
+                Graphics.DrawMesh(_lineMesh, Matrix4x4.identity, _mat, 0);
             }
-            if (!_hasData) { GL.PopMatrix(); return; }
 
-            // 1) 채움 쿼드
-            GL.Begin(GL.QUADS);
-            for (int i = 0; i < _cells.Count; i++)
+            _quadMesh.Clear();
+            if (_qv.Count > 0)
             {
-                var d = _cells[i];
-                GL.Color(d.Color);
-                float x = d.Center.x, y = d.Center.y, z = d.Center.z;
-                GL.Vertex3(x - h, y, z - h);
-                GL.Vertex3(x - h, y, z + h);
-                GL.Vertex3(x + h, y, z + h);
-                GL.Vertex3(x + h, y, z - h);
+                _quadMesh.SetVertices(_qv);
+                _quadMesh.SetColors(_qc);
+                _quadMesh.SetIndices(_qi, MeshTopology.Triangles, 0, false);
+                Graphics.DrawMesh(_quadMesh, Matrix4x4.identity, _mat, 0);
             }
-            GL.End();
-
-            // 2) 점유 오브젝트 강조 외곽선 (대상 오브젝트가 무엇인지 식별 가능하게)
-            GL.Begin(GL.LINES);
-            for (int i = 0; i < _cells.Count; i++)
-            {
-                var d = _cells[i];
-                if (!d.Outline) continue;
-                GL.Color(new Color(1f, 1f, 1f, 0.95f));   // 흰 테두리로 대상 강조
-                float x = d.Center.x, y = d.Center.y + 0.02f, z = d.Center.z;
-                // 사각 외곽선 4변
-                GL.Vertex3(x - h, y, z - h); GL.Vertex3(x - h, y, z + h);
-                GL.Vertex3(x - h, y, z + h); GL.Vertex3(x + h, y, z + h);
-                GL.Vertex3(x + h, y, z + h); GL.Vertex3(x + h, y, z - h);
-                GL.Vertex3(x + h, y, z - h); GL.Vertex3(x - h, y, z - h);
-            }
-            GL.End();
-
-            GL.PopMatrix();
         }
     }
 }

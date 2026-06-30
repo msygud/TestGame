@@ -414,11 +414,12 @@ namespace CitySim
         {
             bool first = true;
             byte baseH = 0;
+            var teams = GetTeamTable();   // 세그먼트당 1회 — 영역 게이트의 LocalId→팀 매핑.
 
             foreach (var cell in seg)
             {
                 // 적 영역·경합지엔 도로 불가 (RoadSystem 게이트와 일치 → all-or-nothing이 잡음).
-                if (ownerSlot >= 0 && TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerSlot))
+                if (ownerSlot >= 0 && TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerSlot, in teams))
                     return PreviewStatus.Occupied;
                 if (TerritoryOps.IsContested(in layers.TerritoryLayer, cell))
                     return PreviewStatus.Occupied;
@@ -746,6 +747,17 @@ namespace CitySim
             q.Dispose();
             ok = layers.RoadLayer.IsCreated;
             return layers;
+        }
+
+        // 영역 게이트(InEnemyTerritory)는 TerritoryLayer의 '팀 id'와 '내 팀'을 비교 →
+        //   LocalId→팀 매핑(TeamTable, TeamTableSystem이 유지)을 읽는다. 없으면 Identity.
+        TeamTable GetTeamTable()
+        {
+            var q = _em.CreateEntityQuery(typeof(TeamTable));
+            if (q.IsEmpty) { q.Dispose(); return TeamTable.Identity; }
+            var t = q.GetSingleton<TeamTable>();
+            q.Dispose();
+            return t;
         }
 
         // ───────────────────────────────────────────────────────────

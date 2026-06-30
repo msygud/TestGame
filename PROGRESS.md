@@ -5,6 +5,61 @@
 
 ---
 
+## 🟡 캡처/경합지 구조물(건물·도로) 처리 — 설계 확정 (2026-06-30, 미구현)
+> 결정 사항만 합의. 코드는 아직 없음 → ⬜ 구현 대기.
+
+**핵심 원칙: 영역 획득/경합 자체로는 아무것도 자동 파괴하지 않는다.** 제거는 오직
+**전투(건물) + 연결성 스윕(도로)** 으로만. 도로는 **직접 타격 불가**(룰) — 건물 파괴의 부수효과로만 사라진다.
+
+### 캡처 영토(내가 소유)
+- **capture ≠ 강제 파괴** — 적 건물/도로는 그대로 유지(즉시 삭제 안 함).
+- **건물** — 전투로만 제거.
+- **도로 = 연결성(reachability) 기준 제거** — 적 도로는 **자기 소유의 살아있는 적 건물에서 도로로 도달
+  가능한 동안만** 유지. 도달 불가가 되면 제거. 적 건물 파괴 시 이벤트 구동으로 한 번 스윕:
+  살아있는 적 건물들에서 적 도로망 flood → 미도달 적 도로셀 ECB 일괄 제거. (개별 진입로 매칭이 아니라
+  연결성이라 **가지째/클러스터째** 사라져 토막·구멍 없음.) 프로젝트의 도로 BFS·연결요소·dirty 스윕 재사용.
+- **캡처 도로는 여전히 적 소유** → 나는 owner-게이트(`CivilianBFS.IsPassable`: `cell.OwnerLocalId==ownerid`)라
+  **못 씀** → 내 도로는 따로 깐다.
+- **관통 도로 유지** — 내 땅 위지만 아직 (적 땅의) 살아있는 적 건물로 이어진 도로는 **남긴다**(논리 일관, 자동삭제 안 함).
+- **땅 주인 불도저(보조)** — 내 영토 안 도로는 수동 철거 가능(`RemoveRoadCommand` `Forced=1`, 게이트="셀이 내 팀 영토").
+  관통 도로 등 룰상 남는 것을 직접 정리하는 escape hatch. 전투 아님(토목) → 룰 OK.
+
+### 경합지(-2, 소유자 없음) — 캡처와 동일 + 두 가지 차이
+- 동일: 자동 파괴 없음 / 기존 구조물 원소유자 것 / 전투+연결성으로만 제거.
+- 차이 ①: **신규 배치는 누구도 불가**(이미 -2 락).
+- 차이 ②: **불도저 없음**(소유자가 없어 철거 주체 없음) → 전투+연결성 경로만.
+- **경합 중 기존 구조물은 그대로 작동(option a)** — 일시상태(1Hz 깜빡임)에 기능을 묶지 않음(무-churn).
+- 경합지는 **임시 보류 상태** — 승자 확정되면 캡처 영토로 전환되어 캡처 룰(불도저 등) 인계.
+  전이 시점에 아무것도 파괴 안 하므로 깜빡여도 churn 없음.
+
+### 구현 진행 (2026-06-30)
+- ✅ **[A] 건물 전투 타겟화** — `SpawnSystem`의 HasFootprint 건물에 `CombatTargetable(Building)`+`CombatHealth`
+  (균일 기본 500, 임시)+`CombatDestroyOnDeath`+`TeamInfoData`(owner 팀) 부착 → 유닛이 적 건물을 공격·파괴 가능.
+  `CombatTargetBounds`는 생략(없으면 `ResolveAimPosition`이 transform 위치로 폴백, 가드됨). TODO: 체력 per-building이면 BuildingAuthoring 베이킹.
+- ✅ **[B] 전투 사망 그리드 정리** — [BuildingDeathCleanupSystem.cs](Assets/_game/scripts/RunTime/Systems/BuildingDeathCleanupSystem.cs):
+  `CombatDamageApplySystem`→이 시스템→`CombatDeathSystem` 순서. `CombatDeadTag`+`BuildingFootprint`인 건물의
+  footprint를 OccupancyLayer/GridMap에서 제거(땅 회수) + StampDirtyEvent. destroy는 CombatDeathSystem이.
+- ✅ **건물 전투 통합 보강(2026-06-30, 테스트로 데미지 확인됨)**:
+  - **타겟 픽킹** — 테스트 컨트롤러가 건물을 우클릭 지정 못 하던 문제: `GetCombatTargetWorldPickRadius`에
+    `BuildingFootprint` 케이스 추가(반-대각선 반경, cellSize는 GridSettings 조회). [UnitSelectionTestController.cs](Assets/_game/scripts/Unit/auth/UnitSelectionTestController.cs)
+  - **footprint-인지 사거리** — 건물 transform이 footprint 중심이라 큰 건물은 가장자리에 붙어도 '중심까지' 거리가
+    사거리 밖→발사 못 하고 +x,+z 사분면 편향까지 발생. `CombatWeaponUtility.NearestTargetPoint`(건물=AABB 최근접 표면점)
+    신규, **engagement(접근)·ready-state(OutOfRange)** 두 잡이 표면 거리 사용(BuildingFootprint 룩업+CellSize 배선).
+    → 사방 어디서든 인접 시 발사·데미지. 유닛-유닛은 불변(비건물엔 중심 반환). [CombatWeaponBakingSystem.cs](Assets/_game/scripts/Unit/System/CombatWeaponBakingSystem.cs)
+  - **기존 버그 수정** — `CombatEngagementDecisionSystem`의 `Blocked` NativeArray가 LOS 그리드 없을 때 미할당(default)인 채
+    잡 스케줄 → 예외. 더미 1칸 할당으로 해소(전투를 처음 돌리며 노출됨, 제 로직 결함 아님).
+  - ⬜ 남음: **자동 획득(idle auto-engage)·터릿 셋업 무기**의 거리 검사는 아직 중심 기준 → 같은 방식 확장 필요(수동 공격엔 무관).
+- ⬜ **[C] 도로 연결성 스윕** — `BuildingDestroyedEvent{owner}` 신규(BuildingDeathCleanupSystem·RazeSystem 공통 발행)
+  → 스윕 시스템: 생존 적 건물 footprint-인접 도로에서 flood → **캡처/경합지 안의** 미도달 적 도로 Forced 제거.
+  (stateless 재계산, footprint-인접 앵커. TeamTable로 "셀팀≠도로owner팀" 스코프.) ← **다음 세션 우선**
+- ⬜ **[D] 땅 주인 불도저 게이트** — `RoadSystem` 철거 게이트에 "셀이 내 팀 영토면 Forced 허용" 추가.
+- ✅ **HP바(테스트용)** — [HealthBarRenderSystem.cs](Assets/_game/scripts/RunTime/Systems/HealthBarRenderSystem.cs):
+  CombatHealth 가진 모든 엔티티 위 빌보드 바(빨강→노랑→초록), DrawMesh 투명 큐(UI 아래). `Camera.main` 필요.
+  상시 표시 → 클러스터 시 'frac<1만'/'선택만'으로 좁힐 수 있음.
+- ⚠ 컴파일/동작 검증은 에디터에서. [A]로 **모든 footprint 건물이 전투 타겟**이 됨(베이스 포함) — 필요 시 후속 특수처리.
+
+---
+
 ## 🟢 영역/구획 개편 — 덩이 1+2 (2026-06-29)
 > 용어: **영역(territory)**=인구로 점유한 셀 / **구획(parcel)**=도로로 갇힌 빈 구역.
 > 결정: C1 골목분할 / D1 flood 파생 / 혼합 plot / capture는 파괴 대신 표시(타팀 구조물 아이콘+후속효과는 나중) /
@@ -19,7 +74,12 @@
     차지, 나머지 **중립**. **동률→K=0(전부 중립)**. 3+ 경합은 2등이 세져 K↓로 자연 반영(연합 가정 없음).
   - 입력: [TerritoryComponents.cs](Assets/_game/scripts/RunTime/Components/TerritoryComponents.cs)에
     `PlayerInfluenceConfig`+`PlayerInfluenceElement{Influence,Team}` 버퍼(인덱스=LocalId). Test.cs가 매 프레임 채움.
-  - ⚠ 게이트(`InEnemyTerritory`)는 셀값(팀)을 플레이어 owner와 비교 → **team=localId 기본에서만 정확**(동맹 게이트 후속).
+  - ✅ **동맹 게이트(team-aware) 완료(2026-06-30)** — 게이트가 셀값(팀)을 LocalId가 아니라 **내 팀**과 비교.
+    신규 `TeamTable` 싱글톤(LocalId→팀, [TeamTableSystem.cs](Assets/_game/scripts/RunTime/Systems/TeamTableSystem.cs)이
+    `PlayerInfluenceElement.Team` 버퍼에서 매 프레임 미러링, 없으면 Identity). `TerritoryOps.InEnemyTerritory`/
+    `FootprintInEnemyTerritory`가 `in TeamTable`을 받아 `셀 팀 ≠ teams.Get(myOwner)` 판정 → **동맹(같은 팀)·내 영역
+    오판 해소**(예전엔 team≠localId면 자기 땅도 적 영역으로 막힘). 게이트 5곳(건물/도로 배치·컨트롤러·AI×2) 전부 배선.
+    team=localId 기본에선 동작 불변.
 - ✅ **#1 도로 베이스 연결 필수** — `RoadBuildController`에 `FilterConnectedToNetwork`/`ComputeAttached` 재도입.
   유저 드래그는 **내 기존 도로망(=베이스에서 이어짐)에 연결된 구간만** 발행, 떠다니는 도로 차단. 프리뷰도 미연결=회색.
   (이전 'free 배치' 폐기 — 재반영. AI/라우터는 원래 기존망에서 출발해 무영향.)
@@ -35,6 +95,18 @@
   시각: **경합지=흰색 테두리**(팀=팀색, 중립=테두리 없음 — 셋 구분). 동률/박빙 경합지도 -2로 잠김.
 - ✅ **영역 아웃라인 상시** — [TerritoryOutlineRenderSystem.cs](Assets/_game/scripts/RunTime/Systems/TerritoryOutlineRenderSystem.cs):
   소유자 다른 이웃과 맞닿은 **경계 변만** 소유팀 색 GL 렌더(상시). F7 fill(`TerritoryDebugSystem`)은 별개 유지.
+  - ✅ **경합지 강조(2026-06-30)** — 경합지 경계 = **폭 있는 quad 띠**(셀 10%, 상시) + **F8 토글 사선 해치**
+    (대각선 1줄→45° 줄무늬, 기본 OFF). 팀 경계는 얇은 라인 유지(셋 구분 보존).
+    `GL.LineWidth`는 플랫폼별 무시라 띠는 직접 quad strip, 해치는 GL 라인.
+    · F8 토글은 `TerritoryOutlineRenderSystem`이 소유(이전의 `TerritoryDebugSystem` 마젠타 전체채움은 폐기 — 색 대신 사선).
+    · **렌더 경로 교체: GL 즉시모드(endCameraRendering) → 동적 Mesh + `Graphics.DrawMesh`(renderQueue=Transparent).**
+      원인: Unity 6 URP(17, Deferred+RenderGraph)는 Screen Space Overlay UI를 파이프라인 내부 패스로 그린 뒤
+      endCameraRendering 콜백이 실행 → 거기서 GL을 그리면 **UI 위로 올라옴**(ZTest로 못 고침, UI는 깊이 없음).
+      투명 큐 메시는 투명 패스(=UI 패스보다 앞)에서 그려져 **Overlay UI가 위에** 오고, **ZTest=LessEqual**이라
+      **유닛/건물이 앞이면 가린다**. (라인=MeshTopology.Lines, 경합지 띠=삼각형 strip, `Hidden/Internal-Colored` 머티리얼.)
+      `TerritoryDebugSystem`(F7 영역 채움)·`RoadBuildPreviewRenderSystem`(도로 프리뷰)도 동일 경로로 이행(2026-06-30)
+      → 세 GL 오버레이 전부 DrawMesh 투명 큐로 통일, UI 아래. (도로 프리뷰는 빌드 툴이라 ZTest=Always 유지=항상 보임,
+      나머지는 LessEqual=유닛이 가림.) ⚠ 남은 GL-endCameraRendering 오버레이 없음.
 - ✅ **A: 확장 바깥-전용** — `GrowOneBlock` 후보 내부가 enclosed 포켓이면 거부(`InteriorExterior`) → 비워진 8×8 안 4×4 링 중첩 안 함.
 
 ### 덩이 2 — 구획 격자패킹 + 골목 (DevelopParcels)
@@ -43,7 +115,8 @@
   격자 정렬이라 **4×4에 2×2 4개 정확히**(첫 도로옆 greedy의 3개 낭비 해결). 입구 도로닿음 필수, claimed 중복방지.
 - ✅ **C1 골목 분할** — 구획 최소 변 ≥6이면 중앙 직선 골목(1줄 도로) 발행 → 다음 틱 분할 → 깊은 셀이 도로에 닿아 채워짐(8×8 안쪽).
 - ✅ OnUpdate: `DevelopParcels`(구획 채움)가 1순위, 개발할 갇힌 구획 없으면 `GrowOneBlock` 바깥 확장 1회.
-- ⬜ 정리: `TryFillBesideRoad`(구 first-fit 채우기)는 대체돼 **미사용**(데드코드, 추후 삭제).
+- ✅ 정리: `TryFillBesideRoad`(구 first-fit 채우기) 데드코드 삭제(2026-06-30). 격자 패킹(`DevelopParcels`)으로 대체됨.
+  `FootprintTouchesTeamRoad`/`IsTeamRoad`는 `DevelopParcels`·도로 링에서 여전히 쓰여 유지.
 - ⬜ 한계/튜닝: C1 트리거 `min변≥6` 휴리스틱 / 골목-링 BFS연결은 그린모델 OR 의존(입구엔 충분, 시민보행 추후검증) /
   혼합 패킹 stock→farm 2패스(최적 빈패킹 아님). 타팀 구조물 아이콘+후속효과는 나중.
 

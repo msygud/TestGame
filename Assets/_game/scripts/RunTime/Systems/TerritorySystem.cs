@@ -22,7 +22,8 @@ namespace CitySim
     //
     //   결과 → GridLayers.TerritoryLayer(int2 → 팀 id, 없으면 중립).
     //   ※ capture(파괴) 없음. 영향력 스칼라는 추후 행복도/팩션으로 대체(여기선 입력 placeholder).
-    //   ⚠ TerritoryLayer가 '팀 id'라 빌드 게이트는 team=localId 기본에서만 정확(동맹 게이트 후속).
+    //   빌드 게이트는 TeamTable(LocalId→팀, TeamTableSystem이 유지)로 셀의 '팀 id'를 풀어
+    //   '셀 팀 ≠ 내 팀'을 비교 → 동맹(team≠localId)·내 영역에서도 정확(TerritoryOps).
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct TerritorySystem : ISystem

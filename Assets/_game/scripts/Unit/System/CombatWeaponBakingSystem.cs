@@ -739,6 +739,26 @@ namespace Game.Unit
             delta.y = 0f;
             return math.lengthsq(delta);
         }
+
+        // 타겟이 건물이면 footprint AABB의 '가장 가까운 점'(표면), 아니면 타겟 중심을 반환.
+        //   건물은 transform이 footprint 중심이라, 큰 건물은 가장자리에 붙어도 중심까지 거리가
+        //   사거리를 넘어 발사 못 함 → 표면 기준으로 바꿔 사방 어디서든 인접 시 사거리 충족.
+        //   (회전은 RotSteps 홀짝으로 x/y 교환만 — EntranceOps 의존/Burst 위험 회피.)
+        public static float3 NearestTargetPoint(
+            float3 attacker, float3 targetCenter, Entity target,
+            in ComponentLookup<CitySim.BuildingFootprint> buildingFootprints, float cellSize)
+        {
+            if (cellSize > 0f && buildingFootprints.HasComponent(target))
+            {
+                var  bf  = buildingFootprints[target];
+                int2 eff = ((bf.RotSteps & 1) == 0) ? bf.Size : new int2(bf.Size.y, bf.Size.x);
+                float2 lo = (float2)bf.Origin * cellSize;
+                float2 hi = (float2)(bf.Origin + eff) * cellSize;
+                float2 cp = math.clamp(new float2(attacker.x, attacker.z), lo, hi);
+                return new float3(cp.x, targetCenter.y, cp.y);
+            }
+            return targetCenter;
+        }
     }
 
     [BurstCompile]
@@ -970,9 +990,12 @@ namespace Game.Unit
                 ? obstacleQuery.ToComponentDataArray<ObstacleFootprint>(Allocator.TempJob)
                 : default;
             bool hasLineOfSightGrid = hasGrid && obstacleCount > 0 && grid.Size.x * grid.Size.y > 0;
+            // LOS 그리드 미사용 시에도 잡 스케줄 안전성을 위해 더미(1칸) 할당.
+            //   잡은 HasLineOfSightGrid=false면 Blocked를 읽지 않지만, Job 안전검사는
+            //   schedule 시점에 모든 NativeArray가 '구성된' 상태여야 한다(default 금지).
             var blocked = hasLineOfSightGrid
                 ? new NativeArray<byte>(grid.Size.x * grid.Size.y, Allocator.TempJob)
-                : default;
+                : new NativeArray<byte>(1, Allocator.TempJob);
             if (hasLineOfSightGrid)
                 UnitPathfinding.BuildBlockedGrid(grid, 0f, obstacleTransforms, obstacleFootprints, blocked);
             if (obstacleCount > 0)
@@ -1009,6 +1032,9 @@ namespace Game.Unit
                 weaponEntities.Dispose();
             }
 
+            float cellSize = SystemAPI.TryGetSingleton<CitySim.GridSettings>(out var gridSettings)
+                ? gridSettings.CellSize : 0f;
+
             var decisionJob = new CombatEngagementDecisionJob
             {
                 Targetables = targetables,
@@ -1017,14 +1043,15 @@ namespace Game.Unit
                 Transforms = transforms,
                 WeaponRanges = weaponRanges,
                 Blocked = blocked,
+                BuildingFootprints = SystemAPI.GetComponentLookup<CitySim.BuildingFootprint>(true),
+                CellSize = cellSize,
                 Grid = grid,
                 HasLineOfSightGrid = hasLineOfSightGrid,
             };
 
             JobHandle decisionHandle = decisionJob.ScheduleParallel(state.Dependency);
             decisionHandle = weaponRanges.Dispose(decisionHandle);
-            if (hasLineOfSightGrid)
-                decisionHandle = blocked.Dispose(decisionHandle);
+            decisionHandle = blocked.Dispose(decisionHandle);   // 항상 할당하므로 항상 dispose
 
             state.Dependency = decisionHandle;
         }
@@ -1041,6 +1068,8 @@ namespace Game.Unit
         [ReadOnly] public ComponentLookup<LocalTransform> Transforms;
         [ReadOnly] public NativeParallelHashMap<Entity, CombatWeaponRangeSummary> WeaponRanges;
         [ReadOnly] public NativeArray<byte> Blocked;
+        [ReadOnly] public ComponentLookup<CitySim.BuildingFootprint> BuildingFootprints;
+        public float CellSize;
         public UnitNavigationGrid Grid;
         public bool HasLineOfSightGrid;
 
@@ -1074,7 +1103,9 @@ namespace Game.Unit
                 return;
 
             float3 attackerPosition = transform.Position;
-            float3 targetPosition = Transforms[attackTarget.Target].Position;
+            // 건물은 footprint 표면까지로 거리/접근 측정(중심까지면 큰 건물 가장자리에 붙어도 사거리 밖).
+            float3 targetPosition = CombatWeaponUtility.NearestTargetPoint(
+                attackerPosition, Transforms[attackTarget.Target].Position, attackTarget.Target, BuildingFootprints, CellSize);
             float distanceSq = CombatWeaponUtility.HorizontalDistanceSq(attackerPosition, targetPosition);
             bool hasLineOfSight = !HasLineOfSightGrid ||
                                   UnitPathfinding.HasGridLineOfSight(Grid, attackerPosition, targetPosition, Blocked, true);
@@ -1649,6 +1680,8 @@ namespace Game.Unit
                 StoppedRequired = SystemAPI.GetComponentLookup<RequiresStoppedToFire>(true),
                 SetupRequired = SystemAPI.GetComponentLookup<RequiresWeaponSetup>(true),
                 LineOfSightRequired = SystemAPI.GetComponentLookup<RequiresLineOfSight>(true),
+                BuildingFootprints = SystemAPI.GetComponentLookup<CitySim.BuildingFootprint>(true),
+                CellSize = SystemAPI.TryGetSingleton<CitySim.GridSettings>(out var gridSettings) ? gridSettings.CellSize : 0f,
             };
             state.Dependency = job.ScheduleParallel(state.Dependency);
         }
@@ -1673,6 +1706,8 @@ namespace Game.Unit
         [ReadOnly] public ComponentLookup<RequiresStoppedToFire> StoppedRequired;
         [ReadOnly] public ComponentLookup<RequiresWeaponSetup> SetupRequired;
         [ReadOnly] public ComponentLookup<RequiresLineOfSight> LineOfSightRequired;
+        [ReadOnly] public ComponentLookup<CitySim.BuildingFootprint> BuildingFootprints;
+        public float CellSize;
 
         public void Execute(
             Entity weaponEntity,
@@ -1717,7 +1752,9 @@ namespace Game.Unit
 
             LocalTransform ownerTransform = Transforms[ownerEntity];
             float3 attackerPosition = ownerTransform.Position;
-            float3 targetPosition = Transforms[attackTarget.Target].Position;
+            // 건물은 footprint 표면까지로 거리/조준(중심까지면 큰 건물 가장자리에 붙어도 사거리 밖).
+            float3 targetPosition = CombatWeaponUtility.NearestTargetPoint(
+                attackerPosition, Transforms[attackTarget.Target].Position, attackTarget.Target, BuildingFootprints, CellSize);
             float3 targetDirection = CombatWeaponUtility.GetHorizontalDirection(attackerPosition, targetPosition);
             float3 forward = math.normalizesafe(
                 math.mul(ownerTransform.Rotation, new float3(0f, 0f, 1f)),

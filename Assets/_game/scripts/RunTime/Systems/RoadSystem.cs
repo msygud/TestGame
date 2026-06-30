@@ -31,6 +31,9 @@ namespace CitySim
             var em = state.EntityManager;
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
+            // 영역 게이트는 TerritoryLayer의 '팀 id'와 '내 팀'을 비교 → LocalId→팀 매핑 필요.
+            if (!SystemAPI.TryGetSingleton<TeamTable>(out var teams)) teams = TeamTable.Identity;
+
             // 1) 프리뷰
             foreach (var (cmd, cmdEntity) in
                      SystemAPI.Query<RefRO<PreviewRoadCommand>>().WithEntityAccess())
@@ -84,7 +87,7 @@ namespace CitySim
                         blocked = true;
 
                     // 영역 거부 — 다른 팀 영역·경합지엔 도로 못 깐다 (Territory 게이트, 설계 점5).
-                    if (!blocked && (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, ownerLocalId)
+                    if (!blocked && (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, ownerLocalId, in teams)
                                      || TerritoryOps.IsContested(in layers.TerritoryLayer, c)))
                         blocked = true;
 

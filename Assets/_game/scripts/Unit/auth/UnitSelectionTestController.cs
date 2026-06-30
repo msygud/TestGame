@@ -544,7 +544,25 @@ namespace Game.Unit
             if (_entityManager.HasComponent<ObstacleFootprint>(entity))
                 radius = math.max(radius, GetEffectiveObstacleRadius(_entityManager.GetComponentData<ObstacleFootprint>(entity)));
 
+            // 건물: transform은 footprint 중심이라 기본 반경으론 큰 건물 몸통을 클릭해도 못 잡힌다.
+            //   footprint 반-대각선을 픽 반경으로 → 건물 위/가장자리 클릭으로 공격 지정 가능.
+            if (_entityManager.HasComponent<CitySim.BuildingFootprint>(entity))
+            {
+                var  bf  = _entityManager.GetComponentData<CitySim.BuildingFootprint>(entity);
+                int2 eff = CitySim.EntranceOps.RotateSize(bf.Size, bf.RotSteps);
+                radius   = math.max(radius, 0.5f * GetCellSize() * math.length((float2)eff));
+            }
+
             return radius;
+        }
+
+        // GridSettings.CellSize (없으면 1). 픽킹은 우클릭 시에만 호출되므로 매번 조회해도 무방.
+        float GetCellSize()
+        {
+            var q = _entityManager.CreateEntityQuery(ComponentType.ReadOnly<CitySim.GridSettings>());
+            float cs = q.IsEmpty ? 1f : q.GetSingleton<CitySim.GridSettings>().CellSize;
+            q.Dispose();
+            return cs;
         }
 
         void SelectUnitsInScreenRect(Rect rect, bool additive)

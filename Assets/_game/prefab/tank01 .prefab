@@ -310,7 +310,7 @@ MonoBehaviour:
   Range: 20
   StartsEnabled: 1
   UnlockGroupId: 1
-  Damage: 2
+  Damage: 10
   Cooldown: 1
   TargetMask: 5
   RequiresLineOfSight: 1
@@ -346,7 +346,7 @@ MonoBehaviour:
   Range: 20
   StartsEnabled: 1
   UnlockGroupId: 0
-  Damage: 5
+  Damage: 20
   Cooldown: 3
   TargetMask: 5
   RequiresLineOfSight: 1
@@ -402,6 +402,7 @@ MonoBehaviour:
   NeutralTeams: 0
   IsPlayerTeam: 0
   IsPlayer: 0
+  CommandGroupId: 0
   TargetType: 1
   MaxHealth: 100
   CombatBoundsSize: {x: 2, y: 2, z: 3}
