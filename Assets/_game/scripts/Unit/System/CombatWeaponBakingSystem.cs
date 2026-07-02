@@ -1311,6 +1311,8 @@ namespace Game.Unit
                 Speeds = SystemAPI.GetComponentLookup<UnitMoveSpeed>(true),
                 CommandStates = SystemAPI.GetComponentLookup<UnitCommandState>(true),
                 MoveTargets = SystemAPI.GetComponentLookup<UnitMoveTarget>(true),
+                BuildingFootprints = SystemAPI.GetComponentLookup<CitySim.BuildingFootprint>(true),
+                CellSize = SystemAPI.TryGetSingleton<CitySim.GridSettings>(out var gridSettings) ? gridSettings.CellSize : 0f,
             };
             state.Dependency = job.ScheduleParallel(state.Dependency);
         }
@@ -1330,6 +1332,8 @@ namespace Game.Unit
         [ReadOnly] public ComponentLookup<UnitMoveSpeed> Speeds;
         [ReadOnly] public ComponentLookup<UnitCommandState> CommandStates;
         [ReadOnly] public ComponentLookup<UnitMoveTarget> MoveTargets;
+        [ReadOnly] public ComponentLookup<CitySim.BuildingFootprint> BuildingFootprints;
+        public float CellSize;
 
         public void Execute(in CombatWeaponOwner owner, in CombatWeapon weapon)
         {
@@ -1356,10 +1360,13 @@ namespace Game.Unit
 
             LocalTransform ownerTransform = Transforms[ownerEntity];
             float3 attackerPosition = ownerTransform.Position;
-            float3 targetPosition = Transforms[attackTarget.Target].Position;
+            // 건물은 footprint 표면까지로 거리/조준(중심까지면 큰 건물 가장자리에서 조준 안 됨).
+            float3 targetPosition = CombatWeaponUtility.NearestTargetPoint(
+                attackerPosition, Transforms[attackTarget.Target].Position, attackTarget.Target, BuildingFootprints, CellSize);
             float distanceSq = CombatWeaponUtility.HorizontalDistanceSq(attackerPosition, targetPosition);
             float range = math.max(0f, weapon.Range);
-            if (distanceSq > (range + CombatWeaponUtility.RangeTolerance) * (range + CombatWeaponUtility.RangeTolerance))
+            float aimRange = range + CombatWeaponUtility.RangeTolerance * 3f;   // 발사 게이트와 동일 여유
+            if (distanceSq > aimRange * aimRange)
                 return;
 
             float3 targetDirection = CombatWeaponUtility.GetHorizontalDirection(attackerPosition, targetPosition);
@@ -1531,6 +1538,8 @@ namespace Game.Unit
                 BodyForwardWeapons = SystemAPI.GetComponentLookup<BodyForwardWeapon>(true),
                 FireArcs = SystemAPI.GetComponentLookup<CombatWeaponFireArc>(true),
                 StoppedRequired = SystemAPI.GetComponentLookup<RequiresStoppedToFire>(true),
+                BuildingFootprints = SystemAPI.GetComponentLookup<CitySim.BuildingFootprint>(true),
+                CellSize = SystemAPI.TryGetSingleton<CitySim.GridSettings>(out var gridSettings) ? gridSettings.CellSize : 0f,
             };
             state.Dependency = job.ScheduleParallel(state.Dependency);
         }
@@ -1550,6 +1559,8 @@ namespace Game.Unit
         [ReadOnly] public ComponentLookup<BodyForwardWeapon> BodyForwardWeapons;
         [ReadOnly] public ComponentLookup<CombatWeaponFireArc> FireArcs;
         [ReadOnly] public ComponentLookup<RequiresStoppedToFire> StoppedRequired;
+        [ReadOnly] public ComponentLookup<CitySim.BuildingFootprint> BuildingFootprints;
+        public float CellSize;
 
         public void Execute(
             Entity weaponEntity,
@@ -1577,7 +1588,9 @@ namespace Game.Unit
                 {
                     LocalTransform ownerTransform = Transforms[ownerEntity];
                     float3 attackerPosition = ownerTransform.Position;
-                    float3 targetPosition = Transforms[attackTarget.Target].Position;
+                    // 건물은 footprint 표면까지로 거리(중심까지면 큰 건물에서 '공격 준비'가 안 끝남).
+                    float3 targetPosition = CombatWeaponUtility.NearestTargetPoint(
+                        attackerPosition, Transforms[attackTarget.Target].Position, attackTarget.Target, BuildingFootprints, CellSize);
                     float3 targetDirection = CombatWeaponUtility.GetHorizontalDirection(attackerPosition, targetPosition);
                     float3 forward = math.normalizesafe(
                         math.mul(ownerTransform.Rotation, new float3(0f, 0f, 1f)),
@@ -1775,8 +1788,11 @@ namespace Game.Unit
             if (StoppedRequired.HasComponent(weaponEntity) && isMoving != 0)
                 blockedReasons |= CombatWeaponBlockReason.NeedStop;
 
+            // 접근은 유닛을 사거리 경계(range+tol)에 세운다. 발사 게이트는 여유를 더 줘 경계·프레임
+            //   순서 지터에도 확실히 발사(경계에 딱 맞추면 미세하게 밖일 때 'Range'로 막힘).
             float range = math.max(0f, weapon.Range);
-            if (distanceSq > (range + CombatWeaponUtility.RangeTolerance) * (range + CombatWeaponUtility.RangeTolerance))
+            float fireRange = range + CombatWeaponUtility.RangeTolerance * 3f;
+            if (distanceSq > fireRange * fireRange)
                 blockedReasons |= CombatWeaponBlockReason.OutOfRange;
 
             if (BodyForwardWeapons.HasComponent(weaponEntity) &&

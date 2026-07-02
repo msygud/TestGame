@@ -74,6 +74,11 @@ namespace CitySim
 
             var boundsLookup = SystemAPI.GetComponentLookup<CombatTargetBounds>(true);
 
+            // 파괴 예정(CaptureDoom) 카운트다운 게이지용.
+            var doomLookup = SystemAPI.GetComponentLookup<CaptureDoom>(true);
+            double gameNow = SystemAPI.TryGetSingleton<GameClock>(out var clock)
+                ? clock.TotalSeconds : 0.0;
+
             float halfW = BarWidth  * 0.5f;
             float halfH = BarHeight * 0.5f;
 
@@ -102,6 +107,31 @@ namespace CitySim
                     float3 fr = l + right * (BarWidth * frac);
                     Color  fc = HealthColor(frac);
                     AddQuad(l - up * halfH, l + up * halfH, fr + up * halfH, fr - up * halfH, fc);
+                }
+
+                // 파괴 예정 카운트다운 게이지 — HP바 바로 아래 얇은 바(남은 dwell 비율).
+                //   주황(여유)→빨강(임박). CaptureDoom 사면 시 자동 소멸.
+                if (doomLookup.HasComponent(entity))
+                {
+                    var doom = doomLookup[entity];
+                    float dwell    = (float)math.max(0.01, doom.DwellSeconds);
+                    float remain01 = math.saturate((float)((doom.DeadlineSeconds - gameNow) / dwell));
+
+                    float3 gc = center - up * (BarHeight * 1.4f);   // HP바 아래
+                    float3 gl = gc - right * halfW;
+                    float3 gr = gc + right * halfW;
+                    float  gh = BarHeight * 0.45f * 0.5f;           // 더 얇게
+
+                    AddQuad(gl - up * gh, gl + up * gh, gr + up * gh, gr - up * gh, BgColor);
+                    if (remain01 > 0f)
+                    {
+                        float3 ge = gl + right * (BarWidth * remain01);
+                        Color  gcol = Color.Lerp(
+                            new Color(1.00f, 0.12f, 0.08f, 0.95f),   // 임박 = 빨강
+                            new Color(1.00f, 0.60f, 0.10f, 0.95f),   // 여유 = 주황
+                            remain01);
+                        AddQuad(gl - up * gh, gl + up * gh, ge + up * gh, ge - up * gh, gcol);
+                    }
                 }
             }
 

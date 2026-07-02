@@ -17,8 +17,7 @@ namespace CitySim
     //
     //  순서: CombatDamageApplySystem(CombatDeadTag 부착) → 이 시스템 → CombatDeathSystem(destroy).
     //        같은 프레임 안에서 1회 처리(건물엔 CombatDestroyOnDeath가 붙어 다음 프레임엔 사라짐).
-    //
-    //  TODO([C]): 여기서 BuildingDestroyedEvent를 발행해 도로 연결성 스윕을 트리거할 예정.
+    //  (도로 정리는 TerritoryCaptureSystem의 영토 전환 파괴 + AiRoadJanitorSystem이 담당.)
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(CombatDamageApplySystem))]

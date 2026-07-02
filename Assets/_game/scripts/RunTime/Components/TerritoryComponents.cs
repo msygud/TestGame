@@ -81,6 +81,55 @@ namespace CitySim
         };
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    //  영토 전환 파괴 (capture = 파괴) — TerritoryCaptureSystem
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// 영토 전환 파괴 밸런스(싱글톤). 없으면 Default. 전부 런타임 커스터마이즈 가능
+    /// (Test.cs 등에서 싱글톤에 push — TerritoryConfig와 동일 패턴).
+    /// </summary>
+    public struct TerritoryCaptureConfig : IComponentData
+    {
+        /// <summary>타팀 영토에 놓인 구조물이 파괴되기까지의 유예(게임 시간, 시간 단위).
+        /// 짧은 밀당(핑퐁)은 이 안에 되돌아오면 파괴 없음.</summary>
+        public float DwellGameHours;
+
+        /// <summary>1 = 건물은 footprint '전체'가 타팀 영토일 때만 파괴 대상(경계 걸침 보호).
+        /// 0 = 한 셀이라도 넘어가면 대상.</summary>
+        public byte RequireFullFootprint;
+
+        /// <summary>패스당 파괴 상한(대량 함락 프레임 스파이크 방지 — 넘치면 다음 패스로 이월).</summary>
+        public int MaxDestroysPerPass;
+
+        /// <summary>AI 확장이 적 영토에서 유지할 완충 거리(셀). 0 = 완충 없음.
+        /// 국경 개발 churn(짓자마자 잠식→파괴 반복) 방지.</summary>
+        public int AiEnemyBufferCells;
+
+        public static TerritoryCaptureConfig Default => new TerritoryCaptureConfig
+        {
+            DwellGameHours      = 1f,    // 게임 1시간 (기본 SecondsPerDay=1200 기준 현실 50초)
+            RequireFullFootprint = 1,
+            MaxDestroysPerPass  = 32,
+            AiEnemyBufferCells  = 4,
+        };
+    }
+
+    /// <summary>
+    /// 파괴 예정 마커 — 타팀 영토에 놓인 구조물(건물/도로 엔티티)에 부착.
+    /// DeadlineSeconds(GameClock.TotalSeconds 기준)가 지나면 TerritoryCaptureSystem이 파괴.
+    /// 영토가 되돌아오면 제거(사면). 경고 비주얼은 이 컴포넌트를 읽어 남은 시간을 표현.
+    /// </summary>
+    public struct CaptureDoom : IComponentData
+    {
+        public double DeadlineSeconds;
+        /// <summary>부착 시점의 dwell 총량(게임초) — 경고 비주얼의 남은 비율 계산용.</summary>
+        public double DwellSeconds;
+    }
+
+    /// <summary>영토 전환 파괴 면제(베이스/HQ 등 — 전투로만 파괴 가능). 스폰 시 부착.</summary>
+    public struct CaptureExempt : IComponentData { }
+
     /// <summary>
     /// 영역 조회 순수 헬퍼(빌드 게이트 공용 — 건물/도로/AI). TerritoryLayer만 읽는다.
     /// TerritoryLayer는 '팀 id'를 담으므로 게이트는 TeamTable로 LocalId→팀을 풀어

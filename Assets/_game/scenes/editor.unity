@@ -1653,7 +1653,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1134258754}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 81ea82a9cd2d4b84a96776d8e733a2c9, type: 3}
   m_Name: 
@@ -1687,14 +1687,14 @@ MonoBehaviour:
   RingSegments: 64
   CornerLengthRatio: 0.28
   CornerWidthRatio: 0.05
-  ShowDebugHud: 0
-  LogSelectionEvents: 0
-  ShowUnitNames: 0
-  UnitNamesSelectedOnly: 0
-  ShowMovementDebug: 0
-  ShowCombatDebug: 0
-  DebugSelectedOnly: 0
-  CombatDebugSelectedOnly: 0
+  ShowDebugHud: 1
+  LogSelectionEvents: 1
+  ShowUnitNames: 1
+  UnitNamesSelectedOnly: 1
+  ShowMovementDebug: 1
+  ShowCombatDebug: 1
+  DebugSelectedOnly: 1
+  CombatDebugSelectedOnly: 1
   ShowObstacleDebugBoxes: 1
   ShowObstacleDebugRadius: 1
   DebugRadiusColor: {r: 1, g: 0.85, b: 0.15, a: 0.85}
@@ -3303,7 +3303,7 @@ MonoBehaviour:
     IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0
-  - IsOpen: 1
+  - IsOpen: 0
     TeamID: 2
     IsPlayer: 0
     Cell: {x: 0, y: 0}
@@ -3332,7 +3332,7 @@ MonoBehaviour:
   PopPerCell: 2
   TestResidenceCapacity: 10
   PlayerInfluence:
-  - 15
+  - 10
   - 10
   - 10
   - 10

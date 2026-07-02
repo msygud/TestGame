@@ -174,6 +174,7 @@ namespace CitySim
                         OwnerLocalId               = ownerLocalId,
                         FactionId                  = slot.FactionId,
                         RequireRoadAccess          = true,
+                        CaptureExempt              = true,   // 베이스는 전환 파괴 면제(전투로만)
                     });
 
                     requestCount++;

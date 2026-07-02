@@ -57,6 +57,9 @@ namespace CitySim
         /// (EntranceOps가 "입구 없음 → 제약 없음"으로 처리).
         /// </summary>
         public bool  RequireRoadAccess;
+
+        /// <summary>영토 전환 파괴 면제(베이스/HQ 등 — 전투로만 파괴). SpawnRequest로 전달.</summary>
+        public bool  CaptureExempt;
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -343,6 +346,8 @@ namespace CitySim
                 IsSupplier      = meta.IsSupplier,
                 Relief          = meta.Relief,
                 SupplyMaxDist   = meta.SupplyMaxDist,
+
+                CaptureExempt   = req.CaptureExempt,
             });
             ecb.AddComponent<MapLoaded>(e);
         }

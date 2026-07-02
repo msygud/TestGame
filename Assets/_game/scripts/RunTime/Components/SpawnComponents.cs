@@ -35,6 +35,9 @@ namespace CitySim
         public bool         IsSupplier;
         public NeedType     Relief;
         public int          SupplyMaxDist;   // 0 이하 = 무제한
+
+        /// <summary>영토 전환 파괴 면제(베이스/HQ). SpawnSystem이 CaptureExempt 태그 부착.</summary>
+        public bool         CaptureExempt;
     }
 
     // ══════════════════════════════════════════════════════════════

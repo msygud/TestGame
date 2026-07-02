@@ -274,9 +274,21 @@ namespace CitySim
             {
                 var cell         = cmd.ValueRO.Cell;
                 var forced       = cmd.ValueRO.Forced != 0;
+                var remover      = cmd.ValueRO.OwnerLocalId;
 
-                if (!layers.RoadLayer.TryGetValue(cell, out var hitCell) ||
-                    (!forced && hitCell.OwnerLocalId != cmd.ValueRO.OwnerLocalId))
+                if (!layers.RoadLayer.TryGetValue(cell, out var hitCell))
+                {
+                    ecb.DestroyEntity(cmdEntity);
+                    continue;
+                }
+
+                // 철거 권한: 강제(전투/스윕) / 자기 도로 / '내 팀 영토 위의 도로'.
+                //   마지막이 땅 주인 불도저 — 캡처한 땅에 남은 적 도로를 소유 무관 철거(전투 아님·룰 OK).
+                bool ownRoad  = hitCell.OwnerLocalId == remover;
+                bool onMyLand = layers.TerritoryLayer.IsCreated
+                                && layers.TerritoryLayer.TryGetValue(cell, out int cellTeam)
+                                && cellTeam == teams.Get(remover);
+                if (!forced && !ownRoad && !onMyLand)
                 {
                     ecb.DestroyEntity(cmdEntity);
                     continue;

@@ -101,6 +101,10 @@ namespace CitySim
                     //   타겟 쿼리 요건: CombatTargetable + CombatHealth + TeamInfoData + LocalTransform(스폰 시 부여).
                     //   CombatDestroyOnDeath → 사망 시 CombatDeathSystem이 destroy.
                     //   CombatTargetBounds는 선택(없으면 ResolveAimPosition이 transform 위치로 폴백) → 1차 생략.
+                    // 영토 전환 파괴 면제(베이스/HQ) — TerritoryCaptureSystem이 건너뜀.
+                    if (req.ValueRO.CaptureExempt)
+                        ecb.AddComponent<CaptureExempt>(instance);
+
                     int ownerLid = math.clamp(req.ValueRO.OwnerLocalId, 0, 7);
                     ecb.AddComponent(instance, new CombatTargetable { TargetType = CombatTargetMask.Building });
                     ecb.AddComponent(instance, new CombatHealth { Health = BuildingDefaultHealth, MaxHealth = BuildingDefaultHealth });

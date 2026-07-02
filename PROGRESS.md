@@ -5,32 +5,79 @@
 
 ---
 
-## 🟡 캡처/경합지 구조물(건물·도로) 처리 — 설계 확정 (2026-06-30, 미구현)
-> 결정 사항만 합의. 코드는 아직 없음 → ⬜ 구현 대기.
+> 상태(2026-07-01 세션 종료): **아래 전부 에디터 컴파일 통과.** 동작 확인된 것 — capture=파괴/dwell/경고 비주얼,
+> 건물 전투 파괴(근접), janitor 섬 버그픽스 전 증상. 미확인 — 앵커 베이스-연결 제한, 골목 제거 후 재개발, RoadSpur 자가수리.
 
-**핵심 원칙: 영역 획득/경합 자체로는 아무것도 자동 파괴하지 않는다.** 제거는 오직
-**전투(건물) + 연결성 스윕(도로)** 으로만. 도로는 **직접 타격 불가**(룰) — 건물 파괴의 부수효과로만 사라진다.
+## 🟡 캡처/경합지 구조물 처리 — **설계 개정 v2: capture = 파괴** (2026-06-30/07-01)
+> v1("영역 획득으로 아무것도 자동 파괴 않음 + 연결성 스윕")은 시뮬레이션 결과 **폐기**:
+> 도시는 도로가 하나의 망이라 연결성 제거가 사실상 발동 안 하고, 남은 적 도로는 owner-게이트라
+> 점령자가 못 쓰고 그 위에 못 지음 → AI에게 점령지 = 못 쓰는 땅. → **capture=파괴**로 전환.
 
-### 캡처 영토(내가 소유)
-- **capture ≠ 강제 파괴** — 적 건물/도로는 그대로 유지(즉시 삭제 안 함).
-- **건물** — 전투로만 제거.
-- **도로 = 연결성(reachability) 기준 제거** — 적 도로는 **자기 소유의 살아있는 적 건물에서 도로로 도달
-  가능한 동안만** 유지. 도달 불가가 되면 제거. 적 건물 파괴 시 이벤트 구동으로 한 번 스윕:
-  살아있는 적 건물들에서 적 도로망 flood → 미도달 적 도로셀 ECB 일괄 제거. (개별 진입로 매칭이 아니라
-  연결성이라 **가지째/클러스터째** 사라져 토막·구멍 없음.) 프로젝트의 도로 BFS·연결요소·dirty 스윕 재사용.
-- **캡처 도로는 여전히 적 소유** → 나는 owner-게이트(`CivilianBFS.IsPassable`: `cell.OwnerLocalId==ownerid`)라
-  **못 씀** → 내 도로는 따로 깐다.
-- **관통 도로 유지** — 내 땅 위지만 아직 (적 땅의) 살아있는 적 건물로 이어진 도로는 **남긴다**(논리 일관, 자동삭제 안 함).
-- **땅 주인 불도저(보조)** — 내 영토 안 도로는 수동 철거 가능(`RemoveRoadCommand` `Forced=1`, 게이트="셀이 내 팀 영토").
-  관통 도로 등 룰상 남는 것을 직접 정리하는 escape hatch. 전투 아님(토목) → 룰 OK.
+**v2 룰: 구조물이 '타팀 영토'에 dwell(유예) 이상 놓이면 자동 파괴.** 점령지는 항상 깨끗한 빈 땅 →
+새 주인(AI 포함)이 즉시 정상 개발. 짧은 밀당(핑퐁)은 dwell이 흡수(파괴 없음). 경합지(-2)/중립은 캡처
+아님(파괴 없음). 베이스급은 `CaptureExempt` 면제(전투로만). 무혈 잠식(인구 압박에 의한 평시 파괴)은
+**의도된 룰**로 수용. 밸런스 값은 전부 `TerritoryCaptureConfig` 싱글톤(커스터마이즈).
 
-### 경합지(-2, 소유자 없음) — 캡처와 동일 + 두 가지 차이
-- 동일: 자동 파괴 없음 / 기존 구조물 원소유자 것 / 전투+연결성으로만 제거.
-- 차이 ①: **신규 배치는 누구도 불가**(이미 -2 락).
-- 차이 ②: **불도저 없음**(소유자가 없어 철거 주체 없음) → 전투+연결성 경로만.
-- **경합 중 기존 구조물은 그대로 작동(option a)** — 일시상태(1Hz 깜빡임)에 기능을 묶지 않음(무-churn).
-- 경합지는 **임시 보류 상태** — 승자 확정되면 캡처 영토로 전환되어 캡처 룰(불도저 등) 인계.
-  전이 시점에 아무것도 파괴 안 하므로 깜빡여도 churn 없음.
+- ✅ **TerritoryCaptureSystem** ([TerritoryCaptureSystem.cs](Assets/_game/scripts/RunTime/Systems/TerritoryCaptureSystem.cs), ~1초 주기,
+  TerritorySystem 후·RoadSystem 전): 타팀 영토 위 건물/도로에 `CaptureDoom{DeadlineSeconds}` 부착(게임초 기준 →
+  일시정지 자동 정지), 영토 회복 시 사면(제거), 데드라인 경과 시 파괴 — 건물=Raze식 정리+destroy, 도로=Forced
+  RemoveRoadCommand. 패스당 `MaxDestroysPerPass` 상한(스파이크 방지, 이월). 건물은 `RequireFullFootprint`(기본 1)
+  = footprint 전체가 넘어가야 대상(경계 걸침 보호). **경고 비주얼은 CaptureDoom.DeadlineSeconds 읽으면 됨.**
+- ✅ **TerritoryCaptureConfig** ([TerritoryComponents.cs](Assets/_game/scripts/RunTime/Components/TerritoryComponents.cs)) —
+  `DwellGameHours`(1=게임1시간≈현실50초) / `RequireFullFootprint`(1) / `MaxDestroysPerPass`(32) /
+  `AiEnemyBufferCells`(4). 싱글톤 없으면 Default — Test.cs 인스펙터 push는 TerritoryConfig 패턴으로 추후 와이어링.
+- ✅ **CaptureExempt 면제 배선** — `PlaceBuildingRequest.CaptureExempt` → `SpawnRequest` → 인스턴스 태그.
+  `FactionBaseSpawnSystem`이 베이스 건물에 true 설정(무혈 본진 함락 방지).
+- ✅ **AI 국경 완충** — `AiCityGrowthSystem` 게이트 2곳(BlockValid·DevelopParcels)을 `NearEnemyOrContested`
+  (셀+8방향 buffer 샘플 근사)로 교체, `AiEnemyBufferCells` 만큼 적 영토에서 떨어져 확장 → 건설-파괴 churn 루프 방지.
+- ✅ **AiRoadJanitorSystem** ([AiRoadJanitorSystem.cs](Assets/_game/scripts/RunTime/Systems/AiRoadJanitorSystem.cs), DayChanged, AI 팀 전용) —
+  반파 잔해 정리로 "버려진 구역" 방지: ① **dead-end trim**(이웃 footprint ≤1인 막다른 도로 반복 침식 — AI 불변식
+  '닫힌 사각형' 덕에 오검출 없음) ② **베이스-단절 잔해 섬**(Anchor 반경 8 시드 flood 미도달 + 자기 건물 없는 순수
+  도로 그룹) 제거. 가드: `Explicit`(그린-모델: 유저/RoadPath 지선) 제외, 자기 건물 인접(입구 접근로) 제외,
+  degree는 footprint 단위(멀티셀 안전).
+- ✅ **v1 잔재 정리** — `RoadOrphanSweepSystem`·`BuildingDestroyedEvent` 삭제(스윕 은퇴, 이벤트 소비자 없음 → 누수 방지).
+- ✅ **골목(C1) 폐기(2026-07-01, 유저 결정)** — 8×8 내부 골목이 링과 안 이어지고(그린 비트 선 축뿐) 파괴 후
+  잔해가 재개발을 막아 애물단지 → 연결 수정(ConnectAlleyEnd)까지 갔다가 **완전 제거**(LayAlley/EmitAlleyRoad 삭제).
+  결과: 도로 안 닿는 깊은 셀은 **빈 공터로 남음**(수용). janitor **섬 제거의 Explicit 가드 해제**는 유지
+  (골목 외 그린 잔해도 정리 — RoadPath 지선은 망에 연결=섬 아님, 트림의 Explicit 가드는 유지).
+- ✅ **영역 과대 — 원인 확정(밸런스)** — 진단 로그로 확인: owner=1 거주지 71·예산 1772셀·**PopPerCell=3**
+  (기본 5보다 낮음 → 거주지당 66% 더 넓음). 시스템 정상, **Test.cs 인스펙터 PopPerCell로 튜닝**(4~5 권장). 로그 제거.
+- ✅ **janitor 개편: Explicit 가드 폐기 + 지선(RoadSpur) 관리(2026-07-01)** — 유저 관찰 "끊어진 도로 정리 안 됨"의
+  원인 = **AI 링도 그린-모델(Explicit)** 이라 트림의 Explicit 가드가 AI 도로 전체를 보호(아무것도 못 다듬음).
+  ① 트림 가드 = 건물 인접 + **지선 끝**으로 교체(Explicit 폐기) ② `RoadSpur` 컴포넌트 신규 — `RoadPathSystem`이
+  경로 성공 시 자동 등록(중복 방지) ③ janitor가 지선 관리: 온전(타겟 인접 도로가 베이스 연결)하면 끝 footprint
+  보호(끝만 보호해도 라인 전체 degree 2로 안전), **끊기면 RoadPathRequest 재발행(자가 수리)** — 옛 조각은 섬
+  제거로 청소 후 새 경로. 목적 소멸 시 RoadSpur 파괴는 목적 로직 소관(미구현).
+  - ✅ **버그픽스(실측)**: 섬 제거가 footprint 단위 판정이라 건물 딸린 단절 섬에서 **교차로/코너만 일제 소멸**
+    (교차로는 건물과 대각 관계 = 4-인접 아님 → 비보호). → **연결요소 단위**로 수정: 섬에 건물 있으면 통째 유지,
+    없으면 통째 제거.
+- ✅ **설계 원칙 확정: "베이스 연결"은 행위 규칙, 상태 불변식 아님(2026-07-01)** — 의도적 건설은 무조건
+  베이스-연결에서만(사람·AI), 전투/점령이 만든 단절 '상태'는 **포위(siege) 상태**로 허용(기능 저하 + 회복 압력:
+  재연결/함락/janitor). 상태 강제 시 "한 칸 절단=도시 절반 소멸" 퇴화 + 정합성 의존 시스템 없음이 근거.
+  - ✅ **AI 앵커/입구 베이스-연결 제한** — `ComputeBaseReached`(Anchor 반경 8 시드 flood) 신규,
+    `GrowOneBlock` 앵커 후보와 `PackOnGrid` 입구 도로를 baseReached로 게이트 → 단절 섬에서 제2 도시 증식/내부 개발 금지.
+    (참고: `IsTeamRoad`류 명명은 실제론 owner(LocalId) 소유 판정 — 동맹 도로 공유 아님. 영역만 팀 공유. 리네임 후보.)
+  - AI 재연결 정책 확정: **최우선 아님 — 병행 과제**. 분단 감지 시 게임-일 1회 경로 시도(가능=복구, 불가=포위 지속),
+    성장은 계속. 구현은 시드-필터 FindRoadPath 필요(기존 ⬜ 항목과 통합, 다음 세션).
+
+### 🧭 방향성 메모: 현재 AI 성장은 발판(placeholder) — 진짜는 욕구 주도 배치 (2026-07-01 합의)
+- `AiCityGrowthSystem`의 무조건 격자 확장은 **임시 골격**. 최종형: **시민 욕구(창고·식당·일자리·접근성)가
+  "무엇을 어디에"를 결정** — 단절 대응도 정책이 아니라 욕구에서 창발(로컬 대체 시설 = 따로 성장 vs
+  도로 요구 = 재연결, 비용 비교의 결과. 자연 재결합도 가능).
+- **기반으로 살아남는 것**: capture=파괴/dwell, janitor(위생 계층), **RoadSpur = '도로 요구'의 원형**(욕구
+  시스템의 출력 단자로 승격 예정), stamp/CivilianBFS(단절 → 커버리지 자동 절단 → 미충족 욕구 '저절로' 발생).
+- **placeholder 정책으로 격하**: "앵커 베이스-연결만" 게이트 — 욕구 시대엔 "플래너가 지정한 구역 도로면 앵커
+  허용"으로 완화("베이스 연결" 행위 규칙 → "수요-공급 네트워크 연결"로 일반화). "재연결=병행 과제"도 동일.
+- ⬜ 남은 리스크(설계 노트): 연쇄 함락 눈덩이(거주 파괴→인구↓→더 함락 — dwell로 완충, 과하면 거주건물 예외 검토) /
+  시민·캐리어의 파괴된 집/직장 참조 정리 견고성 확인 / dwell 상태는 저장/로드 시 리셋 수용.
+- ⬜ **AI 재연결(건물 딸린 고립 섬 → 본망 잇기)** — `RoadPathRequest` 재사용이 정석이나 **`BlockOps.FindRoadPath`가
+  모든 자기 도로 셀(고립 섬 포함)을 소스로 시딩**해 섬을 타겟으로 주면 즉시 도달로 종료 → 그대론 불가.
+  시드 필터(베이스-연결 셀만) 변형 필요 — 다음 세션. (건물 없는 섬 '파괴'는 janitor가 이미 수행.)
+- ✅ **경고 비주얼(2026-07-01)** — ① [CaptureDoomWarningSystem.cs](Assets/_game/scripts/RunTime/Systems/CaptureDoomWarningSystem.cs):
+  파괴 예정 footprint에 **펄스 점멸 테두리 띠 + 옅은 채움**(임박할수록 점멸 1.2→5Hz 가속, 주황→빨강).
+  DrawMesh 투명 큐(UI 아래)·ZTest LessEqual. ② HP바 아래 **카운트다운 게이지**(남은 dwell 비율, 주황→빨강,
+  [HealthBarRenderSystem.cs](Assets/_game/scripts/RunTime/Systems/HealthBarRenderSystem.cs) — 건물 전용, 도로는 ①만).
+  `CaptureDoom.DwellSeconds` 필드 추가(비율 계산용). 사면 시 자동 소멸.
 
 ### 구현 진행 (2026-06-30)
 - ✅ **[A] 건물 전투 타겟화** — `SpawnSystem`의 HasFootprint 건물에 `CombatTargetable(Building)`+`CombatHealth`
@@ -43,16 +90,25 @@
   - **타겟 픽킹** — 테스트 컨트롤러가 건물을 우클릭 지정 못 하던 문제: `GetCombatTargetWorldPickRadius`에
     `BuildingFootprint` 케이스 추가(반-대각선 반경, cellSize는 GridSettings 조회). [UnitSelectionTestController.cs](Assets/_game/scripts/Unit/auth/UnitSelectionTestController.cs)
   - **footprint-인지 사거리** — 건물 transform이 footprint 중심이라 큰 건물은 가장자리에 붙어도 '중심까지' 거리가
-    사거리 밖→발사 못 하고 +x,+z 사분면 편향까지 발생. `CombatWeaponUtility.NearestTargetPoint`(건물=AABB 최근접 표면점)
-    신규, **engagement(접근)·ready-state(OutOfRange)** 두 잡이 표면 거리 사용(BuildingFootprint 룩업+CellSize 배선).
-    → 사방 어디서든 인접 시 발사·데미지. 유닛-유닛은 불변(비건물엔 중심 반환). [CombatWeaponBakingSystem.cs](Assets/_game/scripts/Unit/System/CombatWeaponBakingSystem.cs)
+    사거리 밖→발사 못 하고 +x,+z 사분면 편향까지 발생. `CombatWeaponUtility.NearestTargetPoint`(건물=AABB 최근접 표면점,
+    회전은 `RotSteps&1` 인라인) 신규. **engagement·ready-state·BodyForwardWeaponAim·CombatWeaponSetup** 네 잡이 표면 거리
+    사용(각 잡에 BuildingFootprint 룩업+CellSize 배선). 발사 게이트(ready-state/aim)는 `range+3×tol` 여유. 유닛-유닛 불변.
+    [CombatWeaponBakingSystem.cs](Assets/_game/scripts/Unit/System/CombatWeaponBakingSystem.cs)
   - **기존 버그 수정** — `CombatEngagementDecisionSystem`의 `Blocked` NativeArray가 LOS 그리드 없을 때 미할당(default)인 채
     잡 스케줄 → 예외. 더미 1칸 할당으로 해소(전투를 처음 돌리며 노출됨, 제 로직 결함 아님).
-  - ⬜ 남음: **자동 획득(idle auto-engage)·터릿 셋업 무기**의 거리 검사는 아직 중심 기준 → 같은 방식 확장 필요(수동 공격엔 무관).
-- ⬜ **[C] 도로 연결성 스윕** — `BuildingDestroyedEvent{owner}` 신규(BuildingDeathCleanupSystem·RazeSystem 공통 발행)
-  → 스윕 시스템: 생존 적 건물 footprint-인접 도로에서 flood → **캡처/경합지 안의** 미도달 적 도로 Forced 제거.
-  (stateless 재계산, footprint-인접 앵커. TeamTable로 "셀팀≠도로owner팀" 스코프.) ← **다음 세션 우선**
-- ⬜ **[D] 땅 주인 불도저 게이트** — `RoadSystem` 철거 게이트에 "셀이 내 팀 영토면 Forced 허용" 추가.
+  - ✅ **근접 공격 시 데미지 정상** — 유닛이 건물 가까이 가면 파괴 가능(확인됨).
+  - ⚠ **미해결(다음 세션 별도로): 강제공격 원거리 접근이 발사까지 안정적으로 안 됨.** 유닛이 사거리 경계 근처에서
+    멈춰 발사 안 되거나(=`Range` 차단), 접근-깊이 보정 시 멈춤↔이동 진동. **원인**: 접근 정지 임계값(shouldApproach)과
+    발사 사거리(OutOfRange)가 같은 값이라 유닛이 경계에 서고, 정지 슬롭/프레임 순서 지터로 미세하게 밖에 섬.
+    **정답**: 접근에 **히스테리시스**(사거리 안쪽까지 붙고 크게 벗어날 때만 재접근) — 상태 추가 필요. 이번엔 접근 원복 +
+    발사 게이트 여유(3tol)로 완화만 함. **자동 획득(auto-engage)·터릿 셋업**도 거리 검사 중심 기준 남음.
+    → **유닛 이동/타겟팅 정밀화는 별도 세션에서.**
+- ❌ **[C] 도로 정리 스윕 — 은퇴(2026-07-01)** — 연결성→근접 모델까지 갔으나 v2(capture=파괴)가 역할을 완전
+  대체해 `RoadOrphanSweepSystem`·`BuildingDestroyedEvent` 삭제. 위 "설계 개정 v2" 섹션 참조.
+- ✅ **[D] 땅 주인 불도저 게이트(2026-06-30, 게이트만·입력 미연결)** — [RoadSystem.cs](Assets/_game/scripts/RunTime/Systems/RoadSystem.cs)
+  철거 권한 = 강제(Forced) / 자기 도로 / **내 팀 영토 위의 도로**(`cellTeam==teams.Get(remover)`). 마지막이 불도저 —
+  캡처한 땅의 적 도로를 소유 무관 철거(전투 아님·룰 OK). ⚠ **플레이어 도로-철거 입력 경로가 아직 없음**(현재 `RemoveRoadCommand`
+  발행처 = 스윕(Forced)뿐) → 게이트는 준비됐으나 트리거할 UI/입력 필요(데몰리시 툴: 호버 셀 → `RemoveRoadCommand{OwnerLocalId=player, Forced=0}`).
 - ✅ **HP바(테스트용)** — [HealthBarRenderSystem.cs](Assets/_game/scripts/RunTime/Systems/HealthBarRenderSystem.cs):
   CombatHealth 가진 모든 엔티티 위 빌보드 바(빨강→노랑→초록), DrawMesh 투명 큐(UI 아래). `Camera.main` 필요.
   상시 표시 → 클러스터 시 'frac<1만'/'선택만'으로 좁힐 수 있음.

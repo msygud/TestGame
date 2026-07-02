@@ -41,6 +41,11 @@ namespace CitySim
             var ecb  = new EntityCommandBuffer(Allocator.Temp);
             var path = new NativeList<int2>(64, Allocator.Temp);
 
+            // 기존 지선 등록 목록 — 같은 (owner, target) 중복 등록 방지.
+            var knownSpurs = new NativeHashSet<int3>(16, Allocator.Temp);
+            foreach (var spur in SystemAPI.Query<RefRO<RoadSpur>>())
+                knownSpurs.Add(new int3(spur.ValueRO.Target, spur.ValueRO.OwnerLocalId));
+
             foreach (var (reqRO, e) in SystemAPI.Query<RefRO<RoadPathRequest>>().WithEntityAccess())
             {
                 var req = reqRO.ValueRO;
@@ -57,8 +62,20 @@ namespace CitySim
                     Debug.Log($"[RoadPath] team{req.OwnerLocalId}: Target={req.Target} " +
                               $"경로 없음 또는 이미 연결 (found={ok}, len={path.Length})");
 
+                // 활성 지선 등록(성공 시, 중복 방지) — janitor가 보호·자가수리에 사용.
+                if (ok && knownSpurs.Add(new int3(req.Target, req.OwnerLocalId)))
+                {
+                    var se = ecb.CreateEntity();
+                    ecb.AddComponent(se, new RoadSpur
+                    {
+                        Target = req.Target, OwnerLocalId = req.OwnerLocalId,
+                        FactionId = req.FactionId, StopAdjacent = req.StopAdjacent,
+                    });
+                }
+
                 ecb.DestroyEntity(e);   // 단발성 요청 소비
             }
+            knownSpurs.Dispose();
 
             path.Dispose();
             ecb.Playback(state.EntityManager);

@@ -102,15 +102,15 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: -8679921383154817045, guid: 877af63018f7e964aa62fda493953f65, type: 3}
       propertyPath: m_LocalScale.x
-      value: 1
+      value: 0.5
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 877af63018f7e964aa62fda493953f65, type: 3}
       propertyPath: m_LocalScale.y
-      value: 1
+      value: 0.5
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 877af63018f7e964aa62fda493953f65, type: 3}
       propertyPath: m_LocalScale.z
-      value: 1
+      value: 0.5
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 877af63018f7e964aa62fda493953f65, type: 3}
       propertyPath: m_LocalPosition.x
@@ -377,10 +377,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0d796a8cc7364c72b0a533f21d35a683, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.UnitAuthoring
-  MoveSpeed: 6
+  MoveSpeed: 3
   DisplayName: Unit
-  TurnSpeedDegrees: 240
-  StopDistance: 0.15
+  TurnSpeedDegrees: 60
+  StopDistance: 1
   FootprintSize: {x: 2, y: 2}
   FootprintRadius: 0.5
   SeparationWeight: 1

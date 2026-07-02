@@ -156,6 +156,20 @@ namespace CitySim
     ///   · 경로는 같은 높이 평지·Land·빈땅(환경물 치움)만 통과 — 물/단차/자원/건물 회피.
     ///   · 현재 1×1 도로 전용(그린 모델). 멀티셀은 추후.
     /// </summary>
+    /// <summary>
+    /// 활성 지선(자원/항구 등 목적 도로) 등록 — RoadPathSystem이 경로 성공 시 자동 생성(중복 방지).
+    /// AiRoadJanitorSystem이 ① 온전한(베이스 연결) 지선 끝을 트림에서 보호
+    /// ② 끊기면(타겟 인접 자기 도로가 없거나 단절) RoadPathRequest 재발행 = 자가 수리.
+    /// 목적 소멸 시(자원 고갈 등)엔 목적 로직이 이 엔티티를 파괴해 등록 해제(미구현 — 발행 주체 소관).
+    /// </summary>
+    public struct RoadSpur : IComponentData
+    {
+        public int2 Target;
+        public int  OwnerLocalId;
+        public int  FactionId;
+        public byte StopAdjacent;
+    }
+
     public struct RoadPathRequest : IComponentData
     {
         /// <summary>도달하려는 특수 셀(예: 물가 접근지/자원). 보통 도로 불가 셀 → 인접까지 연장.</summary>
