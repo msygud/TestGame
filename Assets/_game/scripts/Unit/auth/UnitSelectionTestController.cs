@@ -121,6 +121,13 @@ namespace Game.Unit
         readonly Dictionary<Entity, GameObject> _debugCombatHealthLabelObjects = new();
         readonly Dictionary<Entity, GameObject> _debugCombatWeaponStateLabelObjects = new();
         readonly Dictionary<Entity, GameObject> _debugNameLabelObjects = new();
+
+        // GC 방지 캐시(2026-07-05) — 디버그 라벨 문자열은 표시 값이 바뀔 때만 재조립.
+        //   매 프레임 보간($")/FixedString.ToString()은 라벨 수 × 프레임만큼 관리형 쓰레기.
+        readonly Dictionary<Entity, (UnitCommandKind Kind, string Text)> _nameTextCache = new();
+        readonly Dictionary<Entity, (int2 Shown, string Text)>           _hpTextCache   = new();
+        string _hudHeaderText = string.Empty;
+        int    _hudUnitN = -1, _hudSelN = -1, _hudObsN = -1;
         readonly List<Entity> _removeBuffer = new();
         readonly List<Entity> _debugActiveBuffer = new();
         readonly List<Entity> _debugObstacleActiveBuffer = new();
@@ -241,9 +248,16 @@ namespace Game.Unit
             {
                 var oldColor = GUI.color;
                 GUI.color = Color.white;
-                GUI.Label(
-                    new Rect(12f, 12f, 360f, 48f),
-                    $"Units: {_unitQuery.CalculateEntityCount()}  Selected: {_selectedQuery.CalculateEntityCount()}  Obstacles: {_obstacleQuery.CalculateEntityCount()}");
+                // 헤더 문자열은 수가 바뀔 때만 재조립(OnGUI는 프레임당 2회+ 호출 — 매번 보간하면 GC 쓰레기).
+                int un = _unitQuery.CalculateEntityCount();
+                int sn = _selectedQuery.CalculateEntityCount();
+                int on = _obstacleQuery.CalculateEntityCount();
+                if (un != _hudUnitN || sn != _hudSelN || on != _hudObsN)
+                {
+                    _hudUnitN = un; _hudSelN = sn; _hudObsN = on;
+                    _hudHeaderText = $"Units: {un}  Selected: {sn}  Obstacles: {on}";
+                }
+                GUI.Label(new Rect(12f, 12f, 360f, 48f), _hudHeaderText);
                 ShowUnitNames = GUI.Toggle(
                     new Rect(12f, 58f, 180f, 22f),
                     ShowUnitNames,
@@ -1271,7 +1285,17 @@ namespace Game.Unit
 
             var text = labelObject.GetComponent<TextMesh>();
             text.color = DebugNameColor;
-            text.text = FormatDisplayName(entity, displayName);
+
+            // 명령 종류가 바뀔 때만 문자열 재조립(캐시) — 내용이 같으면 대입도 생략(메시 재생성 방지).
+            var kind = _entityManager.HasComponent<UnitCommandState>(entity)
+                ? _entityManager.GetComponentData<UnitCommandState>(entity).Kind
+                : UnitCommandKind.None;
+            if (!_nameTextCache.TryGetValue(entity, out var nc) || nc.Kind != kind)
+            {
+                nc = (kind, FormatDisplayName(entity, displayName));
+                _nameTextCache[entity] = nc;
+            }
+            if (!ReferenceEquals(text.text, nc.Text)) text.text = nc.Text;
         }
 
         GameObject CreateNameLabelObject()
@@ -1703,7 +1727,15 @@ namespace Game.Unit
 
             var text = labelObject.GetComponent<TextMesh>();
             text.color = Color.Lerp(DebugFailedPathColor, DebugCombatHealthColor, ratio);
-            text.text = $"HP {health:0}/{maxHealth:0}";
+
+            // 표시 값(정수)이 바뀔 때만 문자열 재조립 — 매 프레임 보간은 라벨 수만큼 GC 쓰레기.
+            var shown = new int2((int)math.round(health), (int)math.round(maxHealth));
+            if (!_hpTextCache.TryGetValue(entity, out var hc) || !hc.Shown.Equals(shown))
+            {
+                hc = (shown, $"HP {health:0}/{maxHealth:0}");
+                _hpTextCache[entity] = hc;
+            }
+            if (!ReferenceEquals(text.text, hc.Text)) text.text = hc.Text;
         }
 
         GameObject CreateCombatHealthLabelObject()

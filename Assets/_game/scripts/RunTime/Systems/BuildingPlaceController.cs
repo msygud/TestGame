@@ -45,9 +45,25 @@ namespace CitySim
 
         PreviewStatus _hoverStatus = PreviewStatus.Valid;
         bool          _hasHover;
-        public string StatusText => _modeActive
-            ? $"Building #{_mainKey} (R rotate: {_rotSteps * 90}°) — {PreviewStatusOps.ToText(_hoverStatus)}"
-            : string.Empty;
+
+        // HUD가 매 프레임 읽으므로 값이 바뀔 때만 재조립(캐시) — 매 프레임 보간($")은 GC 쓰레기.
+        public string StatusText
+        {
+            get
+            {
+                if (!_modeActive) return string.Empty;
+                if (_mainKey != _stMainKey || _rotSteps != _stRotSteps || _hoverStatus != _stStatus)
+                {
+                    _stMainKey = _mainKey; _stRotSteps = _rotSteps; _stStatus = _hoverStatus;
+                    _statusCache =
+                        $"Building #{_mainKey} (R rotate: {_rotSteps * 90}°) — {PreviewStatusOps.ToText(_hoverStatus)}";
+                }
+                return _statusCache;
+            }
+        }
+        string _statusCache = string.Empty;
+        int _stMainKey = -1, _stRotSteps = -1;
+        PreviewStatus _stStatus = (PreviewStatus)byte.MaxValue;
 
         EntityManager _em;
         Entity        _previewEntity;

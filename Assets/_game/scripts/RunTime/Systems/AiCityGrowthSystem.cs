@@ -1,5 +1,7 @@
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Game.Unit;
 using UnityEngine;
@@ -19,12 +21,34 @@ namespace CitySim
     //  배치 후보: 각 팀 도로 셀 R의 4개 사분면(NE/NW/SE/SW)에 블록을 앵커.
     //    그 블록의 두 근접 링(코너에서 만나는)이 R의 도로와 일치 → 정렬.
     //
-    //  시스템 순서: AiCityGrowth → RoadSystem → BuildingPlacement (같은 프레임).
+    //  실행 모델(2026-07-04 잡화 — 프로파일 실측 메인스레드 ~43ms 스파이크 해소):
+    //    DayChanged →
+    //      ① SnapshotJob(빠름): 레이어를 잡 전용 복사본으로. state.Dependency에 등록 +
+    //         GridLayers RW 의도 선언 → 이후 레이어 쓰기 시스템이 '복사 완료'만 대기.
+    //      ② GrowthJob(느림): 스냅샷만 읽는 Burst 잡 — 핸들을 state.Dependency에 안 올리고
+    //         프라이빗으로 보관 → 여러 프레임에 걸쳐 워커에서 계산(메인 비용 0).
+    //      ③ 폴링: IsCompleted 확인(블로킹 Complete 금지) 후 메인에서 명령 엔티티 생성만.
+    //    결과가 1~수 프레임 늦어도 무방(게임-일 1회 계획) — 명령은 어차피
+    //    RoadSystem/BuildingPlacement가 실제 레이어로 재검증한다.
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateBefore(typeof(RoadSystem))]
     public partial struct AiCityGrowthSystem : ISystem
     {
+        JobHandle _growthHandle;   // 성장 잡(느림) — state.Dependency 밖에서 폴링
+        bool      _running;
+        bool      _dayPending;     // 잡 실행 중 DayChanged 도착 → 완료 후 즉시 재스케줄
+
+        GrowthSnap _snap;          // 잡 전용 레이어 복사본(Persistent, 런마다 할당/해제)
+        NativeArray<TeamInput>            _teams;
+        NativeList<PlaceRoadCommand>      _roadOut;
+        NativeList<PlaceBuildingRequest>  _bldOut;
+        NativeList<GrowthLog>             _logOut;
+        int _scheduledDay;         // 로그 메시지용
+
+        // ResourceLayer가 미생성일 때 잡에 대신 캡처할 빈 맵(잡 필드는 항상 할당돼야 함).
+        NativeHashMap<int2, ResourceCell> _emptyRes;
+
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<GameClock>();
@@ -32,14 +56,39 @@ namespace CitySim
             state.RequireForUpdate<EntranceLookup>();
             state.RequireForUpdate<PrefabMetaLookup>();
             state.RequireForUpdate<CellTypeLookup>();
+            _emptyRes = new NativeHashMap<int2, ResourceCell>(1, Allocator.Persistent);
+        }
+
+        public void OnDestroy(ref SystemState state)
+        {
+            if (_running)
+            {
+                _growthHandle.Complete();
+                DisposeRun();
+                _running = false;
+            }
+            _emptyRes.Dispose();
         }
 
         public void OnUpdate(ref SystemState state)
         {
             var clock = SystemAPI.GetSingleton<GameClock>();
-            if (!clock.DayChanged) return;
 
-            var layers         = SystemAPI.GetSingleton<GridLayers>();
+            // ── 완료 폴링: 끝났으면 결과 적용(명령 엔티티 생성 + 로그), 아니면 다음 프레임 ──
+            if (_running)
+            {
+                if (clock.DayChanged) _dayPending = true;   // 놓친 날은 완료 직후 몰아서
+                if (!_growthHandle.IsCompleted) return;
+                _growthHandle.Complete();                    // IsCompleted 후라 논블로킹
+                ApplyResults(ref state);
+                DisposeRun();
+                _running = false;
+            }
+
+            if (!clock.DayChanged && !_dayPending) return;
+            _dayPending = false;
+
+            // ── 스케줄: 입력 수집(메인, 소량) → 스냅샷 잡 → 성장 잡 ──────────────
             var entranceLookup = SystemAPI.GetSingleton<EntranceLookup>();
             var metaLookup     = SystemAPI.GetSingleton<PrefabMetaLookup>();
             var cellTypeLookup = SystemAPI.GetSingleton<CellTypeLookup>();
@@ -51,86 +100,336 @@ namespace CitySim
             int enemyBuffer = (SystemAPI.TryGetSingleton<TerritoryCaptureConfig>(out var capCfg)
                 ? capCfg : TerritoryCaptureConfig.Default).AiEnemyBufferCells;
 
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-
+            // AI 팀 수집 (메인 — 팀 수 ≤ 8).
+            var teamList = new NativeList<TeamInput>(8, Allocator.Temp);
             foreach (var (teamRO, gridRO) in
                      SystemAPI.Query<RefRO<TeamInfoData>, RefRO<CityGrid>>())
             {
-                var team = teamRO.ValueRO;
-                if (team.IsPlayer()) continue;
-
-                int owner = team.LocalID;
-                var grid  = gridRO.ValueRO;
-
-                var rng = Unity.Mathematics.Random.CreateFromIndex(
-                    math.hash(new int2(clock.Day + 1, owner + 1)) ^ grid.Seed);
-
-                // 구획 채우기 → 확장: 갇힌 구획을 격자 패킹/골목으로 개발(DevelopParcels),
-                //   개발할 갇힌 구획이 없으면 바깥으로 블록 1개 확장(GrowOneBlock).
-                //   한 틱 건물 상한 = BuildPerTick. claimed로 같은 틱 중복 방지.
-                int budget  = math.max(1, cfg.BuildPerTick);
-                var claimed = new NativeHashSet<int2>(128, Allocator.Temp);
-
-                // 도시 '바깥(프런티어)' 영역 = 도로/건물을 벽으로 막고 bbox 테두리에서 flood.
-                //   채우기는 enclosed(바깥 아님) 셀만 → 바깥 열린 땅은 도로 확장용으로 보존.
-                var outside = new NativeHashSet<int2>(512, Allocator.Temp);
-                ComputeEnclosureOutside(in layers, owner, out int2 encLo, out int2 encHi, ref outside);
-
-                // "건설은 베이스-연결에서만"(행위 규칙) — 단절된 자기 도로 섬은 확장 앵커/입구로 못 쓴다.
-                //   섬 자체는 포위 상태로 존속(상태 허용) — 파괴/재연결은 janitor·capture 소관.
-                var baseReached = new NativeHashSet<int2>(256, Allocator.Temp);
-                ComputeBaseReached(in layers, owner, grid.Anchor, ref baseReached);
-
-                // 1) 갇힌 구획 개발 (D1 구획 파생 + B 격자 패킹 + C1 골목 분할).
-                bool worked = DevelopParcels(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                    in grid, owner, in cfg, in outside, encLo, encHi, in teams, enemyBuffer, in baseReached,
-                    budget, ref claimed, ref ecb);
-
-                // 2) 개발할 갇힌 구획 없음 → 바깥 확장 1회(새 블록, 바깥-전용).
-                if (!worked)
-                {
-                    int chosenKey = PickBuilding(in cfg, ref rng);
-                    int altKey = chosenKey == cfg.BuildingKeyA ? cfg.BuildingKeyB : cfg.BuildingKeyA;
-                    bool grew = chosenKey > 0 && GrowOneBlock(in layers, in entranceLookup, in metaLookup,
-                        in cellTypeLookup, in grid, owner, chosenKey, clock.Day, in cfg, in outside, encLo, encHi, in teams, enemyBuffer, in baseReached, ref rng, ref ecb);
-                    if (!grew && altKey > 0 && altKey != chosenKey)
-                        GrowOneBlock(in layers, in entranceLookup, in metaLookup, in cellTypeLookup,
-                            in grid, owner, altKey, clock.Day, in cfg, in outside, encLo, encHi, in teams, enemyBuffer, in baseReached, ref rng, ref ecb);
-                }
-
-                claimed.Dispose();
-                outside.Dispose();
-                baseReached.Dispose();
+                if (teamRO.ValueRO.IsPlayer()) continue;
+                teamList.Add(new TeamInput { Owner = teamRO.ValueRO.LocalID, Grid = gridRO.ValueRO });
             }
+            if (teamList.Length == 0) { teamList.Dispose(); return; }
 
-            ecb.Playback(state.EntityManager);
-            ecb.Dispose();
+            // 건물 메타/입구를 메인에서 값으로 해석 → 잡이 룩업 컨테이너를 안 들고 감
+            //   (룩업 재빌드와의 수명 충돌 원천 차단).
+            var optA = ResolveOption(cfg.BuildingKeyA, in metaLookup, in entranceLookup);
+            var optB = ResolveOption(cfg.BuildingKeyB, in metaLookup, in entranceLookup);
+
+            // GridLayers RW 의도 선언(확립 기법) — 이후 프레임에서 레이어를 만지는 모든
+            //   시스템이 GetSingleton 시 '스냅샷 복사 잡'의 완료를 대기하게 강제한다.
+            //   (복사는 빠름 — 대기해도 사실상 0. 느린 성장 잡은 스냅샷만 읽어 대기 없음.)
+            var layers = SystemAPI.GetSingletonRW<GridLayers>().ValueRO;
+
+            _teams   = new NativeArray<TeamInput>(teamList.AsArray(), Allocator.Persistent);
+            teamList.Dispose();
+            _roadOut = new NativeList<PlaceRoadCommand>(256, Allocator.Persistent);
+            _bldOut  = new NativeList<PlaceBuildingRequest>(64, Allocator.Persistent);
+            _logOut  = new NativeList<GrowthLog>(16, Allocator.Persistent);
+            _snap    = GrowthSnap.Allocate(in layers);
+            _scheduledDay = clock.Day;
+
+            var copyH = new SnapshotJob
+            {
+                SrcTerrain   = layers.TerrainLayer,
+                SrcRoad      = layers.RoadLayer,
+                SrcOcc       = layers.OccupancyLayer,
+                SrcTerr      = layers.TerritoryLayer,
+                SrcRes       = layers.ResourceLayer.IsCreated ? layers.ResourceLayer : _emptyRes,
+                SrcCellTypes = cellTypeLookup.Table,
+                Snap         = _snap,
+            }.Schedule(state.Dependency);
+
+            _growthHandle = new GrowthJob
+            {
+                Snap        = _snap,
+                Teams       = _teams,
+                OptA        = optA,
+                OptB        = optB,
+                Cfg         = cfg,
+                TeamsTable  = teams,
+                EnemyBuffer = enemyBuffer,
+                Day         = clock.Day,
+                RoadOut     = _roadOut,
+                BldOut      = _bldOut,
+                LogOut      = _logOut,
+            }.Schedule(copyH);
+
+            state.Dependency = copyH;   // 복사만 등록 — 느린 성장 잡은 의존성 체인 밖(폴링)
+            _running = true;
         }
 
+        // 잡 결과 적용 — 명령 엔티티 생성(같은 프레임에 RoadSystem/BuildingPlacement가 처리)
+        //   + Burst 밖으로 미뤄둔 로그 출력. 메인스레드 비용은 엔티티 몇십 개 생성뿐.
+        void ApplyResults(ref SystemState state)
+        {
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+            for (int i = 0; i < _roadOut.Length; i++)
+            {
+                var e = ecb.CreateEntity();
+                ecb.AddComponent(e, _roadOut[i]);
+            }
+            for (int i = 0; i < _bldOut.Length; i++)
+            {
+                var e = ecb.CreateEntity();
+                ecb.AddComponent(e, _bldOut[i]);
+            }
+            ecb.Playback(state.EntityManager);
+            ecb.Dispose();
+
+            for (int i = 0; i < _logOut.Length; i++)
+            {
+                var l = _logOut[i];
+                switch (l.Kind)
+                {
+                    case GrowthLog.NoTeamRoad:
+                        Debug.LogWarning($"[AiCityGrowth] team{l.Owner}: 팀 도로 없음");
+                        break;
+                    case GrowthLog.NoSpot:
+                        Debug.Log($"[AiCityGrowth] team{l.Owner} day{_scheduledDay}: " +
+                                  $"성장 자리 없음 K={l.A} (유효후보={l.B})");
+                        break;
+                }
+            }
+        }
+
+        void DisposeRun()
+        {
+            _snap.Dispose();
+            _teams.Dispose();
+            _roadOut.Dispose();
+            _bldOut.Dispose();
+            _logOut.Dispose();
+        }
+
+        // 건물 메타/입구 → 값 타입 해석(메인). 무효(미등록/크기 0/8셀 초과)면 Key=0.
+        static BuildOption ResolveOption(
+            int key, in PrefabMetaLookup metaLookup, in EntranceLookup entranceLookup)
+        {
+            if (key <= 0) return default;
+            if (!metaLookup.TryGetMeta(key, 0, out var meta)) return default;
+            if (meta.Size.x <= 0 || meta.Size.y <= 0) return default;
+            int k = BlockSizeFor(math.max(meta.Size.x, meta.Size.y));
+            if (k == 0)
+            {
+                Debug.LogWarning($"[AiCityGrowth] 건물 key={key} size={meta.Size} 8셀 초과");
+                return default;
+            }
+            var opt = new BuildOption
+            {
+                Key = key, Size = meta.Size, BuildableOn = meta.BuildableOn, BlockK = k,
+            };
+            if (meta.HasEntrance && entranceLookup.TryGet(key, out var ent))
+            { opt.HasEnt = true; opt.Ent = ent; }
+            return opt;
+        }
+
+        static int BlockSizeFor(int maxDim) => maxDim <= 4 ? 4 : maxDim <= 6 ? 6 : maxDim <= 8 ? 8 : 0;
+
+        // ══════════════════════════════════════════════════════════════════════
+        //  잡 입출력 타입
+        // ══════════════════════════════════════════════════════════════════════
+
+        struct TeamInput
+        {
+            public int      Owner;
+            public CityGrid Grid;
+        }
+
+        // 성장 후보 건물 — 메타/입구를 메인에서 해석한 값 스냅샷. Key=0 = 없음.
+        struct BuildOption
+        {
+            public int          Key;
+            public int2         Size;
+            public TerrainMask  BuildableOn;
+            public int          BlockK;    // BlockSizeFor(max(Size)) 선계산
+            public bool         HasEnt;
+            public EntranceInfo Ent;
+        }
+
+        // Burst 잡 안에서 못 찍는 로그를 완료 후 메인에서 출력하기 위한 이벤트.
+        struct GrowthLog
+        {
+            public const byte NoTeamRoad = 1;   // A,B 미사용
+            public const byte NoSpot     = 2;   // A=K, B=유효후보 수
+            public int  Owner;
+            public byte Kind;
+            public int  A, B;
+        }
+
+        // 잡 전용 레이어 복사본 — 필드명을 GridLayers와 맞춰 헬퍼 본문 변경 최소화.
+        //   Water/자원은 셀 집합으로 선해석(룩업 체인 제거 + 조회 1회).
+        struct GrowthSnap
+        {
+            public NativeHashMap<int2, TerrainCell>   TerrainLayer;
+            public NativeHashMap<int2, RoadCell>      RoadLayer;
+            public NativeHashMap<int2, OccupancyCell> OccupancyLayer;
+            public NativeHashMap<int2, int>           TerritoryLayer;
+            public NativeHashSet<int2>                ResourceBlocked;   // Amount>0 셀
+            public NativeHashSet<int2>                WaterCells;        // CellType=Water 셀
+
+            public static GrowthSnap Allocate(in GridLayers src)
+            {
+                int terrain = math.max(16, src.TerrainLayer.Count);
+                return new GrowthSnap
+                {
+                    TerrainLayer   = new(terrain, Allocator.Persistent),
+                    RoadLayer      = new(math.max(16, src.RoadLayer.Count),      Allocator.Persistent),
+                    OccupancyLayer = new(math.max(16, src.OccupancyLayer.Count), Allocator.Persistent),
+                    TerritoryLayer = new(math.max(16, src.TerritoryLayer.Count), Allocator.Persistent),
+                    ResourceBlocked = new(math.max(16,
+                        src.ResourceLayer.IsCreated ? src.ResourceLayer.Count : 0), Allocator.Persistent),
+                    WaterCells     = new(terrain, Allocator.Persistent),
+                };
+            }
+
+            public void Dispose()
+            {
+                TerrainLayer.Dispose();
+                RoadLayer.Dispose();
+                OccupancyLayer.Dispose();
+                TerritoryLayer.Dispose();
+                ResourceBlocked.Dispose();
+                WaterCells.Dispose();
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        //  ① SnapshotJob — 레이어 → 잡 전용 복사본 (빠름, state.Dependency 등록)
+        // ══════════════════════════════════════════════════════════════════════
+        [BurstCompile]
+        struct SnapshotJob : IJob
+        {
+            [ReadOnly] public NativeHashMap<int2, TerrainCell>   SrcTerrain;
+            [ReadOnly] public NativeHashMap<int2, RoadCell>      SrcRoad;
+            [ReadOnly] public NativeHashMap<int2, OccupancyCell> SrcOcc;
+            [ReadOnly] public NativeHashMap<int2, int>           SrcTerr;
+            [ReadOnly] public NativeHashMap<int2, ResourceCell>  SrcRes;   // 미생성 시 빈 더미
+            [ReadOnly] public NativeHashMap<int, CellTypeInfo>   SrcCellTypes;
+
+            public GrowthSnap Snap;
+
+            public void Execute()
+            {
+                foreach (var kv in SrcTerrain)
+                {
+                    Snap.TerrainLayer.TryAdd(kv.Key, kv.Value);
+                    if (SrcCellTypes.TryGetValue(kv.Value.TypeId, out var ti)
+                        && ti.TerrainCategory == TerrainCategory.Water)
+                        Snap.WaterCells.Add(kv.Key);
+                }
+                foreach (var kv in SrcRoad) Snap.RoadLayer.TryAdd(kv.Key, kv.Value);
+                foreach (var kv in SrcOcc)  Snap.OccupancyLayer.TryAdd(kv.Key, kv.Value);
+                foreach (var kv in SrcTerr) Snap.TerritoryLayer.TryAdd(kv.Key, kv.Value);
+                foreach (var kv in SrcRes)
+                    if (kv.Value.Amount > 0) Snap.ResourceBlocked.Add(kv.Key);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        //  ② GrowthJob — 팀별 성장 계산 (느림, 스냅샷만 읽음 → 프레임에 걸쳐 실행)
+        // ══════════════════════════════════════════════════════════════════════
+        [BurstCompile]
+        struct GrowthJob : IJob
+        {
+            [ReadOnly] public GrowthSnap Snap;
+            [ReadOnly] public NativeArray<TeamInput> Teams;
+            public BuildOption  OptA, OptB;
+            public GrowthConfig Cfg;
+            public TeamTable    TeamsTable;
+            public int          EnemyBuffer;
+            public int          Day;
+
+            public NativeList<PlaceRoadCommand>     RoadOut;
+            public NativeList<PlaceBuildingRequest> BldOut;
+            public NativeList<GrowthLog>            LogOut;
+
+            public void Execute()
+            {
+                for (int t = 0; t < Teams.Length; t++)
+                {
+                    int owner = Teams[t].Owner;
+                    var grid  = Teams[t].Grid;
+
+                    var rng = Unity.Mathematics.Random.CreateFromIndex(
+                        math.hash(new int2(Day + 1, owner + 1)) ^ grid.Seed);
+
+                    // 구획 채우기 → 확장: 갇힌 구획을 격자 패킹으로 개발(DevelopParcels),
+                    //   개발할 갇힌 구획이 없으면 바깥으로 블록 1개 확장(GrowOneBlock).
+                    //   한 틱 건물 상한 = BuildPerTick. claimed로 같은 틱 중복 방지.
+                    int budget  = math.max(1, Cfg.BuildPerTick);
+                    var claimed = new NativeHashSet<int2>(128, Allocator.Temp);
+
+                    // 도시 '바깥(프런티어)' 영역 = 도로/건물을 벽으로 막고 bbox 테두리에서 flood.
+                    //   채우기는 enclosed(바깥 아님) 셀만 → 바깥 열린 땅은 도로 확장용으로 보존.
+                    var outside = new NativeHashSet<int2>(512, Allocator.Temp);
+                    ComputeEnclosureOutside(in Snap, owner, out int2 encLo, out int2 encHi, ref outside);
+
+                    // "건설은 베이스-연결에서만"(행위 규칙) — 단절된 자기 도로 섬은 확장 앵커/입구로 못 쓴다.
+                    //   섬 자체는 포위 상태로 존속(상태 허용) — 파괴/재연결은 janitor·capture 소관.
+                    var baseReached = new NativeHashSet<int2>(256, Allocator.Temp);
+                    ComputeBaseReached(in Snap, owner, grid.Anchor, ref baseReached);
+
+                    // 1) 갇힌 구획 개발 (D1 구획 파생 + B 격자 패킹).
+                    bool worked = DevelopParcels(in Snap, in grid, owner, in OptA, in OptB,
+                        in outside, encLo, encHi, in TeamsTable, EnemyBuffer, in baseReached,
+                        budget, ref claimed, ref BldOut);
+
+                    // 2) 개발할 갇힌 구획 없음 → 바깥 확장 1회(새 블록, 바깥-전용).
+                    if (!worked)
+                    {
+                        bool aOk = OptA.Key > 0, bOk = OptB.Key > 0;
+                        BuildOption first, second;
+                        if (aOk && bOk)
+                        {
+                            bool pickA = rng.NextBool();
+                            first  = pickA ? OptA : OptB;
+                            second = pickA ? OptB : OptA;
+                        }
+                        else { first = aOk ? OptA : OptB; second = default; }
+
+                        bool grew = first.Key > 0 && GrowOneBlock(in Snap, in grid, owner, in first,
+                            in Cfg, in outside, encLo, encHi, in TeamsTable, EnemyBuffer,
+                            in baseReached, ref rng, ref RoadOut, ref BldOut, ref LogOut);
+                        if (!grew && second.Key > 0 && second.Key != first.Key)
+                            GrowOneBlock(in Snap, in grid, owner, in second,
+                                in Cfg, in outside, encLo, encHi, in TeamsTable, EnemyBuffer,
+                                in baseReached, ref rng, ref RoadOut, ref BldOut, ref LogOut);
+                    }
+
+                    claimed.Dispose();
+                    outside.Dispose();
+                    baseReached.Dispose();
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        //  성장 로직 (전부 Burst 잡 안에서 실행 — 스냅샷 전용, 관리형 API 금지)
+        // ══════════════════════════════════════════════════════════════════════
+
+        // 방향 인덱스 0~3 → 오프셋 (N,E,S,W). RoadDirOps.Offsets(managed 배열)의 Burst-안전 판.
+        static int2 Dir4(int d) => d switch
+        {
+            0 => new int2(0, 1),
+            1 => new int2(1, 0),
+            2 => new int2(0, -1),
+            _ => new int2(-1, 0),
+        };
+
         static bool GrowOneBlock(
-            in GridLayers layers, in EntranceLookup entranceLookup, in PrefabMetaLookup metaLookup,
-            in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner,
-            int chosenKey, int day,
+            in GrowthSnap layers, in CityGrid grid, int owner, in BuildOption opt,
             in GrowthConfig cfg,
             in NativeHashSet<int2> outside, int2 encLo, int2 encHi, in TeamTable teams, int enemyBuffer,
             in NativeHashSet<int2> baseReached,
-            ref Unity.Mathematics.Random rng, ref EntityCommandBuffer ecb)
+            ref Unity.Mathematics.Random rng,
+            ref NativeList<PlaceRoadCommand> roadOut, ref NativeList<PlaceBuildingRequest> bldOut,
+            ref NativeList<GrowthLog> logOut)
         {
-            if (!metaLookup.TryGetMeta(chosenKey, 0, out var meta)) return false;
-            int2 sz = meta.Size;
-            if (sz.x <= 0 || sz.y <= 0) return false;
-
             int Road = math.max(1, grid.Road);
-            int K = BlockSizeFor(math.max(sz.x, sz.y));
-            if (K == 0)
-            { Debug.LogWarning($"[AiCityGrowth] team{owner}: 건물 key={chosenKey} size={sz} 8셀 초과"); return false; }
-
-            bool hasEnt = meta.HasEntrance && entranceLookup.TryGet(chosenKey, out _);
-            EntranceInfo ent = default;
-            if (hasEnt) entranceLookup.TryGet(chosenKey, out ent);
+            int K = opt.BlockK;   // BlockSizeFor(max(Size)) — 무효 키는 Resolve에서 걸러짐
 
             if (!TeamRoadBounds(in layers, owner, out int2 rmin, out int2 rmax))
-            { Debug.LogWarning($"[AiCityGrowth] team{owner}: 팀 도로 없음"); return false; }
+            { logOut.Add(new GrowthLog { Owner = owner, Kind = GrowthLog.NoTeamRoad }); return false; }
             float2 baseC = new float2((rmin.x + rmax.x) * 0.5f, (rmin.y + rmax.y) * 0.5f);
 
             // 확장 편향(expansion bias) — 고정 Anchor 기준 축별 확장량. 덜 자란 축을 최우선으로
@@ -171,10 +470,10 @@ namespace CitySim
                 {
                     int2 O = QuadrantOrigin(fo, q, K, Road);
                     if (!seen.Add(O)) continue;
-                    if (!BlockValid(in layers, in cellTypeLookup, O, K, Road, owner, in teams, enemyBuffer)) continue;
+                    if (!BlockValid(in layers, O, K, Road, owner, in teams, enemyBuffer)) continue;
                     if (cfg.RejectParallelSeam && IsParallelSeam(O, K, Road, owner, in layers)) continue;
                     // 바깥-전용 확장: 블록 내부가 '갇힌(enclosed)' 포켓이면 거부(중첩 방지).
-                    //   갇힌 빈 구획은 채우기/골목이 담당, 확장은 바깥 프런티어로만.
+                    //   갇힌 빈 구획은 채우기가 담당, 확장은 바깥 프런티어로만.
                     if (!InteriorExterior(O, K, in outside, encLo, encHi)) continue;
 
                     // 연결성은 앵커 도로 footprint(fo)가 링에 포함되어 보장됨 → 별도 게이트 불필요.
@@ -212,14 +511,14 @@ namespace CitySim
                     if (Better(cands[i], cands[bi])) bi = i;
                 int2 pick = cands[bi].O;
                 cands.RemoveAtSwapBack(bi);
-                if (DevelopBlock(in layers, in grid, pick, K, Road, owner, chosenKey,
-                        sz, hasEnt, in ent, meta.BuildableOn, in cellTypeLookup, ref ecb))
+                if (DevelopBlock(in layers, in grid, pick, K, Road, owner, in opt,
+                        ref roadOut, ref bldOut))
                 { grew = true; break; }
             }
             cands.Dispose();
             if (grew) return true;
 
-            Debug.Log($"[AiCityGrowth] team{owner} day{day}: 성장 자리 없음 K={K} (유효후보={nValid})");
+            logOut.Add(new GrowthLog { Owner = owner, Kind = GrowthLog.NoSpot, A = K, B = nValid });
             return false;
         }
 
@@ -241,8 +540,6 @@ namespace CitySim
              : a.Sides != b.Sides ? a.Sides > b.Sides
              : a.Dist  < b.Dist;
 
-        static int BlockSizeFor(int maxDim) => maxDim <= 4 ? 4 : maxDim <= 6 ? 6 : maxDim <= 8 ? 8 : 0;
-
         // 도로 footprint 원점 fo를 코너로, 사분면 q에 K×K 블록(내부 원점).
         //   두 근접 링(roadSize=Road 폭)이 fo의 도로 footprint와 정확히 일치 → 밀림 없음.
         //   q: 0=NE,1=NW,2=SE,3=SW. (fo = 블록 쪽 코너의 도로 footprint 원점)
@@ -255,7 +552,7 @@ namespace CitySim
         };
 
         // 도로 footprint의 4변 바깥에 빈 셀이 하나라도 있나(프런티어 판정).
-        static bool HasEmptyNeighborFootprint(int2 fo, int rs, in GridLayers layers)
+        static bool HasEmptyNeighborFootprint(int2 fo, int rs, in GrowthSnap layers)
         {
             for (int i = 0; i < rs; i++)
             {
@@ -269,7 +566,7 @@ namespace CitySim
 
         // 도로 footprint 매크로 4-이웃 비트마스크 (bit0=N,1=E,2=S,3=W).
         //   footprint 변 너머에 같은 팀 도로가 있으면 그 방향 비트 set.
-        static int RoadFootprintMask(int2 fo, int rs, in GridLayers layers, int owner)
+        static int RoadFootprintMask(int2 fo, int rs, in GrowthSnap layers, int owner)
         {
             int m = 0;
             for (int i = 0; i < rs; i++)
@@ -309,11 +606,9 @@ namespace CitySim
 
         // ── 블록 개발: 도로 링 + 건물 1개 ────────────────────────────────────
         static bool DevelopBlock(
-            in GridLayers layers, in CityGrid grid, int2 O, int K, int Road,
-            int owner, int chosenKey,
-            int2 sz, bool hasEnt, in EntranceInfo ent, TerrainMask buildableOn,
-            in CellTypeLookup cellTypeLookup,
-            ref EntityCommandBuffer ecb)
+            in GrowthSnap layers, in CityGrid grid, int2 O, int K, int Road,
+            int owner, in BuildOption opt,
+            ref NativeList<PlaceRoadCommand> roadOut, ref NativeList<PlaceBuildingRequest> bldOut)
         {
             // Road==1(기본 DefaultSize)은 그린-방향(연속 루프) 발행 → 겹치는 모든
             //   셀이 OR 병합돼 교차로가 아닌 이음매도 연결(유저 드래그와 같은 모델).
@@ -330,15 +625,14 @@ namespace CitySim
             else
                 CollectRingRoads(in layers, O, K, Road, ref roadOrigins, ref roadAxis, ref plannedRoad);
 
-            bool placed = TryPlaceBuildingInSpan(in layers, in cellTypeLookup, O, K,
-                sz, hasEnt, in ent, buildableOn, in plannedRoad, out int2 bOrigin, out float bRot);
+            bool placed = TryPlaceBuildingInSpan(in layers, O, K,
+                in opt, in plannedRoad, out int2 bOrigin, out float bRot);
 
             if (placed)
             {
                 for (int i = 0; i < roadOrigins.Length; i++)
                 {
-                    var e = ecb.CreateEntity();
-                    ecb.AddComponent(e, new PlaceRoadCommand
+                    roadOut.Add(new PlaceRoadCommand
                     {
                         Cell = roadOrigins[i], OwnerLocalId = owner, LaneCount = 2,
                         FactionId = grid.FactionId, Size = (byte)Road,
@@ -347,10 +641,9 @@ namespace CitySim
                     });
                 }
 
-                var be = ecb.CreateEntity();
-                ecb.AddComponent(be, new PlaceBuildingRequest
+                bldOut.Add(new PlaceBuildingRequest
                 {
-                    MainKey = chosenKey, VariantKey = 0, Cell = bOrigin, RotationY = bRot,
+                    MainKey = opt.Key, VariantKey = 0, Cell = bOrigin, RotationY = bRot,
                     OwnerLocalId = owner, FactionId = grid.FactionId, RequireRoadAccess = true,
                 });
             }
@@ -401,7 +694,7 @@ namespace CitySim
         //   → 평행하게 1칸 옆에 깔린 도로(예: seam)는 축이 안 맞아 자동 연결되지 않는다
         //     (사거리 떡칠 방지). 실제로 변이 공유되면 같은 셀이라 정상 연결.
         static void CollectRingRoads(
-            in GridLayers layers, int2 O, int K, int Road,
+            in GrowthSnap layers, int2 O, int K, int Road,
             ref NativeList<int2> outOrigins, ref NativeList<RoadPlacedAxis> outAxis,
             ref NativeHashSet<int2> outCells)
         {
@@ -421,7 +714,7 @@ namespace CitySim
         }
 
         static void AddRoadFootprint(
-            int2 origin, RoadPlacedAxis axis, int Road, in GridLayers layers,
+            int2 origin, RoadPlacedAxis axis, int Road, in GrowthSnap layers,
             ref NativeList<int2> outOrigins, ref NativeList<RoadPlacedAxis> outAxis,
             ref NativeHashSet<int2> outCells)
         {
@@ -438,12 +731,13 @@ namespace CitySim
         }
 
         static bool TryPlaceBuildingInSpan(
-            in GridLayers layers, in CellTypeLookup cellTypeLookup, int2 spanOrigin, int spanSize,
-            int2 sz, bool hasEnt, in EntranceInfo ent, TerrainMask buildableOn,
+            in GrowthSnap layers, int2 spanOrigin, int spanSize,
+            in BuildOption opt,
             in NativeHashSet<int2> plannedRoad, out int2 bestOrigin, out float bestRot)
         {
             bestOrigin = default; bestRot = 0f;
-            int stepCount = hasEnt ? 4 : 1;
+            int2 sz = opt.Size;
+            int stepCount = opt.HasEnt ? 4 : 1;
             for (int cz = 0; cz < spanSize; cz++)
             for (int cx = 0; cx < spanSize; cx++)
             {
@@ -452,10 +746,10 @@ namespace CitySim
                 {
                     int2 eff = EntranceOps.RotateSize(sz, steps);
                     if (cx + eff.x > spanSize || cz + eff.y > spanSize) continue;
-                    if (!FootprintBuildableFlat(origin, eff, buildableOn, in layers, in cellTypeLookup)) continue;
-                    if (hasEnt)
+                    if (!FootprintBuildableFlat(origin, eff, opt.BuildableOn, in layers)) continue;
+                    if (opt.HasEnt)
                     {
-                        int2 erc = EntranceOps.EntranceRoadCell(origin, sz, in ent, steps);
+                        int2 erc = EntranceOps.EntranceRoadCell(origin, sz, in opt.Ent, steps);
                         if (!layers.RoadLayer.ContainsKey(erc) && !plannedRoad.Contains(erc)) continue;
                     }
                     bestOrigin = origin;
@@ -469,7 +763,7 @@ namespace CitySim
         // 셀이 적 영역/경합지이거나 그로부터 buffer(셀) 안인가 — AI 확장 완충 게이트.
         //   정확한 팽창(dilation) 대신 8방향 buffer 지점 샘플 근사(저비용, DayChanged 저빈도라 충분).
         static bool NearEnemyOrContested(
-            in GridLayers layers, int2 c, int owner, in TeamTable teams, int buffer)
+            in GrowthSnap layers, int2 c, int owner, in TeamTable teams, int buffer)
         {
             if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, c, owner, in teams)
                 || TerritoryOps.IsContested(in layers.TerritoryLayer, c)) return true;
@@ -486,30 +780,30 @@ namespace CitySim
             return false;
         }
 
-        static bool FootprintTouchesTeamRoad(int2 origin, int2 eff, int owner, in GridLayers layers)
+        static bool FootprintTouchesTeamRoad(int2 origin, int2 eff, int owner, in GrowthSnap layers)
         {
             for (int dz = 0; dz < eff.y; dz++)
             for (int dx = 0; dx < eff.x; dx++)
             {
                 int2 c = origin + new int2(dx, dz);
                 for (int d = 0; d < 4; d++)
-                    if (IsTeamRoad(c + RoadDirOps.Offsets[d], in layers, owner)) return true;
+                    if (IsTeamRoad(c + Dir4(d), in layers, owner)) return true;
             }
             return false;
         }
 
-        // ── D1+B+C1: 갇힌 빈 구획 개발 ──────────────────────────────────────
+        // ── D1+B: 갇힌 빈 구획 개발 ──────────────────────────────────────────
         //  enclosed empty 셀(=outside 아님, buildable, Land)을 4-연결 '구획'으로 묶고(D1):
         //    · B: 구획 bbox 원점 기준 격자로 건물 패킹(큰 plot 먼저, 작은 나중 = 혼합).
         //         → 4×4 구획에 2×2 4개 정확히. 격자 정렬이라 빈틈/낭비 없음.
         //    · (C1 골목 분할은 폐기(2026-07-01) — 도로 안 닿는 깊은 셀은 빈 공터로 남긴다.)
         //  반환: 건물을 하나라도 발행했으면 true.
         static bool DevelopParcels(
-            in GridLayers layers, in EntranceLookup entranceLookup, in PrefabMetaLookup metaLookup,
-            in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner, in GrowthConfig cfg,
+            in GrowthSnap layers, in CityGrid grid, int owner,
+            in BuildOption optA, in BuildOption optB,
             in NativeHashSet<int2> outside, int2 encLo, int2 encHi, in TeamTable teams, int enemyBuffer,
             in NativeHashSet<int2> baseReached,
-            int budget, ref NativeHashSet<int2> claimed, ref EntityCommandBuffer ecb)
+            int budget, ref NativeHashSet<int2> claimed, ref NativeList<PlaceBuildingRequest> bldOut)
         {
             if (encHi.x < encLo.x || encHi.y < encLo.y) return false;   // 도로 없음
 
@@ -522,19 +816,16 @@ namespace CitySim
                 if (outside.Contains(c)) continue;
                 if (!CellBuildable(c, in layers)) continue;                 // 도로/건물/자원/맵밖 제외
                 if (NearEnemyOrContested(in layers, c, owner, in teams, enemyBuffer)) continue;
-                if (layers.TerrainLayer.TryGetValue(c, out var tc)
-                    && cellTypeLookup.TryGet(tc.TypeId, out var ti)
-                    && ti.TerrainCategory == TerrainCategory.Water) continue;
+                if (layers.WaterCells.Contains(c)) continue;
                 enc.Add(c);
             }
             if (enc.IsEmpty) { enc.Dispose(); return false; }
 
             // plot 크게→작게 (혼합): 두 키 중 큰 것 먼저.
-            int keyBig = cfg.BuildingKeyB, keySmall = cfg.BuildingKeyA;
-            if (metaLookup.TryGetMeta(cfg.BuildingKeyA, 0, out var mA)
-                && metaLookup.TryGetMeta(cfg.BuildingKeyB, 0, out var mB)
-                && math.max(mA.Size.x, mA.Size.y) > math.max(mB.Size.x, mB.Size.y))
-            { keyBig = cfg.BuildingKeyA; keySmall = cfg.BuildingKeyB; }
+            BuildOption optBig = optB, optSmall = optA;
+            if (optA.Key > 0 && optB.Key > 0
+                && math.max(optA.Size.x, optA.Size.y) > math.max(optB.Size.x, optB.Size.y))
+            { optBig = optA; optSmall = optB; }
 
             bool didAny = false;
             int placed = 0;
@@ -554,22 +845,19 @@ namespace CitySim
                     mn = math.min(mn, cur); mx = math.max(mx, cur);
                     for (int d = 0; d < 4; d++)
                     {
-                        int2 nb = cur + RoadDirOps.Offsets[d];
+                        int2 nb = cur + Dir4(d);
                         if (enc.Contains(nb) && visited.Add(nb)) q.Enqueue(nb);
                     }
                 }
 
                 // B: 격자 패킹 (큰 plot 먼저, 작은 나중)
                 if (placed < budget)
-                    placed += PackOnGrid(keyBig, mn, mx, in enc, in layers, in entranceLookup,
-                        in metaLookup, in cellTypeLookup, in grid, owner, in baseReached, budget - placed, ref claimed, ref ecb);
+                    placed += PackOnGrid(in optBig, mn, mx, in enc, in layers,
+                        in grid, owner, in baseReached, budget - placed, ref claimed, ref bldOut);
                 if (placed < budget)
-                    placed += PackOnGrid(keySmall, mn, mx, in enc, in layers, in entranceLookup,
-                        in metaLookup, in cellTypeLookup, in grid, owner, in baseReached, budget - placed, ref claimed, ref ecb);
+                    placed += PackOnGrid(in optSmall, mn, mx, in enc, in layers,
+                        in grid, owner, in baseReached, budget - placed, ref claimed, ref bldOut);
                 if (placed > 0) didAny = true;
-
-                // (C1 골목 분할은 폐기(2026-07-01) — 링과 안 이어진 내부 도로가 소용 없고
-                //  파괴 후 잔해가 재개발을 방해. 도로 안 닿는 깊은 셀은 빈 공터로 남는다.)
 
                 if (placed >= budget) break;
             }
@@ -580,22 +868,15 @@ namespace CitySim
 
         // 구획 bbox를 plot(정사각 P) 격자로 채운다 — footprint가 구획(enc) 안 + 미예약 + 입구 도로닿음.
         static int PackOnGrid(
-            int key, int2 mn, int2 mx, in NativeHashSet<int2> enc,
-            in GridLayers layers, in EntranceLookup entranceLookup, in PrefabMetaLookup metaLookup,
-            in CellTypeLookup cellTypeLookup, in CityGrid grid, int owner,
+            in BuildOption opt, int2 mn, int2 mx, in NativeHashSet<int2> enc,
+            in GrowthSnap layers, in CityGrid grid, int owner,
             in NativeHashSet<int2> baseReached, int budget,
-            ref NativeHashSet<int2> claimed, ref EntityCommandBuffer ecb)
+            ref NativeHashSet<int2> claimed, ref NativeList<PlaceBuildingRequest> bldOut)
         {
-            if (key <= 0 || budget <= 0) return 0;
-            if (!metaLookup.TryGetMeta(key, 0, out var meta)) return 0;
-            int2 sz = meta.Size;
-            if (sz.x <= 0 || sz.y <= 0) return 0;
+            if (opt.Key <= 0 || budget <= 0) return 0;
+            int2 sz = opt.Size;
             int P = math.max(sz.x, sz.y);
-
-            bool hasEnt = meta.HasEntrance && entranceLookup.TryGet(key, out _);
-            EntranceInfo ent = default;
-            if (hasEnt) entranceLookup.TryGet(key, out ent);
-            int stepCount = hasEnt ? 4 : 1;
+            int stepCount = opt.HasEnt ? 4 : 1;
 
             int count = 0;
             for (int gz = mn.y; gz + P - 1 <= mx.y; gz += P)
@@ -606,7 +887,7 @@ namespace CitySim
                 for (int steps = 0; steps < stepCount; steps++)
                 {
                     int2 eff = EntranceOps.RotateSize(sz, steps);
-                    if (!FootprintBuildableFlat(origin, eff, meta.BuildableOn, in layers, in cellTypeLookup))
+                    if (!FootprintBuildableFlat(origin, eff, opt.BuildableOn, in layers))
                         continue;
 
                     bool ok = true;
@@ -618,20 +899,19 @@ namespace CitySim
                     }
                     if (!ok) continue;
 
-                    if (hasEnt)
+                    if (opt.HasEnt)
                     {
-                        if (!EntranceOps.IsEntranceOnOwnRoad(origin, sz, in ent, steps, in layers.RoadLayer, owner)) continue;
+                        if (!EntranceOps.IsEntranceOnOwnRoad(origin, sz, in opt.Ent, steps, in layers.RoadLayer, owner)) continue;
                         // 행위 규칙: 입구 도로는 '베이스-연결'이어야 — 단절 섬 내부 개발 금지(포위 상태 존중).
-                        int2 erc = EntranceOps.EntranceRoadCell(origin, sz, in ent, steps);
+                        int2 erc = EntranceOps.EntranceRoadCell(origin, sz, in opt.Ent, steps);
                         if (layers.RoadLayer.TryGetValue(erc, out var ercRc)
                             && !baseReached.Contains(ercRc.FootprintOrigin)) continue;
                     }
                     else if (!FootprintTouchesTeamRoad(origin, eff, owner, in layers)) continue;
 
-                    var be = ecb.CreateEntity();
-                    ecb.AddComponent(be, new PlaceBuildingRequest
+                    bldOut.Add(new PlaceBuildingRequest
                     {
-                        MainKey = key, VariantKey = 0, Cell = origin,
+                        MainKey = opt.Key, VariantKey = 0, Cell = origin,
                         RotationY = EntranceOps.StepsToRotationY(steps),
                         OwnerLocalId = owner, FactionId = grid.FactionId, RequireRoadAccess = true,
                     });
@@ -649,7 +929,7 @@ namespace CitySim
         //   outside에 안 든 (윈도우 안) 셀 = enclosed(도로로 둘러싸인 안쪽). 채우기는 그쪽만.
         //   → 바깥 열린 땅은 도로 확장(DevelopBlock)용으로 비워둬 자기-포위(stop)를 막는다.
         static void ComputeEnclosureOutside(
-            in GridLayers layers, int owner, out int2 lo, out int2 hi, ref NativeHashSet<int2> outside)
+            in GrowthSnap layers, int owner, out int2 lo, out int2 hi, ref NativeHashSet<int2> outside)
         {
             lo = int2.zero; hi = int2.zero;
             if (!TeamRoadBounds(in layers, owner, out int2 mn, out int2 mx)) return;
@@ -672,7 +952,7 @@ namespace CitySim
             while (q.TryDequeue(out int2 c))
                 for (int d = 0; d < 4; d++)
                 {
-                    int2 n = c + RoadDirOps.Offsets[d];
+                    int2 n = c + Dir4(d);
                     if (n.x < lo.x || n.x > hi.x || n.y < lo.y || n.y > hi.y) continue;
                     TrySeedOutside(in layers, owner, n, ref outside, ref q);
                 }
@@ -681,7 +961,7 @@ namespace CitySim
         }
 
         // 벽(팀 도로/건물)이 아니면 outside에 추가하고 큐에 넣는다(이미 있으면 무시).
-        static void TrySeedOutside(in GridLayers layers, int owner, int2 s,
+        static void TrySeedOutside(in GrowthSnap layers, int owner, int2 s,
             ref NativeHashSet<int2> outside, ref NativeQueue<int2> q)
         {
             if (IsTeamRoad(s, in layers, owner) || IsTeamBuilding(s, in layers, owner)) return;
@@ -692,7 +972,7 @@ namespace CitySim
 
         // footprint(내부 K + 도로 링 Road) 전체 유효? 맵 안·같은 높이·Land·내부 빈·링 빈/팀도로.
         static bool BlockValid(
-            in GridLayers layers, in CellTypeLookup cellTypeLookup, int2 O, int K, int Road, int owner,
+            in GrowthSnap layers, int2 O, int K, int Road, int owner,
             in TeamTable teams, int enemyBuffer)
         {
             int2 ro = O - new int2(Road, Road);
@@ -704,8 +984,7 @@ namespace CitySim
             {
                 int2 c = ro + new int2(dx, dz);
                 if (!layers.TerrainLayer.TryGetValue(c, out var tc)) return false;        // 맵 밖
-                if (cellTypeLookup.TryGet(tc.TypeId, out var ti)
-                    && ti.TerrainCategory == TerrainCategory.Water) return false;          // 물
+                if (layers.WaterCells.Contains(c)) return false;                           // 물
                 if (first) { baseH = tc.Height; first = false; }
                 else if (tc.Height != baseH) return false;                                 // 단차
 
@@ -732,7 +1011,7 @@ namespace CitySim
         // 블록 4변이 도시(팀 도로/건물)에 닿는가 — bit0=N,1=E,2=S,3=W.
         //   ⚠ 코너 돌출을 빼고 '내부 폭 K'만 스캔(변 바로 바깥 라인). 그래야 코너에서만
         //   살짝 닿는 볼록 확장이 한 변 전체로 오판되지 않는다(오목/볼록 정확 구분).
-        static int SideMassMask(int2 O, int K, int Road, int owner, in GridLayers layers)
+        static int SideMassMask(int2 O, int K, int Road, int owner, in GrowthSnap layers)
         {
             int mask = 0;
             if (LineMass(new int2(O.x, O.y + K + Road), new int2(1, 0), K, owner, in layers)) mask |= 1; // N
@@ -745,7 +1024,7 @@ namespace CitySim
         // 블록 도로 링 중 이미 '팀 도로'인 셀 수.
         //   많을수록 기존 도로를 재사용 = 어긋남 없이 맞물림(삼거리/사거리).
         //   적으면 새 도로가 기존 도로 옆에 평행하게 깔려 '밀림'으로 보임 → 비선호.
-        static int RingShareScore(int2 O, int K, int Road, int owner, in GridLayers layers)
+        static int RingShareScore(int2 O, int K, int Road, int owner, in GrowthSnap layers)
         {
             int2 ro = O - new int2(Road, Road);
             int  rs = K + 2 * Road;
@@ -764,7 +1043,7 @@ namespace CitySim
         //   (= 공유 없이 한 칸 어긋나 나란히 깔리는 도로). → 그런 후보를 거부.
         //   변이 이미 기존 도로(공유)면 '새 변'이 아니므로 제외 → 정상 삼거리/사거리는 통과.
         //   바깥이 빈 땅인 프런티어 확장도 통과(편향 교정과 양립). 코너 오판 방지로 내부 폭 K만 스캔.
-        static bool IsParallelSeam(int2 O, int K, int Road, int owner, in GridLayers layers)
+        static bool IsParallelSeam(int2 O, int K, int Road, int owner, in GrowthSnap layers)
         {
             for (int i = 0; i < K; i++)
             {
@@ -784,21 +1063,21 @@ namespace CitySim
             return false;
         }
 
-        static bool LineMass(int2 start, int2 step, int count, int owner, in GridLayers layers)
+        static bool LineMass(int2 start, int2 step, int count, int owner, in GrowthSnap layers)
         {
             for (int i = 0; i < count; i++)
                 if (IsMass(start + step * i, in layers, owner)) return true;
             return false;
         }
 
-        static bool IsMass(int2 c, in GridLayers layers, int owner)
+        static bool IsMass(int2 c, in GrowthSnap layers, int owner)
             => IsTeamRoad(c, in layers, owner) || IsTeamBuilding(c, in layers, owner);
 
         // 베이스(Anchor 반경 8)에서 도로로 도달 가능한 자기 도로 footprint 집합.
         //   "건설은 베이스-연결에서만"(행위 규칙) — 전투/점령으로 단절된 자기 도로 섬은
         //   확장 앵커/입구로 쓰지 않는다(섬은 포위 '상태'로 존속 — 상태는 허용).
         static void ComputeBaseReached(
-            in GridLayers layers, int owner, int2 anchor, ref NativeHashSet<int2> reached)
+            in GrowthSnap layers, int owner, int2 anchor, ref NativeHashSet<int2> reached)
         {
             var visited = new NativeHashSet<int2>(256, Allocator.Temp);
             var q       = new NativeQueue<int2>(Allocator.Temp);
@@ -815,7 +1094,7 @@ namespace CitySim
             while (q.TryDequeue(out int2 cur))
                 for (int d = 0; d < 4; d++)
                 {
-                    int2 n = cur + RoadDirOps.Offsets[d];
+                    int2 n = cur + Dir4(d);
                     if (layers.RoadLayer.TryGetValue(n, out var rc) && rc.OwnerLocalId == owner
                         && visited.Add(n))
                     { q.Enqueue(n); reached.Add(rc.FootprintOrigin); }
@@ -824,7 +1103,7 @@ namespace CitySim
             visited.Dispose(); q.Dispose();
         }
 
-        static bool TeamRoadBounds(in GridLayers layers, int owner, out int2 mn, out int2 mx)
+        static bool TeamRoadBounds(in GrowthSnap layers, int owner, out int2 mn, out int2 mx)
         {
             mn = new int2(int.MaxValue, int.MaxValue); mx = new int2(int.MinValue, int.MinValue);
             bool any = false;
@@ -838,27 +1117,26 @@ namespace CitySim
 
         // ── 공용 셀 판정 ─────────────────────────────────────────────────────
 
-        static bool IsTeamRoad(int2 c, in GridLayers layers, int owner)
+        static bool IsTeamRoad(int2 c, in GrowthSnap layers, int owner)
             => layers.RoadLayer.TryGetValue(c, out var rc) && rc.OwnerLocalId == owner;
 
-        static bool IsTeamBuilding(int2 c, in GridLayers layers, int owner)
+        static bool IsTeamBuilding(int2 c, in GrowthSnap layers, int owner)
             => layers.OccupancyLayer.TryGetValue(c, out var occ)
             && occ.Type == OccupantType.Building && occ.OwnerLocalId == owner;
 
-        static bool CellBuildable(int2 c, in GridLayers layers)
+        static bool CellBuildable(int2 c, in GrowthSnap layers)
         {
             if (!layers.TerrainLayer.ContainsKey(c)) return false;
             if (layers.RoadLayer.ContainsKey(c))     return false;
             if (layers.OccupancyLayer.TryGetValue(c, out var occ) && !occ.IsEmpty
                 && occ.Type != OccupantType.Environment) return false;
-            if (layers.ResourceLayer.IsCreated
-                && layers.ResourceLayer.TryGetValue(c, out var res) && res.Amount > 0) return false;
+            if (layers.ResourceBlocked.Contains(c)) return false;
             return true;
         }
 
         static bool FootprintBuildableFlat(
             int2 origin, int2 sz, TerrainMask buildableOn,
-            in GridLayers layers, in CellTypeLookup cellTypeLookup)
+            in GrowthSnap layers)
         {
             bool first = true; byte baseH = 0;
             for (int dx = 0; dx < sz.x; dx++)
@@ -867,25 +1145,12 @@ namespace CitySim
                 int2 c = origin + new int2(dx, dz);
                 if (!layers.TerrainLayer.TryGetValue(c, out var tc)) return false;
                 if (!CellBuildable(c, in layers)) return false;
-                if (cellTypeLookup.TryGet(tc.TypeId, out var ti))
-                {
-                    var mask = ti.TerrainCategory == TerrainCategory.Water ? TerrainMask.Water : TerrainMask.Land;
-                    if ((buildableOn & mask) == 0) return false;
-                }
+                var mask = layers.WaterCells.Contains(c) ? TerrainMask.Water : TerrainMask.Land;
+                if ((buildableOn & mask) == 0) return false;
                 if (first) { baseH = tc.Height; first = false; }
                 else if (tc.Height != baseH) return false;
             }
             return true;
-        }
-
-        static int PickBuilding(in GrowthConfig cfg, ref Unity.Mathematics.Random rng)
-        {
-            bool aOk = cfg.BuildingKeyA > 0;
-            bool bOk = cfg.BuildingKeyB > 0;
-            if (aOk && bOk) return rng.NextBool() ? cfg.BuildingKeyA : cfg.BuildingKeyB;
-            if (aOk) return cfg.BuildingKeyA;
-            if (bOk) return cfg.BuildingKeyB;
-            return 0;
         }
     }
 

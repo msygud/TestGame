@@ -553,7 +553,7 @@ namespace CitySim
                 byte curH = CellHeight(cur, terrainLayer);
                 for (int d = 0; d < 4; d++)
                 {
-                    int2 nb = cur + RoadDirOps.Offsets[d];
+                    int2 nb = cur + RoadDirOps.Offset(d);   // Burst-안전(janitor 잡에서 호출됨)
                     // 목표: 섬의 자기 1×1 도로 셀에 인접 도달(접점 병합은 1×1 그린 겹침 전제).
                     if (roadLayer.TryGetValue(nb, out var nrc) && nrc.OwnerLocalId == ownerLocalId
                         && nrc.Size <= 1 && islandOrigins.Contains(nrc.FootprintOrigin))

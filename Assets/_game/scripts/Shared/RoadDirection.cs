@@ -39,6 +39,18 @@ namespace CitySim
             new int2(-1,  0),   // 3: W  (-X)
         };
 
+        /// <summary>
+        /// Offsets의 Burst-안전 판 — managed 배열 접근 없이 같은 값을 돌려준다.
+        /// Burst 잡 안에서 호출되는 코드(BlockOps 경로 탐색 등)는 이쪽을 쓸 것.
+        /// </summary>
+        public static int2 Offset(int index) => index switch
+        {
+            0 => new int2( 0,  1),   // N
+            1 => new int2( 1,  0),   // E
+            2 => new int2( 0, -1),   // S
+            _ => new int2(-1,  0),   // W
+        };
+
         /// <summary>방향 인덱스 0~3 → RoadDir 단일 비트.</summary>
         public static RoadDir FromIndex(int index) => (RoadDir)(1 << index);
 

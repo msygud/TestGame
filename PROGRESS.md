@@ -18,15 +18,83 @@
 프런트 불변 스냅샷 + `TerritoryVersion` 캐시 키. 독자는 매 업데이트 싱글톤에서 새로 받아 읽기만(기존 코드 이미 준수
 — 독자 수정 사실상 0). 스왑 순서는 GridLayers 컴포넌트 접근 선언으로 강제(확립 기법).
 
-**이행 우선순위**:
-1. **TerritorySystem 풀 파이프라인** (거주지 수집 잡 → owner별 병렬 체임퍼 DT 잡 8개 → 경합 해소 잡 → 백 버퍼
-   → 스왑) — **청사진**. 스파이크 80ms → ~0 목표.
-2. 렌더 빌더(아웃라인/F7/HP바/경고) 정점 생성을 Burst 잡으로, 메인은 Mesh 업로드만. HP바 카메라 거리 컬링 검토.
-3. TerritoryCaptureSystem / DeadReferenceReclaim → IJobEntity + ECB ParallelWriter + `EntityStorageInfoLookup.Exists`.
-4. AI 성장/janitor(게임-일 1회, 드묾) — 같은 패턴 후순위.
+**프로파일 실측(2026-07-04, 유저 제공 — Main Thread ms)**: AiCityGrowth **43** / UnitSelectionTestController 7.5 /
+AiRoadJanitor 3.1 / RoadSystem 1.6 / HealthBar 0.26. 각 시스템이 자기 게이트(틱) 때 스파이크.
+로지스틱 pull/push는 현재 사용량이 적어 낮지만 본격 사용 시 커질 전망(유저 판단).
+UnitSelectionTestController는 전투 유닛 세션에서 함께 다루기로(유저).
 
-**미해결 확인 사항**: 평시 30ms의 프로파일러 상위 5개 항목(Main Thread) — 유저에게 요청해둠. 순위 2가 맞는지
-데이터로 확정 필요.
+**이행 우선순위(실측 반영 재조정)**:
+1. ✅ **AiCityGrowthSystem 잡화 완료(2026-07-04, 컴파일 통과)** — 43ms 스파이크 → 워커. 아래 상세.
+2. ✅ **TerritorySystem 잡화 완료(2026-07-05)** — 더블 버퍼 + 폴링. 아래 상세.
+   **✅ 시뮬 검증(유저, 256×256 독립 4팀)**: 평균 20~25ms 유지, 카메라 전환 끊김 없음(메인 비블로킹 확인).
+   프로파일러에 스파이크는 보이나 = 두 무거운 계산이 단일 잡으로 워커에서 20~30ms 도는 순간(의도된 모습).
+   잔여 스파이크 후보: ① 스왑 프레임에 TerritoryVersion +1 → 아웃라인/F7 **메시 재구축(메인)** — 우선순위 4
+   (렌더 빌더 잡화)로 해소 예정 ② 1초 틱 시스템들 위상 정렬(스태거 미적용).
+3. ✅ **AiRoadJanitorSystem 잡화 완료(2026-07-05)** — AiCityGrowth와 동일 패턴(스냅샷+폴링). 아래 상세.
+4. 렌더 빌더(아웃라인/F7/경고) 정점 생성을 Burst 잡으로. HP바(0.26ms)는 후순위. **← 다음 작업**.
+5. TerritoryCaptureSystem / DeadReferenceReclaim → IJobEntity + ECB ParallelWriter + `EntityStorageInfoLookup.Exists`.
+6. 로지스틱 pull/push — 본격 사용 전 같은 패턴 선제 적용.
+
+### ✅ GC 쓰레기 수술 (2026-07-05) — 주기적 300MB GC 스파이크(~10ms) 대응 (⚠ 에디터 검증 필요)
+> 잡화 후 실측: 평시 <20ms(시작 10ms), 최대 스파이크 = 주기적 GC(누적 ~300MB, ~10ms).
+> 원인 = 매 프레임 관리형 할당(IMGUI 쿼리/문자열이 주범). 수정 원칙: **문자열은 값이 바뀔 때만
+> 재조립, EntityQuery는 월드당 1회, TMP/TextMesh 대입은 참조 바뀔 때만**.
+- **GameClockHud**: `CreateEntityQuery`를 OnGUI(프레임당 2회+)마다 생성/해제하던 것 → 월드당 1회 캐시.
+  시간 문자열은 (일·분·배속) 변화 시만 재조립(게임-분당 1회).
+- **ResourceDebugVisualizer**: 쿼리 캐시 + 셀 라벨 문자열 (TypeId,Amount) 변화 시만 재조립 +
+  TypeId→색 캐시(LoadRuntime 셀×프레임 호출 제거). 자원 셀 수 × 2회/프레임 문자열이 최대 발생원이었음.
+- **GameHUD**: `RefreshRoadPanel`(매 프레임)의 라벨 대입을 `SetTextIfChanged`(참조 비교)로 게이트,
+  Segments 문자열은 수 변화 시만. TMP 재레이아웃도 함께 절약.
+- **RoadBuildController.HoverStatusText**: `$"Blocked: {..}"` 보간 → 상수 switch(무할당).
+  **BuildingPlaceController.StatusText**: (key·회전·상태) 변화 시만 재조립(캐시).
+- **UnitSelectionTestController**(최소 패치 — 본 개편은 전투 세션): OnGUI 헤더(항상 켜짐, ShowDebugHud=true)
+  카운트 변화 시만 재조립 / 이름 라벨(명령 종류 변화 시만) / HP 라벨(정수 표시값 변화 시만).
+  ⚠ 무기 상태 라벨(FormatWeaponReadyStates)은 여전히 매 프레임 조립 — 전투 세션에서 정리.
+- 남은 잠재원(미확인): IMGUI 자체 오버헤드(이벤트당 소량), 에디터 전용 할당(프로파일러/인스펙터).
+  수정 후에도 GC가 남으면 프로파일러 **GC.Alloc 콜스택**으로 재확인.
+
+### ✅ AiRoadJanitorSystem 잡화 (2026-07-05) — 스냅샷+폴링, ECB in-job (⚠ 에디터 컴파일/동작 미검증)
+- **구조**: AiCityGrowth와 동일 — DayChanged → ① `SnapshotJob`(레이어 5종 + **CellTypes 테이블**까지 복사,
+  `state.Dependency` 등록 + GridLayers RW 선언) → ② `JanitorJob`(Burst, 팀별 트림/섬/지선 + 입구 복구 전부 —
+  **ECB에 직접 기록**, 핸들은 체인 밖 폴링) → ③ 완료 시 메인에서 `ECB.Playback`만.
+- **ECB in-job 패턴 채택**: 명령 종류가 4가지(Remove/Place/PathRequest×2)라 출력 리스트 분리 대신
+  Persistent ECB를 잡에 넘겨 기록 — `RoadPathSystem.EmitDrawnPath`(internal, 순수)를 잡 안에서 그대로 재사용.
+- **입력 값-해석**: AI 팀(owner/faction/anchor)·RoadSpur 목록·입구 건물 목록(BldInput)을 메인에서 수집해
+  배열로 전달. 룩업(CellType)은 스냅샷 복사 → 잡이 라이브 컨테이너를 안 들고 감.
+- **공용 수정**: `RoadDirOps.Offset(int)` 신규(Burst-안전 switch 판 — managed 배열 `Offsets`의 잡 내 대체재),
+  `BlockOps.FindRoadPathToIsland`가 이를 사용(janitor 잡에서 호출되므로). 다른 Offsets 소비자는 무변경.
+- 스냅샷 복사가 AiCityGrowth와 같은 프레임(DayChanged)에 겹치지만 양쪽 다 빠른 읽기 잡이라 무해
+  (RW 선언 순서에 따라 직렬화될 수 있으나 ~ms). 공유 스냅샷 통합은 이득 대비 결합도가 커서 보류.
+
+### ✅ TerritorySystem 잡화 (2026-07-05) — 더블 버퍼 스왑 파이프라인 (⚠ 에디터 컴파일/동작 미검증)
+- **구조**: 1초 게이트 → ① 입력 수집(메인, 소량: 거주지 쿼리·영향력 버퍼·config) →
+  ② `ComputeJob`(Burst, 체임퍼 DT + 버킷 선별 + 경합 해소 **전부** — **백 버퍼**에만 씀, 핸들은
+  체인 밖 폴링) → ③ 완료 시 메인에서 **TerritoryLayer ↔ 백 버퍼 핸들 스왑 O(1)** + `TerritoryVersion` +1.
+- **다독자 계약 구현**: 프런트는 스왑 사이 불변(단일 쓰기자=이 시스템, 잡은 백에만 씀) → 게이트 6곳·렌더·
+  capture 등 독자는 무수정. 스왑 직전 `GetSingletonRW<GridLayers>`(쓰기 선언)로 등록 독자 잡과 순서 강제.
+- **TerrainLayer는 복사 안 함** — 맵 로드 후 불변이므로 `_terrainKeys` 키 집합을 **최초/Count 변화 시 1회**만
+  `TerrainKeysJob`으로 재빌드(이것만 `state.Dependency` 등록). 매초 스냅샷 비용 0.
+- 옛 프런트(스타트포인트 초기값 포함)는 스왑 후 백 버퍼가 되어 다음 계산이 Clear 후 재사용.
+- 부수 효과: 예전엔 재계산 프레임에 레이어가 clear→rewrite 중간 상태였는데(같은 프레임 내라 무해했지만),
+  이제 독자는 항상 **완성본만** 본다(엄밀히 개선).
+- 참고: owner별 병렬 DT(8잡 분할)는 보류 — 1초 케이던스에서 지연 무의미, 단일 IJob(워커 점유 ~수십 ms/초)로 충분.
+  워커 경합이 보이면 그때 분할.
+
+### ✅ AiCityGrowthSystem 잡화 (2026-07-04) — 첫 "스냅샷+폴링" 파이프라인 (⚠ 에디터 컴파일/동작 미검증)
+- **구조**: DayChanged → ① `SnapshotJob`(Burst, 레이어 5종+CellType水 해석을 잡 전용 복사본으로) →
+  ② `GrowthJob`(Burst, 기존 성장 로직 전체 — 스냅샷만 읽음) → ③ `IsCompleted` 폴링 후 메인에서
+  `PlaceRoadCommand`/`PlaceBuildingRequest` 엔티티 생성만(ECB Temp).
+- **의존성 계약**: ①은 `state.Dependency`에 등록 + `GetSingletonRW<GridLayers>`(의도적 Write 선언)
+  → 이후 레이어 접근 시스템이 '복사 완료'만 대기(빠름). ②의 핸들은 **체인 밖(프라이빗 필드)** —
+  스냅샷만 읽으므로 여러 프레임 걸쳐 실행돼도 아무도 안 기다림. 잡 실행 중 DayChanged 오면
+  `_dayPending`으로 완료 직후 재스케줄(일 스킵 없음).
+- **잡 호환 변환**: 룩업(meta/입구)은 메인에서 `BuildOption` 값으로 선해석(잡이 룩업 컨테이너 안 듦),
+  물/자원은 스냅샷 시점에 `WaterCells`/`ResourceBlocked` 셀 집합으로 선해석, `Debug.Log`는
+  `GrowthLog` 이벤트로 모아 완료 후 메인 출력, `RoadDirOps.Offsets`(managed 배열)는 Burst-안전
+  `Dir4()` 스위치로 대체. 로직 자체(후보 랭킹/구획 패킹/enclosure/베이스-연결)는 무변경.
+- **미세 의미 변화(수용)**: `FootprintBuildableFlat`에서 TypeId 미등록 셀이 예전엔 지형 마스크 검사
+  통과였는데 이제 Land 취급(성장 건물은 Land 전용이라 실질 무영향).
+- ⚠ ResourceLayer 미생성 대비 `_emptyRes` 더미 캡처. OnDestroy에서 잡 완료+해제 처리.
 
 ---
 

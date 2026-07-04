@@ -72,6 +72,20 @@ namespace CitySim
 
         int _activeTab = -1;
 
+        // GC/재레이아웃 방지(2026-07-05) — TMP .text는 같은 내용이라도 대입하면 재구축이 돌 수
+        //   있고, 매 프레임 보간 문자열은 GC 쓰레기. 컨트롤러가 상태 문자열을 캐싱(참조 안정)
+        //   하므로 '참조가 바뀔 때만' 대입한다.
+        string _assignedToggle, _assignedSegment, _assignedHover;
+        int    _lastSegmentCount = -1;
+        string _segmentText = string.Empty;
+
+        static void SetTextIfChanged(TMP_Text lbl, string s, ref string last)
+        {
+            if (lbl == null || ReferenceEquals(last, s)) return;
+            lbl.text = s;
+            last = s;
+        }
+
         // ───────────────────────────────────────────────────────────
         void Start()
         {
@@ -119,9 +133,9 @@ namespace CitySim
                 _buildController.ExitMode();
 
             // 호버 상태 라벨 재사용 (도로 탭과 공유).
-            if (_lblHoverStatus != null)
-                _lblHoverStatus.text = _buildController.IsModeActive
-                    ? _buildController.StatusText : string.Empty;
+            SetTextIfChanged(_lblHoverStatus,
+                _buildController.IsModeActive ? _buildController.StatusText : string.Empty,
+                ref _assignedHover);
         }
 
         // ───────────────────────────────────────────────────────────
@@ -244,8 +258,8 @@ namespace CitySim
             if (_roadController == null) return;
             bool roadActive  = _roadController.IsModeActive;
 
-            if (_lblRoadToggle  != null)
-                _lblRoadToggle.text = roadActive ? "Stop" : "Build Road";
+            // 리터럴은 intern 되어 참조가 안정 — 바뀔 때만 대입된다.
+            SetTextIfChanged(_lblRoadToggle, roadActive ? "Stop" : "Build Road", ref _assignedToggle);
 
             // 도로 건설 전용 버튼은 도로 모드일 때만 활성.
             if (_btnRoadConfirm != null)
@@ -254,14 +268,19 @@ namespace CitySim
             if (_btnRoadUndo != null)
                 _btnRoadUndo.interactable = roadActive;
 
-            if (_lblSegmentInfo != null)
-                _lblSegmentInfo.text = roadActive
-                    ? $"Segments: {_roadController.SegmentCount}"
-                    : string.Empty;
+            // 구간 수 문자열은 수가 바뀔 때만 재조립.
+            string seg = string.Empty;
+            if (roadActive)
+            {
+                int n = _roadController.SegmentCount;
+                if (n != _lastSegmentCount) { _lastSegmentCount = n; _segmentText = $"Segments: {n}"; }
+                seg = _segmentText;
+            }
+            SetTextIfChanged(_lblSegmentInfo, seg, ref _assignedSegment);
 
-            // 호버 사유 라벨은 도로 건설 상태를 표시.
-            if (_lblHoverStatus != null)
-                _lblHoverStatus.text = roadActive ? _roadController.HoverStatusText : string.Empty;
+            // 호버 사유 라벨은 도로 건설 상태를 표시(컨트롤러가 상수/캐시 문자열 반환).
+            SetTextIfChanged(_lblHoverStatus,
+                roadActive ? _roadController.HoverStatusText : string.Empty, ref _assignedHover);
         }
     }
 }

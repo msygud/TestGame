@@ -71,20 +71,18 @@ namespace CitySim
             {
                 if (!_hasHover) return string.Empty;
                 // 점유 셀이면 무엇이 막는지(건물/유닛/지형) 같이 표시.
+                //   상수 문자열만 반환 — HUD가 매 프레임 읽으므로 보간($"")은 GC 쓰레기.
                 if (_hoverStatus == PreviewStatus.Occupied
                     && _hoverOccupant != OccupantType.None)
-                    return $"Blocked: {OccupantText(_hoverOccupant)}";
+                    return _hoverOccupant switch
+                    {
+                        OccupantType.Road     => "Blocked: road",
+                        OccupantType.Building => "Blocked: building",
+                        _                     => "Blocked: object",
+                    };
                 return PreviewStatusOps.ToText(_hoverStatus);
             }
         }
-
-        static string OccupantText(OccupantType t) => t switch
-        {
-            OccupantType.Road        => "road",
-            OccupantType.Building     => "building",
-            OccupantType.Environment => "object",
-            _                        => "object",
-        };
 
         // ── 내부 상태 ──────────────────────────────────────────────
         // 각 segment = 그 드래그가 만든 셀 목록 (순서 보존, 중복 제거).

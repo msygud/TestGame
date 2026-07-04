@@ -31,18 +31,31 @@ namespace CitySim
 #endif
         GUIStyle _style;
 
+        // GC 방지 캐시(2026-07-05) — OnGUI는 프레임당 2회+ 불리고 자원 셀 수만큼 반복되므로
+        //   쿼리·라벨 문자열·타입 색을 매 호출 만들면 관리형 쓰레기가 대량 발생(주기적 GC 스파이크).
+        //   라벨은 (TypeId, Amount)가 바뀔 때만 재조립(채취 시에만), 색은 TypeId당 1회.
+        World       _qWorld;
+        EntityQuery _lq, _sq;
+        struct CachedLabel { public int TypeId, Amount; public string Text; }
+        readonly System.Collections.Generic.Dictionary<int2, CachedLabel> _labels = new();
+        readonly System.Collections.Generic.Dictionary<int, Color>        _colors = new();
+
         void OnGUI()
         {
             var world = World.DefaultGameObjectInjectionWorld;
-            if (world == null || !world.IsCreated) return;
+            if (world == null || !world.IsCreated) { _qWorld = null; return; }
             var em = world.EntityManager;
 
-            var lq = em.CreateEntityQuery(typeof(GridLayers));
-            var sq = em.CreateEntityQuery(typeof(GridSettings));
-            if (lq.IsEmpty || sq.IsEmpty) { lq.Dispose(); sq.Dispose(); return; }
-            var layers = lq.GetSingleton<GridLayers>();
-            var cs     = sq.GetSingleton<GridSettings>().CellSize;
-            lq.Dispose(); sq.Dispose();
+            if (!ReferenceEquals(_qWorld, world))
+            {
+                _qWorld = world;
+                _lq = em.CreateEntityQuery(typeof(GridLayers));    // 월드당 1회
+                _sq = em.CreateEntityQuery(typeof(GridSettings));
+                _labels.Clear(); _colors.Clear();
+            }
+            if (_lq.IsEmpty || _sq.IsEmpty) return;
+            var layers = _lq.GetSingleton<GridLayers>();
+            var cs     = _sq.GetSingleton<GridSettings>().CellSize;
             if (!layers.ResourceLayer.IsCreated || cs <= 0f) return;
 
             var cam = Camera.main;
@@ -65,10 +78,23 @@ namespace CitySim
                 Vector3 sp = cam.WorldToScreenPoint(world3);
                 if (sp.z <= 0f) continue;   // 카메라 뒤
 
+                if (!_labels.TryGetValue(cell, out var cl)
+                    || cl.TypeId != rc.TypeId || cl.Amount != rc.Amount)
+                {
+                    cl = new CachedLabel
+                    { TypeId = rc.TypeId, Amount = rc.Amount, Text = $"T{rc.TypeId}\n{rc.Amount}" };
+                    _labels[cell] = cl;
+                }
+                if (!_colors.TryGetValue(rc.TypeId, out var col))
+                {
+                    col = TypeColor(rc.TypeId);
+                    _colors[rc.TypeId] = col;
+                }
+
                 var rect = new Rect(sp.x - 26f, Screen.height - sp.y - 14f, 52f, 28f);
                 var prev = GUI.backgroundColor;
-                GUI.backgroundColor = TypeColor(rc.TypeId);
-                GUI.Box(rect, $"T{rc.TypeId}\n{rc.Amount}", _style);
+                GUI.backgroundColor = col;
+                GUI.Box(rect, cl.Text, _style);
                 GUI.backgroundColor = prev;
             }
             keys.Dispose();

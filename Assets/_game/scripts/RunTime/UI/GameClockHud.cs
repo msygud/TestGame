@@ -32,17 +32,29 @@ namespace CitySim
 #endif
         GUIStyle _label;
 
+        // GC 방지 캐시(2026-07-05) — OnGUI는 프레임당 2회+(Layout/Repaint) 불리므로
+        //   ① 쿼리를 매 호출 생성/해제하면 관리형 쓰레기가 쌓이고(주기적 GC 스파이크)
+        //   ② 표시 문자열도 매 호출 새로 만들면 같은 문제 → 값이 바뀔 때만 재조립(게임-분당 1회).
+        World       _qWorld;
+        EntityQuery _clockQ;
+        string _timeText = string.Empty;
+        int    _lastDay = int.MinValue, _lastMin = -1;
+        float  _lastScale = float.NaN;
+
         void OnGUI()
         {
             var world = World.DefaultGameObjectInjectionWorld;
-            if (world == null || !world.IsCreated) return;
+            if (world == null || !world.IsCreated) { _qWorld = null; return; }
             var em = world.EntityManager;
 
-            var q = em.CreateEntityQuery(typeof(GameClock));
-            if (q.IsEmpty) { q.Dispose(); return; }
-            var clockEntity = q.GetSingletonEntity();
+            if (!ReferenceEquals(_qWorld, world))
+            {
+                _qWorld = world;
+                _clockQ = em.CreateEntityQuery(typeof(GameClock));   // 월드당 1회(월드 파괴 시 함께 정리)
+            }
+            if (_clockQ.IsEmpty) return;
+            var clockEntity = _clockQ.GetSingletonEntity();
             var clock = em.GetComponentData<GameClock>(clockEntity);
-            q.Dispose();
 
             _label ??= new GUIStyle(GUI.skin.box)
             {
@@ -52,16 +64,20 @@ namespace CitySim
             };
 
             int totalMin = (int)(clock.DayProgress01 * 24 * 60);
-            int hh = totalMin / 60;
-            int mm = totalMin % 60;
+
+            if (clock.Day != _lastDay || totalMin != _lastMin || clock.TimeScale != _lastScale)
+            {
+                _lastDay = clock.Day; _lastMin = totalMin; _lastScale = clock.TimeScale;
+                int hh = totalMin / 60;
+                int mm = totalMin % 60;
+                _timeText = $"Day {clock.Day + 1}   {hh:00}:{mm:00}   (x{clock.TimeScale:0.#})";
+            }
 
             float w = 360f, h = 26f;
             float x = (Screen.width - w) * 0.5f;
 
             // 시간 표시
-            GUI.Box(new Rect(x, 6f, w, h),
-                $"Day {clock.Day + 1}   {hh:00}:{mm:00}   (x{clock.TimeScale:0.#})",
-                _label);
+            GUI.Box(new Rect(x, 6f, w, h), _timeText, _label);
 
             // 배속 버튼
             const int nBtn = 6;
