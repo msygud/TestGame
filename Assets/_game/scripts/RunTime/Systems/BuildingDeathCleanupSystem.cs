@@ -17,7 +17,7 @@ namespace CitySim
     //
     //  순서: CombatDamageApplySystem(CombatDeadTag 부착) → 이 시스템 → CombatDeathSystem(destroy).
     //        같은 프레임 안에서 1회 처리(건물엔 CombatDestroyOnDeath가 붙어 다음 프레임엔 사라짐).
-    //  (도로 정리는 TerritoryCaptureSystem의 영토 전환 파괴 + AiRoadJanitorSystem이 담당.)
+    //  전투로 죽은 '중립 도로'도 여기서 처리 — Forced RemoveRoadCommand로 RoadSystem에 위임.
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(CombatDamageApplySystem))]
@@ -55,6 +55,20 @@ namespace CitySim
 
                 if ((uint)bf.OwnerLocalId < StampLayers.MaxPlayers)
                     stampDirty.Add(bf.OwnerLocalId);
+            }
+
+            // ── 전투로 죽은 '중립 도로' → 정상 철거 명령 ────────────────────
+            //   도로는 CombatDestroyOnDeath를 안 붙인다 — RoadSystem이 파괴해야
+            //   footprint·이웃 비트·Stamp가 정리되므로 Forced RemoveRoadCommand로 위임.
+            //   전투 컴포넌트를 즉시 떼서 재발행/재타겟 방지(엔티티는 RoadSystem이 파괴).
+            foreach (var (roadRO, e) in
+                     SystemAPI.Query<RefRO<Road>>().WithAll<CombatDeadTag>().WithEntityAccess())
+            {
+                var cmd = ecb.CreateEntity();
+                ecb.AddComponent(cmd, new RemoveRoadCommand
+                { Cell = roadRO.ValueRO.FootprintOrigin, OwnerLocalId = -1, Forced = 1 });
+                ecb.RemoveComponent<CombatDeadTag>(e);
+                ecb.SetComponentEnabled<CombatTargetable>(e, false);   // 재타겟 방지(토글 — 구조 변경 없음)
             }
 
             foreach (var owner in stampDirty)

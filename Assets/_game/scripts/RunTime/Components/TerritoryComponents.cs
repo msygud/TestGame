@@ -106,12 +106,18 @@ namespace CitySim
         /// 국경 개발 churn(짓자마자 잠식→파괴 반복) 방지.</summary>
         public int AiEnemyBufferCells;
 
+        /// <summary>중립(무법지대) 도로의 전투 체력. **0 = 기능 끔**(중립 도로도 비타겟).
+        /// footprint 전체가 중립일 때만 타겟 가능 — 벽-스팸/잔해에 대한 군사 카운터.
+        /// 보호 영토(자기/타팀/경합지) 도로는 여전히 직접 타격 불가.</summary>
+        public float NeutralRoadHealth;
+
         public static TerritoryCaptureConfig Default => new TerritoryCaptureConfig
         {
             DwellGameHours      = 1f,    // 게임 1시간 (기본 SecondsPerDay=1200 기준 현실 50초)
             RequireFullFootprint = 1,
             MaxDestroysPerPass  = 32,
             AiEnemyBufferCells  = 4,
+            NeutralRoadHealth   = 200f,
         };
     }
 

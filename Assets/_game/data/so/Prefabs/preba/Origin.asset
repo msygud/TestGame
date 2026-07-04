@@ -567,7 +567,7 @@ MonoBehaviour:
     Category: 1
     Usage: -1
     Prefab: {fileID: 7101352272596805819, guid: 135578afae5bd864e9563b85efcb7a63, type: 3}
-    Size: {x: 2, y: 2}
+    Size: {x: 2, y: 3}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0

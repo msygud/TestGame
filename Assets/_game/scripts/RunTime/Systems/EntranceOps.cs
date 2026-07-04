@@ -27,9 +27,11 @@ namespace CitySim
     //    · "입구가 도로에 닿는다" = 그 도로셀이 RoadLayer에 존재.
     //      (4방 전체가 아니라 Dir 방향 1셀만 본다 → 건물이 도로에 '정면으로' 붙음.)
     //
-    //  회전 규약 (CCW, 최소코너 유지):
+    //  회전 규약 (CW = 시계방향, 최소코너 유지):
     //    · BuildingPlacementSystem.EmitSingle 이 quaternion.RotateY(radians(RotationY))
-    //      를 쓰므로, 입구 오프셋/방향도 동일 Y축(+CCW) 90° 단위로 회전.
+    //      를 쓰고, Unity(왼손 좌표계)의 +Y 회전은 위에서 볼 때 **시계방향**(+Z→+X).
+    //      입구 오프셋/방향도 동일하게 CW 90° 단위로 회전해야 비주얼과 일치.
+    //      (예전 CCW 규약은 건물 메시는 CW, 입구/footprint는 CCW로 돌아 불일치 버그.)
     //    · rotSteps = 0/1/2/3 = 0°/90°/180°/270°.
     //    · RotateOffset은 footprint 셀이므로 회전 후 "최소코너=(0,0)"으로 정규화
     //      (음수 사분면으로 넘어가지 않음 → RotateSize의 +x/+z 펼침 규약과 정합).
@@ -55,7 +57,7 @@ namespace CitySim
         // ──────────────────────────────────────────────────────────────
         //  footprint 셀 오프셋 회전 — 최소코너 유지 정규화 버전.
         //
-        //  순수 CCW: (x,z) → (-z, x). 그대로 쓰면 음수 사분면으로 넘어가므로,
+        //  순수 CW: (x,z) → (z, -x). 그대로 쓰면 음수 사분면으로 넘어가므로,
         //  회전된 footprint의 최소코너가 다시 (0,0)이 되도록 평행이동한다.
         //  size는 회전 "전" 원본 Size (회전 후 크기는 RotateSize로 구함).
         //
@@ -65,24 +67,25 @@ namespace CitySim
         {
             switch (steps & 3)
             {
-                case 1: return new int2(size.y - 1 - p.y, p.x);            // 90  CCW
+                case 1: return new int2(p.y, size.x - 1 - p.x);            // 90  CW
                 case 2: return new int2(size.x - 1 - p.x, size.y - 1 - p.y); // 180
-                case 3: return new int2(p.y, size.x - 1 - p.x);            // 270 CCW
+                case 3: return new int2(size.y - 1 - p.y, p.x);            // 270 CW
                 default: return p;                                          // 0
             }
         }
 
         // ──────────────────────────────────────────────────────────────
-        //  방향 단위벡터 회전 — 정규화 없는 순수 CCW.
+        //  방향 단위벡터 회전 — 정규화 없는 순수 CW.
         //
-        //  Dir(RoadDir 단일 비트) → 단위 오프셋 → CCW steps 회전 → 단위 오프셋.
+        //  Dir(RoadDir 단일 비트) → 단위 오프셋 → CW steps 회전 → 단위 오프셋.
         //  방향은 footprint가 아니므로 음수 성분 허용(예: W=(-1,0)).
+        //  검증: N(0,1) 1스텝 → E(1,0) = quaternion.RotateY(90°)의 +Z→+X와 일치.
         // ──────────────────────────────────────────────────────────────
         public static int2 RotateDirOffset(RoadDir dir, int steps)
         {
             int2 d = DirToOffset(dir);
             for (int i = 0; i < (steps & 3); i++)
-                d = new int2(-d.y, d.x);   // CCW 90°
+                d = new int2(d.y, -d.x);   // CW 90°
             return d;
         }
 

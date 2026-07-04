@@ -440,14 +440,36 @@ namespace CitySim
             int ownerLocalId, int2 target, bool stopAdjacent, int maxExplore,
             ref NativeList<int2> outPath)
         {
+            var none = new NativeHashSet<int2>(1, Allocator.Temp);
+            bool ok = FindRoadPath(in roadLayer, in occupancyLayer, in terrainLayer, in resourceLayer,
+                in cellTypeLookup, ownerLocalId, target, stopAdjacent, maxExplore,
+                false, in none, ref outPath);
+            none.Dispose();
+            return ok;
+        }
+
+        /// <summary>시드 필터판 — useSeedFilter=true면 FootprintOrigin이 seedOrigins에 든 자기 도로만
+        /// 소스로 시딩(예: 베이스-연결 도로만 → 고립 섬 재연결. 기본판은 '모든' 자기 도로를 시딩해
+        /// 섬을 타겟으로 주면 즉시 도달로 끝나므로 재연결에 못 쓴다).</summary>
+        public static bool FindRoadPath(
+            in NativeHashMap<int2, RoadCell>      roadLayer,
+            in NativeHashMap<int2, OccupancyCell> occupancyLayer,
+            in NativeHashMap<int2, TerrainCell>   terrainLayer,
+            in NativeHashMap<int2, ResourceCell>  resourceLayer,
+            in CellTypeLookup                     cellTypeLookup,
+            int ownerLocalId, int2 target, bool stopAdjacent, int maxExplore,
+            bool useSeedFilter, in NativeHashSet<int2> seedOrigins,
+            ref NativeList<int2> outPath)
+        {
             outPath.Clear();
             var cameFrom = new NativeHashMap<int2, int2>(256, Allocator.Temp);
             var frontier = new NativeList<int2>(256, Allocator.Temp);
 
-            // 다중 소스 — 모든 팀 도로 셀(이미 네트워크에 연결). 자기참조 = 소스 sentinel.
+            // 다중 소스 — 팀 도로 셀(필터 시 seedOrigins 소속만). 자기참조 = 소스 sentinel.
             foreach (var kv in roadLayer)
             {
                 if (kv.Value.OwnerLocalId != ownerLocalId) continue;
+                if (useSeedFilter && !seedOrigins.Contains(kv.Value.FootprintOrigin)) continue;
                 if (cameFrom.ContainsKey(kv.Key)) continue;
                 cameFrom[kv.Key] = kv.Key;
                 frontier.Add(kv.Key);
@@ -484,6 +506,82 @@ namespace CitySim
                     c = p;
                 }
                 for (int i = rev.Length - 1; i >= 0; i--) outPath.Add(rev[i]);  // 소스→goal 순
+                rev.Dispose();
+            }
+
+            cameFrom.Dispose();
+            frontier.Dispose();
+            return found;
+        }
+
+        /// <summary>
+        /// 고립 섬 재연결 전용 경로 탐색 — seedOrigins(베이스-연결) 자기 도로에서 다중 소스 BFS,
+        /// **islandOrigins 소속 자기 1×1 도로 셀에 인접**하는 순간 성공(섬의 최근접 지점이 자동 접점).
+        /// 통과성은 RoadStepFree + **영토 게이트(적 영토/경합지 제외)** — RoadSystem 배치 게이트와
+        /// 일치시켜 "깔고 나서 거부되는" 벽돌-쌓기 실패를 원천 차단(BFS 자체가 연결 가능성 검사).
+        /// outPath = [소스 도로 셀 … 접점 직전 셀], islandCell = 섬 쪽 접점 셀.
+        /// </summary>
+        public static bool FindRoadPathToIsland(
+            in NativeHashMap<int2, RoadCell>      roadLayer,
+            in NativeHashMap<int2, OccupancyCell> occupancyLayer,
+            in NativeHashMap<int2, TerrainCell>   terrainLayer,
+            in NativeHashMap<int2, ResourceCell>  resourceLayer,
+            in CellTypeLookup                     cellTypeLookup,
+            in NativeHashMap<int2, int>           territoryLayer,
+            in TeamTable                          teams,
+            int ownerLocalId,
+            in NativeHashSet<int2> seedOrigins, in NativeHashSet<int2> islandOrigins,
+            int maxExplore, ref NativeList<int2> outPath, out int2 islandCell)
+        {
+            outPath.Clear(); islandCell = default;
+            var cameFrom = new NativeHashMap<int2, int2>(256, Allocator.Temp);
+            var frontier = new NativeList<int2>(256, Allocator.Temp);
+
+            foreach (var kv in roadLayer)
+            {
+                if (kv.Value.OwnerLocalId != ownerLocalId) continue;
+                if (!seedOrigins.Contains(kv.Value.FootprintOrigin)) continue;
+                if (cameFrom.ContainsKey(kv.Key)) continue;
+                cameFrom[kv.Key] = kv.Key;
+                frontier.Add(kv.Key);
+            }
+
+            bool found = false; int2 goal = default; int head = 0; int explored = 0;
+            while (head < frontier.Length && explored < maxExplore && !found)
+            {
+                int2 cur = frontier[head++]; explored++;
+                byte curH = CellHeight(cur, terrainLayer);
+                for (int d = 0; d < 4; d++)
+                {
+                    int2 nb = cur + RoadDirOps.Offsets[d];
+                    // 목표: 섬의 자기 1×1 도로 셀에 인접 도달(접점 병합은 1×1 그린 겹침 전제).
+                    if (roadLayer.TryGetValue(nb, out var nrc) && nrc.OwnerLocalId == ownerLocalId
+                        && nrc.Size <= 1 && islandOrigins.Contains(nrc.FootprintOrigin))
+                    { found = true; goal = cur; islandCell = nb; break; }
+
+                    if (cameFrom.ContainsKey(nb)) continue;
+                    if (!RoadStepFree(nb, curH, occupancyLayer, terrainLayer, resourceLayer,
+                            roadLayer, in cellTypeLookup)) continue;
+                    // 영토 게이트 — RoadSystem이 거부할 셀은 경로에서도 제외.
+                    if (TerritoryOps.InEnemyTerritory(in territoryLayer, nb, ownerLocalId, in teams)
+                        || TerritoryOps.IsContested(in territoryLayer, nb)) continue;
+                    cameFrom[nb] = cur;
+                    frontier.Add(nb);
+                }
+            }
+
+            if (found)
+            {
+                var rev = new NativeList<int2>(64, Allocator.Temp);
+                int2 c = goal;
+                while (true)
+                {
+                    rev.Add(c);
+                    int2 p = cameFrom[c];
+                    if (p.Equals(c)) break;
+                    c = p;
+                }
+                for (int i = rev.Length - 1; i >= 0; i--) outPath.Add(rev[i]);
                 rev.Dispose();
             }
 

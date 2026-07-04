@@ -80,7 +80,18 @@ namespace CitySim
                     ecb.RemoveComponent<CaptureDoom>(e);   // 사면 — 영토 회복
             }
 
-            // ── 2) 도로 마킹/사면 (Road 엔티티 = footprint 1개) ─────────────
+            // 중립 도로 타겟화용 — owner 팀 정보(LocalId별 대표값) 수집.
+            var teamsByLocalId   = new NativeArray<TeamInfoData>(8, Allocator.Temp);
+            var hasTeamByLocalId = new NativeArray<byte>(8, Allocator.Temp);
+            foreach (var team in SystemAPI.Query<RefRO<TeamInfoData>>())
+            {
+                int lid = math.clamp(team.ValueRO.LocalID, 0, 7);
+                teamsByLocalId[lid] = team.ValueRO;
+                hasTeamByLocalId[lid] = 1;
+            }
+            bool hasGridSettings = SystemAPI.TryGetSingleton<GridSettings>(out var gridSettings);
+
+            // ── 2) 도로 마킹/사면 + 중립(무법지대) 전투 타겟화 ──────────────
             foreach (var (roadRO, e) in
                      SystemAPI.Query<RefRO<Road>>().WithEntityAccess())
             {
@@ -97,7 +108,50 @@ namespace CitySim
                     { DeadlineSeconds = now + dwellSecs, DwellSeconds = dwellSecs });
                 else if (!captured && marked)
                     ecb.RemoveComponent<CaptureDoom>(e);
+
+                // ── 중립 도로 = 전투 타겟 가능 (footprint 전체가 중립일 때만) ──
+                //   벽-스팸/고아 파편에 대한 군사 카운터. 보호 영토(자기/타팀/경합지)로
+                //   돌아오면 비활성(민간 인프라 보호 복원). 파괴 정리는 BuildingDeathCleanupSystem.
+                //   구조 변경은 최초 1회(부착)뿐 — 이후엔 IEnableableComponent 토글(관례 준수).
+                if (SystemAPI.HasComponent<CombatDeadTag>(e)) continue;   // 죽는 중 — 건드리지 않음
+                bool neutral = cfg.NeutralRoadHealth > 0f
+                               && FootprintAllNeutral(road.FootprintOrigin, size, in layers.TerritoryLayer);
+                bool hasTgt = SystemAPI.HasComponent<CombatTargetable>(e);
+                if (neutral && !hasTgt)
+                {
+                    // 최초 부착(enabled 기본) — 중립을 한 번이라도 겪은 도로만 전투 컴포넌트 보유.
+                    ecb.AddComponent(e, new CombatTargetable { TargetType = CombatTargetMask.Building });
+                    ecb.AddComponent(e, new CombatHealth
+                    { Health = cfg.NeutralRoadHealth, MaxHealth = cfg.NeutralRoadHealth });
+                    int lid = math.clamp(rc.OwnerLocalId, 0, 7);
+                    if (hasTeamByLocalId[lid] == 1 && !SystemAPI.HasComponent<TeamInfoData>(e))
+                        ecb.AddComponent(e, teamsByLocalId[lid]);
+                    // 전투 타겟 요건: LocalTransform — 도로 논리 엔티티에 없을 수 있어 footprint 중심으로 보장.
+                    if (hasGridSettings && !SystemAPI.HasComponent<Unity.Transforms.LocalTransform>(e))
+                    {
+                        byte hStep = layers.TerrainLayer.IsCreated
+                                     && layers.TerrainLayer.TryGetValue(road.FootprintOrigin, out var tc)
+                            ? tc.Height : (byte)0;
+                        ecb.AddComponent(e, Unity.Transforms.LocalTransform.FromPosition(
+                            gridSettings.CellCenter(road.FootprintOrigin.x, road.FootprintOrigin.y,
+                                new int2(size, size), hStep)));
+                    }
+                }
+                else if (hasTgt)
+                {
+                    bool enabled = SystemAPI.IsComponentEnabled<CombatTargetable>(e);
+                    if (neutral && !enabled)
+                    {
+                        ecb.SetComponentEnabled<CombatTargetable>(e, true);
+                        // 재중립 = 풀 힐(보호 기간의 피해 리셋 + config 변경 반영).
+                        ecb.SetComponent(e, new CombatHealth
+                        { Health = cfg.NeutralRoadHealth, MaxHealth = cfg.NeutralRoadHealth });
+                    }
+                    else if (!neutral && enabled)
+                        ecb.SetComponentEnabled<CombatTargetable>(e, false);
+                }
             }
+            teamsByLocalId.Dispose(); hasTeamByLocalId.Dispose();
 
             // ── 3) 데드라인 지난 것 파괴 (패스당 상한) ─────────────────────
             int destroyed = 0;
@@ -154,6 +208,16 @@ namespace CitySim
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
             stampDirty.Dispose();
+        }
+
+        // footprint 전체가 중립(TerritoryLayer에 없음)인가 — 팀/경합지(-2) 셀이 하나라도 있으면 false.
+        static bool FootprintAllNeutral(int2 origin, int size, in NativeHashMap<int2, int> territory)
+        {
+            if (!territory.IsCreated) return true;
+            for (int dx = 0; dx < size; dx++)
+            for (int dz = 0; dz < size; dz++)
+                if (territory.ContainsKey(origin + new int2(dx, dz))) return false;
+            return true;
         }
 
         // footprint가 '타팀 영토'에 캡처됐나. full=true면 전체 셀, false면 한 셀이라도.

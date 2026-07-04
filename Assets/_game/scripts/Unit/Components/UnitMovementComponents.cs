@@ -257,7 +257,10 @@ namespace Game.Unit
         Resource = 1u << 4,
     }
 
-    public struct CombatTargetable : IComponentData
+    // IEnableableComponent — 타겟 가능 여부를 구조 변경 없이 토글(중립 도로 등 가변 타겟).
+    //   ⚠ 쿼리(WithAll)는 disabled를 자동 제외하지만 ComponentLookup.HasComponent는 true를
+    //   반환하므로, 룩업 기반 유효성 검사는 IsComponentEnabled를 함께 확인해야 한다.
+    public struct CombatTargetable : IComponentData, IEnableableComponent
     {
         public CombatTargetMask TargetType;
     }

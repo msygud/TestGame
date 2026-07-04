@@ -36,6 +36,7 @@ namespace CitySim
         {
             state.RequireForUpdate<GameClock>();
             state.RequireForUpdate<GridLayers>();
+            state.RequireForUpdate<CellTypeLookup>();   // 섬 재연결 경로 탐색용
         }
 
         public void OnUpdate(ref SystemState state)
@@ -53,12 +54,48 @@ namespace CitySim
             foreach (var spur in SystemAPI.Query<RefRO<RoadSpur>>())
                 spurs.Add(spur.ValueRO);
 
+            var cellTypeLookup = SystemAPI.GetSingleton<CellTypeLookup>();
+            if (!SystemAPI.TryGetSingleton<TeamTable>(out var teams)) teams = TeamTable.Identity;
+
+            var aiFaction = new NativeHashMap<int, int>(8, Allocator.Temp);   // AI localId → factionId
             foreach (var (teamRO, gridRO) in
                      SystemAPI.Query<RefRO<Game.Unit.TeamInfoData>, RefRO<CityGrid>>())
             {
                 if (teamRO.ValueRO.IsPlayer()) continue;
-                Janitor(teamRO.ValueRO.LocalID, gridRO.ValueRO.Anchor, in layers, in spurs, ref ecb);
+                aiFaction.TryAdd(teamRO.ValueRO.LocalID, gridRO.ValueRO.FactionId);
+                Janitor(teamRO.ValueRO.LocalID, gridRO.ValueRO.FactionId, gridRO.ValueRO.Anchor,
+                    in layers, in cellTypeLookup, in teams, in spurs, ref ecb);
             }
+
+            // ── 입구 도로 복구 — 입구 도로 셀에 '자기 도로'가 없는 AI 건물은 죽은 자산
+            //   (시민 경로·공급 stamp 단절 = 이진 고장) → RoadPathRequest로 본망에서 그 셀까지
+            //   재부설(RegisterSpur=0: 일회성 — 건물 소멸 시 함께 잊힘). owner당 하루 N개 스로틀.
+            const int MaxEntranceRepairsPerDay = 2;
+            var repairCount = new NativeHashMap<int, int>(8, Allocator.Temp);
+            foreach (var (bfRO, entRO) in
+                     SystemAPI.Query<RefRO<BuildingFootprint>, RefRO<BuildingEntrance>>()
+                              .WithNone<Game.Unit.CombatDeadTag>())
+            {
+                var bf = bfRO.ValueRO;
+                if (!aiFaction.TryGetValue(bf.OwnerLocalId, out int fid)) continue;
+
+                int2 erc = EntranceOps.EntranceRoadCell(
+                    bf.Origin, bf.Size, in entRO.ValueRO.Entrance, bf.RotSteps);
+                if (layers.RoadLayer.TryGetValue(erc, out var rc)
+                    && rc.OwnerLocalId == bf.OwnerLocalId) continue;   // 입구 도로 살아있음
+
+                repairCount.TryGetValue(bf.OwnerLocalId, out int n);
+                if (n >= MaxEntranceRepairsPerDay) continue;
+                repairCount[bf.OwnerLocalId] = n + 1;
+
+                var re = ecb.CreateEntity();
+                ecb.AddComponent(re, new RoadPathRequest
+                {
+                    Target = erc, OwnerLocalId = bf.OwnerLocalId, FactionId = fid,
+                    StopAdjacent = 0, RegisterSpur = 0,
+                });
+            }
+            repairCount.Dispose(); aiFaction.Dispose();
 
             spurs.Dispose();
             ecb.Playback(state.EntityManager);
@@ -67,8 +104,9 @@ namespace CitySim
 
         struct FpInfo { public byte Size; public byte AdjBuilding; }
 
-        static void Janitor(int owner, int2 anchor, in GridLayers layers,
-            in NativeList<RoadSpur> spurs, ref EntityCommandBuffer ecb)
+        static void Janitor(int owner, int factionId, int2 anchor, in GridLayers layers,
+            in CellTypeLookup cellTypeLookup, in TeamTable teams, in NativeList<RoadSpur> spurs,
+            ref EntityCommandBuffer ecb)
         {
             // ── footprint 수집 (origin 단위) + 건물 인접 캐시 ────────────────
             var fps = new NativeHashMap<int2, FpInfo>(256, Allocator.Temp);
@@ -169,6 +207,7 @@ namespace CitySim
             //   도시가 벌집이 된다 — 실측 버그(2026-07-01).
             var visited = new NativeHashSet<int2>(64, Allocator.Temp);
             var comp    = new NativeList<int2>(64, Allocator.Temp);
+            bool reconnected = false;   // 하루 1개 섬만 실제 연결(병행 과제) — 실패한 섬은 다음 섬 시도
             for (int i = 0; i < origins.Length; i++)
             {
                 int2 seed = origins[i];
@@ -189,6 +228,9 @@ namespace CitySim
 
                 if (!hasBuilding)
                     for (int c = 0; c < comp.Length; c++) removed.Add(comp[c]);
+                else if (!reconnected)
+                    reconnected = TryReconnectIsland(owner, factionId, in comp, in layers,
+                        in cellTypeLookup, in teams, in reached, ref ecb);
             }
             visited.Dispose(); comp.Dispose();
 
@@ -201,6 +243,53 @@ namespace CitySim
 
             spurProtected.Dispose(); neighbors.Dispose(); q.Dispose(); reached.Dispose();
             removed.Dispose(); origins.Dispose(); fps.Dispose();
+        }
+
+        // 건물 딸린 고립 섬을 본망에 재연결 — FindRoadPathToIsland(베이스-연결 시드, 섬의 아무
+        //   1×1 도로 셀 인접이 목표 = 최근접 접점 자동, 통과성에 영토 게이트 포함 = 배치 거부와
+        //   일치해 '깔고 실패' 없음). 성공 시 그린 경로 발행 + 접점 상호 비트. 실패 = no-op(포위 지속).
+        static bool TryReconnectIsland(int owner, int factionId, in NativeList<int2> islandComp,
+            in GridLayers layers, in CellTypeLookup cellTypeLookup, in TeamTable teams,
+            in NativeHashSet<int2> reached, ref EntityCommandBuffer ecb)
+        {
+            var islandOrigins = new NativeHashSet<int2>(islandComp.Length, Allocator.Temp);
+            for (int i = 0; i < islandComp.Length; i++) islandOrigins.Add(islandComp[i]);
+
+            var path = new NativeList<int2>(64, Allocator.Temp);
+            bool ok = BlockOps.FindRoadPathToIsland(
+                in layers.RoadLayer, in layers.OccupancyLayer, in layers.TerrainLayer,
+                in layers.ResourceLayer, in cellTypeLookup, in layers.TerritoryLayer, in teams,
+                owner, in reached, in islandOrigins, 8192, ref path, out int2 islandCell);
+
+            if (ok && path.Length >= 1)
+            {
+                // path[0]=소스 도로 셀 … 마지막=접점 직전. 새 셀이 있을 때만 경로 발행
+                //   (길이 1 = 소스가 이미 섬에 인접 → 비트 병합만으로 연결).
+                if (path.Length >= 2)
+                    RoadPathSystem.EmitDrawnPath(in path, owner, factionId, ref ecb);
+
+                int2 last  = path[path.Length - 1];
+                int2 delta = islandCell - last;
+                for (int d = 0; d < 4; d++)
+                {
+                    if (!RoadDirOps.Offsets[d].Equals(delta)) continue;
+                    EmitBit(last, (RoadDir)(1 << d), owner, factionId, ref ecb);              // 끝→섬
+                    EmitBit(islandCell, (RoadDir)(1 << ((d + 2) & 3)), owner, factionId, ref ecb); // 섬→끝
+                    break;
+                }
+            }
+            path.Dispose(); islandOrigins.Dispose();
+            return ok;
+        }
+
+        static void EmitBit(int2 cell, RoadDir bit, int owner, int factionId, ref EntityCommandBuffer ecb)
+        {
+            var e = ecb.CreateEntity();
+            ecb.AddComponent(e, new PlaceRoadCommand
+            {
+                Cell = cell, OwnerLocalId = owner, LaneCount = 2, FactionId = factionId,
+                Size = 1, Axis = RoadPlacedAxis.Any, Directions = bit,
+            });
         }
 
         // footprint에 4-인접한 '다른' 자기 도로 footprint origin들(removed 제외, 중복 제거).

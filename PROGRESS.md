@@ -60,6 +60,49 @@
   - AI 재연결 정책 확정: **최우선 아님 — 병행 과제**. 분단 감지 시 게임-일 1회 경로 시도(가능=복구, 불가=포위 지속),
     성장은 계속. 구현은 시드-필터 FindRoadPath 필요(기존 ⬜ 항목과 통합, 다음 세션).
 
+- ✅ **중립 도로 = 전투 타겟 가능(2026-07-01, 미검증)** — 익스플로잇 봉쇄: 중립 협곡의 도로 벽/파편은 AI가
+  대응 수단 0(못 짓고·못 치고·capture 안 닿음). **영토별 도로 처분 매트릭스 완성**: 내 땅=불도저+capture /
+  타팀 땅=불가(민간 보호) / **중립=전투 타겟**(무법지대). 구현: `TerritoryCaptureSystem` 도로 패스에서
+  footprint **전체 중립**이면 `CombatTargetable(Building)`+`CombatHealth`+owner `TeamInfoData`+`LocalTransform`
+  (footprint 중심) 부착, 보호 영토로 돌아오면 해제(재중립 시 풀 힐). 사망 시 `BuildingDeathCleanupSystem`이
+  **Forced RemoveRoadCommand** 위임(CombatDestroyOnDeath 안 씀 — RoadSystem 정리 필수) + 전투 컴포넌트 즉시 해제.
+  `TerritoryCaptureConfig.NeutralRoadHealth`(기본 200, **0=기능 끔**). HP바는 자동 표시.
+  ⚠ AI가 이 수단을 '사용'하는 행동(막힘 감지→공격 명령)은 군사 AI 소관(미래).
+  - ✅ **`CombatTargetable`을 `IEnableableComponent`로 전환(유저 제안, 관례 준수)** — 국경 이동에 따른
+    add/remove 구조 변경 churn 제거: 최초 중립 시 1회 부착, 이후 **enable/disable 토글**(재중립=풀 힐,
+    사망=disable). ⚠ 룩업 함정: `HasComponent`는 disabled도 true → 전투 유효성 검사 5곳에
+    `IsComponentEnabled` 병행 추가(쿼리 기반 수집·픽킹은 자동 제외라 무변경). HP바는 disabled 타겟 숨김.
+    유닛/건물은 기본 enabled라 동작 불변.
+
+- ✅ **HP바 표시 규칙(2026-07-01)** — ① 선택 유닛/파괴 예정(CaptureDoom) = 항상 ② 인간 유닛 = 선택 시에만
+  ③ 그 외(타 플레이어·도로·건물) = 손상(<100%)만. **손상 도로는 보호 영토로 들어와도 표시 유지**(수리 정보).
+- ✅ **수리 길 열어두기** — [RepairSystem.cs](Assets/_game/scripts/RunTime/Systems/RepairSystem.cs):
+  `RepairRequest{Target, RequesterLocalId}` 단발 명령 + 즉시 풀-수리(placeholder). 팩션·업그레이드별
+  가능여부/비용/시간(진행형)은 시스템만 확장(명령·발행자 불변). ⚠ 발행 UI 미구현(철거 도구와 함께).
+- ✅ **테스트 파괴 = Alt+좌클릭(건물·도로 공통)** — Test.cs: 클릭 셀에 건물 없으면 도로 확인 → Forced
+  RemoveRoadCommand. 맨 좌클릭 파괴가 도로 건설 클릭과 충돌(시작 도로가 지워져 베이스-연결 전제 붕괴) → Alt 수식키로 분리.
+- ✅ **AI 섬 재연결 v2(2026-07-01, 시뮬 피드백 반영)** — v1(단일 코너 타겟·stopAdjacent) 문제: 타겟이 섬의
+  사전순 코너 고정이라 빙 돌아 평행선 생성, BFS에 영토 게이트가 없어 RoadSystem이 구간 거부 → 미연결 →
+  매일 재시도로 벽돌-쌓기. **v2**: `BlockOps.FindRoadPathToIsland` 신규 — 목표 = **섬의 아무 1×1 자기 도로 셀
+  인접**(최근접 접점 자동), 통과성 = RoadStepFree + **영토 게이트(적/경합 제외)** = 배치 게이트와 일치(BFS가
+  곧 연결 가능성 검사 → '깔고 실패' 원천 차단). janitor는 섬마다 시도해 **하루 1개 성공까지**(실패 섬은 다음 섬).
+  성공 시 그린 경로 발행(`EmitDrawnPath` internal 재사용) + 접점 상호 비트(겹침 OR). 길이 1(이미 인접) = 비트만 병합.
+  (시드 필터판 `FindRoadPath` 오버로드도 유지 — 범용.)
+- ✅ **입구 도로 복구(2026-07-01)** — janitor에 패스 추가: 입구 도로 셀에 자기 도로가 없는 AI 건물(=죽은 자산,
+  이진 고장) → `RoadPathRequest{Target=입구셀, StopAdjacent=0, RegisterSpur=0}` 발행(owner당 하루 2개 스로틀).
+  `RoadPathRequest.RegisterSpur` 플래그 신규 — 일회성 부설은 RoadSpur 등록 안 함(건물 소멸 후 영구 재부설 방지).
+- ✅ **회전 불일치 버그픽스(유저 보고)** — `EntranceOps`가 "RotateY=CCW"로 가정했으나 **Unity 왼손 좌표계의
+  +Y 회전은 CW**(+Z→+X) → 건물 메시는 CW, footprint/입구는 CCW로 돌아 불일치. 그리드 수학을 CW로 통일:
+  `RotateOffset` 90↔270 케이스 스왑, `RotateDirOffset` 부호 반전. steps 순회 소비자(AI 회전탐색 등)는 무영향,
+  ⚠ 기존 배치 저장분의 RotSteps 해석이 바뀜(테스트 씬이라 수용).
+- ⬜ **인간 철거 도구** — 방침 합의됨: **단일 철거 모드**(도로+건물 공통, 셀 기준 판별), 클릭=단일 +
+  **드래그 사각형** 지원. 권한 = 자기 건물/자기 도로 + 내 영토 위 타인 도로([D] 불도저 게이트 기존).
+  건물 철거는 owner-게이트 명령 신규 필요(RazeAreaCommand는 소유 무관이라 부적합). 수리 발행도 같은 도구에.
+- ⬜ **밸런스 config 통합(다음 세션 리팩터)** — 흩어진 값 인벤토리: `TerritoryConfig`(PopPerCell·MaxRadius),
+  `TerritoryCaptureConfig`(dwell·완충·중립도로HP 등 5종), `GrowthConfig.Default`(AI 성장), SpawnSystem
+  `BuildingDefaultHealth`(상수 500), janitor `BaseSeedRadius`(상수 8), HP바/경고 비주얼 치수(상수),
+  수리 비용/시간(미정) → 도메인별 config 싱글톤으로 정리 + Test.cs 인스펙터 push 일원화.
+
 ### 🧭 방향성 메모: 현재 AI 성장은 발판(placeholder) — 진짜는 욕구 주도 배치 (2026-07-01 합의)
 - `AiCityGrowthSystem`의 무조건 격자 확장은 **임시 골격**. 최종형: **시민 욕구(창고·식당·일자리·접근성)가
   "무엇을 어디에"를 결정** — 단절 대응도 정책이 아니라 욕구에서 창발(로컬 대체 시설 = 따로 성장 vs

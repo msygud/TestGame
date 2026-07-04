@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 // 디버그 입력 — 마우스로 가리킨 건물에:
-//   좌클릭 = 파괴 (RazeAreaCommand → RazeSystem이 점유 해제).
+//   Alt+좌클릭 = 파괴 (건물=RazeAreaCommand, 도로=Forced RemoveRoadCommand).
 //   우클릭 = '거주건물'로 지정 (ResidenceBuilding + BuildingOccupancy{Capacity=50}).
 //            → TerritorySystem이 1초마다 전체 재계산해 그 건물 중심으로 영역을 그린다.
 //            영역 확인: F7(TerritoryDebugSystem 오버레이). PopPerCell 필드로 영역 크기 조절.
@@ -36,7 +36,11 @@ public class Test : MonoBehaviour
 
         var mouse = Mouse.current;
         if (mouse == null) return;
-        bool raze = mouse.leftButton.wasPressedThisFrame;
+        // 파괴 = Alt+좌클릭(건물·도로 공통) — 일반 좌클릭은 건설(도로/건물 배치)과 충돌하므로
+        //   수식키로 분리(맨 클릭 파괴가 건설 시작 도로를 지워 베이스-연결 전제를 깨던 문제).
+        var kb   = Keyboard.current;
+        bool alt = kb != null && kb.altKey.isPressed;
+        bool raze = alt && mouse.leftButton.wasPressedThisFrame;
         bool tag  = mouse.rightButton.wasPressedThisFrame;
         if (!raze && !tag) return;
 
@@ -82,7 +86,27 @@ public class Test : MonoBehaviour
         }
         ents.Dispose(); bq.Dispose();
 
-        if (target == Entity.Null) { Debug.Log($"[Test] cell {cell} — 건물 없음"); return; }
+        if (target == Entity.Null)
+        {
+            // 건물 없음 → 도로면 강제 철거 (테스트 파괴에 도로 포함).
+            if (raze)
+            {
+                var glQ = em.CreateEntityQuery(ComponentType.ReadOnly<GridLayers>());
+                bool isRoad = !glQ.IsEmpty
+                              && glQ.GetSingleton<GridLayers>().RoadLayer.TryGetValue(cell, out _);
+                glQ.Dispose();
+                if (isRoad)
+                {
+                    var re = em.CreateEntity();
+                    em.AddComponentData(re, new RemoveRoadCommand
+                    { Cell = cell, OwnerLocalId = -1, Forced = 1 });
+                    Debug.Log($"[Test] 도로 파괴 {cell}");
+                    return;
+                }
+            }
+            Debug.Log($"[Test] cell {cell} — 건물/도로 없음");
+            return;
+        }
 
         if (raze)
         {

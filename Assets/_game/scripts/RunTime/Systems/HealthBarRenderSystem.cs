@@ -73,6 +73,10 @@ namespace CitySim
             float3 worldUp = new float3(0f, 1f, 0f);
 
             var boundsLookup = SystemAPI.GetComponentLookup<CombatTargetBounds>(true);
+            // 표시 규칙용: 인간 유닛=선택 시만 / 그 외(타 플레이어·도로·건물)=손상(<100%)만 / 파괴 예정=항상.
+            var selectedLookup = SystemAPI.GetComponentLookup<SelectedUnit>(true);
+            var unitTagLookup  = SystemAPI.GetComponentLookup<UnitTag>(true);
+            var teamLookup     = SystemAPI.GetComponentLookup<TeamInfoData>(true);
 
             // 파괴 예정(CaptureDoom) 카운트다운 게이지용.
             var doomLookup = SystemAPI.GetComponentLookup<CaptureDoom>(true);
@@ -88,6 +92,23 @@ namespace CitySim
                 var h = healthRO.ValueRO;
                 if (h.MaxHealth <= 0f) continue;
                 float frac = math.saturate(h.Health / h.MaxHealth);
+
+                // ── 표시 규칙 ──────────────────────────────────────────────
+                //   ① 선택된 유닛 / 파괴 예정(CaptureDoom) → 항상 표시.
+                //   ② 인간 플레이어 유닛 → 선택 시에만(비선택은 손상돼도 숨김).
+                //   ③ 그 외(타 플레이어 유닛·도로·건물) → 손상(<100%)만.
+                //      손상 도로는 보호 영토로 들어와도 유지(수리 필요 정보).
+                bool selected = selectedLookup.HasComponent(entity)
+                                && selectedLookup.IsComponentEnabled(entity);
+                bool doomed = doomLookup.HasComponent(entity);
+                if (!selected && !doomed)
+                {
+                    bool humanUnit = unitTagLookup.HasComponent(entity)
+                                     && teamLookup.HasComponent(entity)
+                                     && teamLookup[entity].IsPlayer();
+                    if (humanUnit) continue;          // ② 비선택 인간 유닛
+                    if (frac >= 1f) continue;         // ③ 무손상
+                }
 
                 // 띄우는 높이: bounds 있으면 그 높이 위, 없으면 기본.
                 float yOff = boundsLookup.HasComponent(entity)

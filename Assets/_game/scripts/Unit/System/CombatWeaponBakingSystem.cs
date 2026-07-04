@@ -1088,6 +1088,7 @@ namespace Game.Unit
             if (attackTarget.HasTarget == 0 ||
                 attackTarget.Target == Entity.Null ||
                 !Targetables.HasComponent(attackTarget.Target) ||
+                !Targetables.IsComponentEnabled(attackTarget.Target) ||
                 !HealthLookup.HasComponent(attackTarget.Target) ||
                 !Teams.HasComponent(attackTarget.Target) ||
                 !Transforms.HasComponent(attackTarget.Target) ||
@@ -1348,6 +1349,7 @@ namespace Game.Unit
             if (attackTarget.HasTarget == 0 ||
                 attackTarget.Target == Entity.Null ||
                 !Targetables.HasComponent(attackTarget.Target) ||
+                !Targetables.IsComponentEnabled(attackTarget.Target) ||
                 !HealthLookup.HasComponent(attackTarget.Target) ||
                 !Teams.HasComponent(attackTarget.Target) ||
                 !Transforms.HasComponent(attackTarget.Target) ||
@@ -1450,6 +1452,7 @@ namespace Game.Unit
             if (attackTarget.HasTarget == 0 ||
                 attackTarget.Target == Entity.Null ||
                 !Targetables.HasComponent(attackTarget.Target) ||
+                !Targetables.IsComponentEnabled(attackTarget.Target) ||
                 !HealthLookup.HasComponent(attackTarget.Target) ||
                 !Teams.HasComponent(attackTarget.Target) ||
                 !WorldTransforms.HasComponent(attackTarget.Target) ||
@@ -1581,6 +1584,7 @@ namespace Game.Unit
                 if (attackTarget.HasTarget != 0 &&
                     attackTarget.Target != Entity.Null &&
                     Targetables.HasComponent(attackTarget.Target) &&
+                    Targetables.IsComponentEnabled(attackTarget.Target) &&
                     HealthLookup.HasComponent(attackTarget.Target) &&
                     Teams.HasComponent(attackTarget.Target) &&
                     Transforms.HasComponent(attackTarget.Target) &&
@@ -1749,6 +1753,7 @@ namespace Game.Unit
             if (attackTarget.HasTarget == 0 ||
                 attackTarget.Target == Entity.Null ||
                 !Targetables.HasComponent(attackTarget.Target) ||
+                !Targetables.IsComponentEnabled(attackTarget.Target) ||
                 !HealthLookup.HasComponent(attackTarget.Target) ||
                 !Teams.HasComponent(attackTarget.Target) ||
                 !Transforms.HasComponent(attackTarget.Target))

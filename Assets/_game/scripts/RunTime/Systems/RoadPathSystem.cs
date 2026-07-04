@@ -62,8 +62,9 @@ namespace CitySim
                     Debug.Log($"[RoadPath] team{req.OwnerLocalId}: Target={req.Target} " +
                               $"경로 없음 또는 이미 연결 (found={ok}, len={path.Length})");
 
-                // 활성 지선 등록(성공 시, 중복 방지) — janitor가 보호·자가수리에 사용.
-                if (ok && knownSpurs.Add(new int3(req.Target, req.OwnerLocalId)))
+                // 활성 지선 등록(성공+RegisterSpur 요청 시, 중복 방지) — janitor가 보호·자가수리에 사용.
+                //   일회성 부설(입구 복구 등)은 등록 안 함 — 대상 소멸 후에도 영구 재부설되는 것 방지.
+                if (ok && req.RegisterSpur != 0 && knownSpurs.Add(new int3(req.Target, req.OwnerLocalId)))
                 {
                     var se = ecb.CreateEntity();
                     ecb.AddComponent(se, new RoadSpur
@@ -92,7 +93,8 @@ namespace CitySim
 
         // 열린 폴리라인 → 셀별 그린-방향 비트(경로 이전/다음 이웃을 향함). 발행.
         //   소스(i=0)도 발행 → 기존 도로 셀에 OR 병합(교차/T 승격, 네트워크 연결).
-        static void EmitDrawnPath(
+        // internal — AiRoadJanitorSystem(고립 섬 재연결)도 같은 그린-경로 발행을 재사용.
+        internal static void EmitDrawnPath(
             in NativeList<int2> path, int owner, int faction, ref EntityCommandBuffer ecb)
         {
             for (int i = 0; i < path.Length; i++)

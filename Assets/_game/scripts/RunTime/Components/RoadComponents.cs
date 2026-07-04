@@ -179,5 +179,8 @@ namespace CitySim
         public int  FactionId;
         /// <summary>1=Target 인접까지(기본, Target 자체가 도로 불가일 때) / 0=Target 셀까지.</summary>
         public byte StopAdjacent;
+        /// <summary>1=성공 시 RoadSpur로 등록(끊기면 janitor가 자가수리 — 자원/항구 등 영구 지선).
+        /// 0=일회성 부설(입구 복구 등 — 대상 소멸 시 함께 잊혀야 하는 도로).</summary>
+        public byte RegisterSpur;
     }
 }
