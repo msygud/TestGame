@@ -27,6 +27,8 @@ namespace CitySim
         Material _mat;
         Mesh     _mesh;
         bool     _enabled;          // F7로 토글
+        uint     _builtVersion = uint.MaxValue;   // 메시를 구축한 TerritoryVersion(캐시 키)
+        bool     _builtEnabled;
 
         // 메시 빌드 버퍼(재사용).
         readonly List<Vector3> _v = new(1024);
@@ -75,6 +77,16 @@ namespace CitySim
         {
             var kb = Keyboard.current;
             if (kb != null && kb.f7Key.wasPressedThisFrame) _enabled = !_enabled;
+
+            // 버전 게이트 — TerritoryLayer가 안 바뀌었으면 캐시 메시만 제출(재구축 스킵).
+            uint ver = SystemAPI.TryGetSingleton<TerritoryVersion>(out var tv) ? tv.Value : 0;
+            if (ver == _builtVersion && _enabled == _builtEnabled)
+            {
+                if (_enabled && _mesh.vertexCount > 0)
+                    Graphics.DrawMesh(_mesh, Matrix4x4.identity, _mat, 0);
+                return;
+            }
+            _builtVersion = ver; _builtEnabled = _enabled;
 
             _v.Clear(); _c.Clear(); _i.Clear();
             if (!_enabled) { _mesh.Clear(); return; }

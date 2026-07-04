@@ -2106,7 +2106,7 @@ MonoBehaviour:
   OwnedDlcIdsForDev: 
   StartMapId: 
   DevMapJson: 
-  DevMapJsonPath: Assets/_game/data/json/maps/NewMap.json
+  DevMapJsonPath: Assets/_game/data/json/maps/256x256Map.json
   ExternalMapLoadControl: 0
 --- !u!4 &1206696573
 Transform:
@@ -3303,12 +3303,12 @@ MonoBehaviour:
     IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0
-  - IsOpen: 0
+  - IsOpen: 1
     TeamID: 2
     IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0
-  - IsOpen: 0
+  - IsOpen: 1
     TeamID: 3
     IsPlayer: 0
     Cell: {x: 0, y: 0}
@@ -3329,7 +3329,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1a5415c6536d154449d191160dafd801, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Test
-  PopPerCell: 2
+  PopPerCell: 2.5
   TestResidenceCapacity: 10
   PlayerInfluence:
   - 10

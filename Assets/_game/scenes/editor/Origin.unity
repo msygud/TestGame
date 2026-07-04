@@ -313,7 +313,7 @@ MonoBehaviour:
   AttackerNamePrefix: A
   TargetPrefab: {fileID: 4355038132074908174, guid: 5237d7bdd782716478c407d7c0013089, type: 3}
   TargetPrefabs: []
-  TargetCount: 5
+  TargetCount: 1
   TargetOrigin: {x: 80, y: 0, z: 80}
   TargetLocalId: 1
   TargetTeamId: 1

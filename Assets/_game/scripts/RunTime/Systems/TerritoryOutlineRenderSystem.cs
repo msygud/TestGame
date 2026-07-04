@@ -31,6 +31,8 @@ namespace CitySim
         Mesh     _lineMesh;   // 팀 경계 + 경합지 해치 (MeshTopology.Lines)
         Mesh     _bandMesh;   // 경합지 띠 (삼각형 — 폭 있는 strip)
         bool     _hatchOn;    // F8 = 경합지 사선 해치 토글(기본 OFF)
+        uint     _builtVersion = uint.MaxValue;   // 메시를 구축한 TerritoryVersion(캐시 키)
+        bool     _builtHatch;
 
         // 메시 빌드 버퍼(재사용 — 매 프레임 Clear 후 재충전).
         readonly List<Vector3> _lv = new(1024);
@@ -95,6 +97,17 @@ namespace CitySim
         {
             var kb = Keyboard.current;
             if (kb != null && kb.f8Key.wasPressedThisFrame) _hatchOn = !_hatchOn;
+
+            // 버전 게이트 — TerritoryLayer는 ~1초에 한 번 바뀌는데 매 프레임 재구축하면
+            //   전맵 규모(6.5만 셀 × 4룩업)에서 프레임당 수 ms 낭비. 버전/토글이 그대로면
+            //   캐시된 메시만 제출.
+            uint ver = SystemAPI.TryGetSingleton<TerritoryVersion>(out var tv) ? tv.Value : 0;
+            if (ver == _builtVersion && _hatchOn == _builtHatch)
+            {
+                SubmitCached();
+                return;
+            }
+            _builtVersion = ver; _builtHatch = _hatchOn;
 
             _lv.Clear(); _lc.Clear(); _li.Clear();
             _bv.Clear(); _bc.Clear(); _bi.Clear();
@@ -202,6 +215,15 @@ namespace CitySim
                 _bandMesh.SetIndices(_bi, MeshTopology.Triangles, 0, false);
                 Graphics.DrawMesh(_bandMesh, Matrix4x4.identity, _mat, 0);
             }
+        }
+
+        // 캐시된 메시 제출(재구축 없이) — DrawMesh는 1프레임짜리 큐잉이라 매 프레임 재호출 필요.
+        void SubmitCached()
+        {
+            if (_lineMesh != null && _lineMesh.vertexCount > 0)
+                Graphics.DrawMesh(_lineMesh, Matrix4x4.identity, _mat, 0);
+            if (_bandMesh != null && _bandMesh.vertexCount > 0)
+                Graphics.DrawMesh(_bandMesh, Matrix4x4.identity, _mat, 0);
         }
     }
 }

@@ -36,6 +36,10 @@ namespace CitySim
         {
             state.RequireForUpdate<GridLayers>();
             _nextRecompute = 0;
+
+            // 렌더 캐시 무효화용 버전 싱글톤(재계산마다 +1).
+            if (!SystemAPI.HasSingleton<TerritoryVersion>())
+                state.EntityManager.CreateEntity(typeof(TerritoryVersion));
         }
 
         public void OnUpdate(ref SystemState state)
@@ -100,8 +104,11 @@ namespace CitySim
             ownerSeen.Dispose();
 
             // ── reach: 소유자별 nearest-N → 셀별 '팀 비트마스크' ──────────────
+            //   구(舊) 셀×거주지 브루트포스 O(W×R)는 전맵 정복 시 1.5초 스파이크
+            //   (15만 셀 × 수백 거주지 × 플레이어). → 체임퍼(chamfer 3×3) 거리변환
+            //   O(W) + 거리 버킷 선별 O(W)로 교체 — 거주지 수와 무관.
+            //   거리 근사(팔각형, 오차 ~4%)라 외곽이 미세하게 각질 수 있음(수용).
             var reach = new NativeHashMap<int2, int>(2048, Allocator.Temp);
-            var cmp   = new ClaimComparer();
             for (int owner = 0; owner < MP; owner++)
             {
                 int budget = 0;
@@ -118,34 +125,88 @@ namespace CitySim
                 if (!any || budget <= 0) continue;
 
                 int margin = math.min(maxRadius, (int)math.ceil(math.sqrt(budget / math.PI)) + 2);
+                int2 lo = bbMin - margin, hi = bbMax + margin;
+                int W = hi.x - lo.x + 1, H = hi.y - lo.y + 1;
 
-                var cand = new NativeList<Claim>(256, Allocator.Temp);
-                for (int z = bbMin.y - margin; z <= bbMax.y + margin; z++)
-                for (int x = bbMin.x - margin; x <= bbMax.x + margin; x++)
+                // 거리장 초기화(INF) + 거주지 시드(0).
+                const float INF = 1e9f, D1 = 1f, D2 = 1.4142135f;
+                var dist = new NativeArray<float>(W * H, Allocator.Temp,
+                    NativeArrayOptions.UninitializedMemory);
+                for (int i = 0; i < dist.Length; i++) dist[i] = INF;
+                for (int i = 0; i < residences.Length; i++)
                 {
-                    int2 cell = new int2(x, z);
-                    if (!layers.TerrainLayer.ContainsKey(cell)) continue;
-                    float md = float.MaxValue;
-                    for (int i = 0; i < residences.Length; i++)
-                    {
-                        if (residences[i].Owner != owner) continue;
-                        float d = math.distance((float2)cell, (float2)residences[i].Center);
-                        if (d < md) md = d;
-                    }
-                    if (md < float.MaxValue) cand.Add(new Claim { Dist = md, Cell = cell });
+                    if (residences[i].Owner != owner) continue;
+                    int2 c = residences[i].Center - lo;
+                    if (c.x >= 0 && c.x < W && c.y >= 0 && c.y < H) dist[c.y * W + c.x] = 0f;
                 }
 
-                var arr = cand.AsArray();
-                arr.Sort(cmp);
-                int take = math.min(budget, arr.Length);
-                int bit  = 1 << pTeam[owner];
-                for (int k = 0; k < take; k++)
+                // 체임퍼 2패스 — 최근접 거주지까지의 근사 유클리드 거리.
+                for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
                 {
-                    int2 cell = arr[k].Cell;
+                    int idx = z * W + x; float d = dist[idx];
+                    if (x > 0)     d = math.min(d, dist[idx - 1] + D1);
+                    if (z > 0)
+                    {
+                        d = math.min(d, dist[idx - W] + D1);
+                        if (x > 0)     d = math.min(d, dist[idx - W - 1] + D2);
+                        if (x < W - 1) d = math.min(d, dist[idx - W + 1] + D2);
+                    }
+                    dist[idx] = d;
+                }
+                for (int z = H - 1; z >= 0; z--)
+                for (int x = W - 1; x >= 0; x--)
+                {
+                    int idx = z * W + x; float d = dist[idx];
+                    if (x < W - 1) d = math.min(d, dist[idx + 1] + D1);
+                    if (z < H - 1)
+                    {
+                        d = math.min(d, dist[idx + W] + D1);
+                        if (x < W - 1) d = math.min(d, dist[idx + W + 1] + D2);
+                        if (x > 0)     d = math.min(d, dist[idx + W - 1] + D2);
+                    }
+                    dist[idx] = d;
+                }
+
+                // 거리 버킷(0.25 양자화) 카운팅 → budget 컷오프 버킷 산출.
+                //   마지막 버킷 = 오버플로(그 안의 순서는 스캔 순 — budget이 컷 반경을
+                //   넘는 극단에서만 근사, 결정적).
+                int nb = margin * 8 + 16;
+                var counts = new NativeArray<int>(nb, Allocator.Temp);
+                for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    float d = dist[z * W + x];
+                    if (d >= INF) continue;
+                    if (!layers.TerrainLayer.ContainsKey(lo + new int2(x, z))) continue;
+                    counts[math.min((int)(d * 4f), nb - 1)]++;
+                }
+                int cutBucket = nb - 1, cum = 0, remainInCut = 0;
+                for (int b = 0; b < nb; b++)
+                {
+                    if (cum + counts[b] >= budget) { cutBucket = b; remainInCut = budget - cum; break; }
+                    cum += counts[b];
+                    if (b == nb - 1) remainInCut = counts[b];   // budget > 전체 — 다 가짐
+                }
+
+                // 수집: 컷오프 미만 전부 + 컷오프 버킷은 스캔 순서로 잔여분(결정적).
+                int bit = 1 << pTeam[owner];
+                for (int z = 0; z < H; z++)
+                for (int x = 0; x < W; x++)
+                {
+                    float d = dist[z * W + x];
+                    if (d >= INF) continue;
+                    int2 cell = lo + new int2(x, z);
+                    if (!layers.TerrainLayer.ContainsKey(cell)) continue;
+                    int q = math.min((int)(d * 4f), nb - 1);
+                    if (q > cutBucket) continue;
+                    if (q == cutBucket) { if (remainInCut <= 0) continue; remainInCut--; }
                     reach.TryGetValue(cell, out int m);
                     reach[cell] = m | bit;
                 }
-                cand.Dispose();
+
+                counts.Dispose();
+                dist.Dispose();
             }
 
             // ── 해소: 단독 팀 셀 = 소유, 경합 셀(2팀+) = 모아서 구역 비례 배분 ──
@@ -158,7 +219,12 @@ namespace CitySim
                 else                        contested.Add(kv.Key);
             }
 
-            AllocateContested(in contested, in reach, in residences, in pTeam, in teamInf, cmp, ref layers);
+            AllocateContested(in contested, in reach, in residences, in pTeam, in teamInf,
+                new ClaimComparer(), ref layers);
+
+            // 렌더 캐시 무효화 — 이번 재계산으로 TerritoryLayer가 바뀌었음을 알림.
+            if (SystemAPI.TryGetSingleton<TerritoryVersion>(out var ver))
+                SystemAPI.SetSingleton(new TerritoryVersion { Value = ver.Value + 1 });
 
             pInf.Dispose(); pTeam.Dispose(); teamInf.Dispose();
             residences.Dispose(); reach.Dispose(); contested.Dispose();

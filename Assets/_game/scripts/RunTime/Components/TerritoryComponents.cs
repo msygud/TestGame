@@ -81,6 +81,16 @@ namespace CitySim
         };
     }
 
+    /// <summary>
+    /// TerritoryLayer 변경 버전(싱글톤) — TerritorySystem이 재계산(~1초)마다 +1.
+    /// 렌더 소비자(아웃라인/F7 채움)는 버전이 바뀔 때만 메시 재구축(매 프레임 재구축 방지 —
+    /// 전맵 규모에선 프레임당 수 ms 낭비였음). GL/DrawMesh 제출 자체는 매 프레임.
+    /// </summary>
+    public struct TerritoryVersion : IComponentData
+    {
+        public uint Value;
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     //  영토 전환 파괴 (capture = 파괴) — TerritoryCaptureSystem
     // ══════════════════════════════════════════════════════════════════════════
