@@ -121,6 +121,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CitySim.Authoring.BuildingAuthoring
   Kind: 1
-  Capacity: 120
+  Capacity: 40
   ProvidedJob: 0
   Influence: 5

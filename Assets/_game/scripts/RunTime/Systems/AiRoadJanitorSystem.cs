@@ -38,8 +38,6 @@ namespace CitySim
     [UpdateBefore(typeof(RoadSystem))]
     public partial struct AiRoadJanitorSystem : ISystem
     {
-        const int BaseSeedRadius = 8;   // Anchor 이 반경(Chebyshev) 안 도로 = 베이스 연결 시드
-
         JobHandle _handle;         // JanitorJob — state.Dependency 밖에서 폴링
         bool      _running;
         bool      _dayPending;
@@ -96,6 +94,9 @@ namespace CitySim
 
             var cellTypeLookup = SystemAPI.GetSingleton<CellTypeLookup>();
             if (!SystemAPI.TryGetSingleton<TeamTable>(out var teams)) teams = TeamTable.Identity;
+            // 밸런스: 베이스-연결 시드 반경은 성장(GrowthConfig)과 공유 — 판정 어긋남 방지.
+            var growthCfg  = SystemAPI.TryGetSingleton<GrowthConfig>(out var gcv) ? gcv : GrowthConfig.Default;
+            var janitorCfg = SystemAPI.TryGetSingleton<AiJanitorConfig>(out var jcv) ? jcv : AiJanitorConfig.Default;
 
             // ── 입력 수집 (메인, 소량) ──────────────────────────────────────────
             var teamList = new NativeList<TeamInput>(8, Allocator.Temp);
@@ -155,12 +156,15 @@ namespace CitySim
 
             _handle = new JanitorJob
             {
-                Snap       = _snap,
-                Teams      = _teams,
-                Spurs      = _spurs,
-                Buildings  = _buildings,
-                TeamsTable = teams,
-                Ecb        = _ecb,
+                Snap                = _snap,
+                Teams               = _teams,
+                Spurs               = _spurs,
+                Buildings           = _buildings,
+                TeamsTable          = teams,
+                BaseSeedRadius      = math.max(1, growthCfg.BaseSeedRadius),
+                MaxEntranceRepairs  = math.max(0, janitorCfg.MaxEntranceRepairsPerDay),
+                ReconnectMaxExplore = math.max(256, janitorCfg.ReconnectMaxExplore),
+                Ecb                 = _ecb,
             }.Schedule(copyH);
 
             state.Dependency = copyH;   // 복사만 등록 — 본 잡은 체인 밖(폴링)
@@ -262,6 +266,9 @@ namespace CitySim
             [ReadOnly] public NativeArray<RoadSpur>  Spurs;
             [ReadOnly] public NativeList<BldInput>   Buildings;
             public TeamTable TeamsTable;
+            public int BaseSeedRadius;        // 베이스-연결 시드 반경(GrowthConfig 공유)
+            public int MaxEntranceRepairs;    // owner당 하루 입구 복구 상한
+            public int ReconnectMaxExplore;   // 섬 재연결 BFS 탐색 상한
 
             public EntityCommandBuffer Ecb;
 
@@ -269,12 +276,12 @@ namespace CitySim
             {
                 for (int t = 0; t < Teams.Length; t++)
                     Janitor(Teams[t].Owner, Teams[t].FactionId, Teams[t].Anchor,
+                        BaseSeedRadius, ReconnectMaxExplore,
                         in Snap, in TeamsTable, in Spurs, ref Ecb);
 
                 // ── 입구 도로 복구 — 입구 도로 셀에 '자기 도로'가 없는 AI 건물은 죽은 자산
                 //   (시민 경로·공급 stamp 단절 = 이진 고장) → RoadPathRequest로 본망에서 그 셀까지
                 //   재부설(RegisterSpur=0: 일회성 — 건물 소멸 시 함께 잊힘). owner당 하루 N개 스로틀.
-                const int MaxEntranceRepairsPerDay = 2;
                 var repairCount = new NativeHashMap<int, int>(8, Allocator.Temp);
                 for (int i = 0; i < Buildings.Length; i++)
                 {
@@ -284,7 +291,7 @@ namespace CitySim
                         && rc.OwnerLocalId == b.Owner) continue;   // 입구 도로 살아있음
 
                     repairCount.TryGetValue(b.Owner, out int n);
-                    if (n >= MaxEntranceRepairsPerDay) continue;
+                    if (n >= MaxEntranceRepairs) continue;
                     repairCount[b.Owner] = n + 1;
 
                     var re = Ecb.CreateEntity();
@@ -307,7 +314,8 @@ namespace CitySim
             _ => new int2(-1, 0),
         };
 
-        static void Janitor(int owner, int factionId, int2 anchor, in JanitorSnap layers,
+        static void Janitor(int owner, int factionId, int2 anchor,
+            int baseSeedRadius, int reconnectMaxExplore, in JanitorSnap layers,
             in TeamTable teams, in NativeArray<RoadSpur> spurs,
             ref EntityCommandBuffer ecb)
         {
@@ -343,7 +351,7 @@ namespace CitySim
                 int2 hi = o + fps[o].Size - 1;
                 int dx = math.max(0, math.max(anchor.x - hi.x, o.x - anchor.x));
                 int dz = math.max(0, math.max(anchor.y - hi.y, o.y - anchor.y));
-                if (math.max(dx, dz) <= BaseSeedRadius && reached.Add(o)) q.Enqueue(o);
+                if (math.max(dx, dz) <= baseSeedRadius && reached.Add(o)) q.Enqueue(o);
             }
             while (q.TryDequeue(out int2 cur))
             {
@@ -432,8 +440,8 @@ namespace CitySim
                 if (!hasBuilding)
                     for (int c = 0; c < comp.Length; c++) removed.Add(comp[c]);
                 else if (!reconnected)
-                    reconnected = TryReconnectIsland(owner, factionId, in comp, in layers,
-                        in teams, in reached, ref ecb);
+                    reconnected = TryReconnectIsland(owner, factionId, reconnectMaxExplore,
+                        in comp, in layers, in teams, in reached, ref ecb);
             }
             visited.Dispose(); comp.Dispose();
 
@@ -451,7 +459,8 @@ namespace CitySim
         // 건물 딸린 고립 섬을 본망에 재연결 — FindRoadPathToIsland(베이스-연결 시드, 섬의 아무
         //   1×1 도로 셀 인접이 목표 = 최근접 접점 자동, 통과성에 영토 게이트 포함 = 배치 거부와
         //   일치해 '깔고 실패' 없음). 성공 시 그린 경로 발행 + 접점 상호 비트. 실패 = no-op(포위 지속).
-        static bool TryReconnectIsland(int owner, int factionId, in NativeList<int2> islandComp,
+        static bool TryReconnectIsland(int owner, int factionId, int maxExplore,
+            in NativeList<int2> islandComp,
             in JanitorSnap layers, in TeamTable teams,
             in NativeHashSet<int2> reached, ref EntityCommandBuffer ecb)
         {
@@ -463,7 +472,7 @@ namespace CitySim
             bool ok = BlockOps.FindRoadPathToIsland(
                 in layers.RoadLayer, in layers.OccupancyLayer, in layers.TerrainLayer,
                 in layers.ResourceLayer, in cellTypeLookup, in layers.TerritoryLayer, in teams,
-                owner, in reached, in islandOrigins, 8192, ref path, out int2 islandCell);
+                owner, in reached, in islandOrigins, maxExplore, ref path, out int2 islandCell);
 
             if (ok && path.Length >= 1)
             {
@@ -539,5 +548,25 @@ namespace CitySim
             }
             return false;
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  AiJanitorConfig — janitor 밸런스 (싱글톤, 없으면 Default)
+    //  Test.cs가 인스펙터 값을 매 프레임 push(통합 밸런스 패널) — 변경 즉시 반영.
+    //  ※ 베이스-연결 시드 반경은 GrowthConfig.BaseSeedRadius를 공유(성장과 판정 일치).
+    // ══════════════════════════════════════════════════════════════════════════
+    public struct AiJanitorConfig : IComponentData
+    {
+        /// <summary>owner당 하루 입구 도로 복구(RoadPathRequest) 상한.</summary>
+        public int MaxEntranceRepairsPerDay;
+
+        /// <summary>건물 딸린 고립 섬 재연결 BFS 탐색 상한(셀) — 폭주 가드.</summary>
+        public int ReconnectMaxExplore;
+
+        public static AiJanitorConfig Default => new AiJanitorConfig
+        {
+            MaxEntranceRepairsPerDay = 2,
+            ReconnectMaxExplore      = 8192,
+        };
     }
 }

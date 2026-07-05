@@ -92,6 +92,15 @@ namespace CitySim
     {
         /// <summary>이번 의사결정에서 추구 중인 욕구. None이면 미정.</summary>
         public NeedType Pursuing;
+
+        // ── 2패스 결정 후보(잡 간 통신, 2026-07-06) ─────────────────────────
+        //  욕구별 긴급도 잡(Hunger 등, Burst 청크 순회)이 "자기 욕구가 더 급하면"
+        //  아래 두 필드를 갱신 → 공통 선택 잡이 소비(Pursuing set) 후 리셋.
+        //  구 메인스레드 HasComponent 랜덤 액세스 결정(인구 1.8만에서 정체 실측)의 대체.
+        /// <summary>이번 프레임 최대 긴급도 욕구 후보.</summary>
+        public NeedType CandidateNeed;
+        /// <summary>후보의 긴급도(Level − Threshold). 욕구별 잡이 max 갱신.</summary>
+        public float    CandidateUrgency;
     }
 
     /// <summary>
@@ -188,5 +197,20 @@ namespace CitySim
         {
             LocalId = localId;
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    //  CitizenConfig — 시민 밸런스 (싱글톤, 없으면 Default). Test.cs 통합 패널이 push.
+    // ──────────────────────────────────────────────────────────────────────────
+    public struct CitizenConfig : IComponentData
+    {
+        /// <summary>게임-시간당 owner별 이민 유입 상한. 0 = 유입 정지.
+        /// 실제 유입 = min(이 값, 빈 거주 정원 − 집 미배정 대기자) — CitizenImmigrationSystem.</summary>
+        public int ImmigrantsPerHourPerPlayer;
+
+        public static CitizenConfig Default => new CitizenConfig
+        {
+            ImmigrantsPerHourPerPlayer = 4,
+        };
     }
 }

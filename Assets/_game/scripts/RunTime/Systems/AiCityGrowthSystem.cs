@@ -92,7 +92,7 @@ namespace CitySim
             var entranceLookup = SystemAPI.GetSingleton<EntranceLookup>();
             var metaLookup     = SystemAPI.GetSingleton<PrefabMetaLookup>();
             var cellTypeLookup = SystemAPI.GetSingleton<CellTypeLookup>();
-            var cfg            = GrowthConfig.Default;
+            var cfg = SystemAPI.TryGetSingleton<GrowthConfig>(out var gc) ? gc : GrowthConfig.Default;
 
             // 영역 게이트는 TerritoryLayer의 '팀 id'와 '내 팀'을 비교 → LocalId→팀 매핑 필요.
             if (!SystemAPI.TryGetSingleton<TeamTable>(out var teams)) teams = TeamTable.Identity;
@@ -367,7 +367,8 @@ namespace CitySim
                     // "건설은 베이스-연결에서만"(행위 규칙) — 단절된 자기 도로 섬은 확장 앵커/입구로 못 쓴다.
                     //   섬 자체는 포위 상태로 존속(상태 허용) — 파괴/재연결은 janitor·capture 소관.
                     var baseReached = new NativeHashSet<int2>(256, Allocator.Temp);
-                    ComputeBaseReached(in Snap, owner, grid.Anchor, ref baseReached);
+                    ComputeBaseReached(in Snap, owner, grid.Anchor,
+                        math.max(1, Cfg.BaseSeedRadius), ref baseReached);
 
                     // 1) 갇힌 구획 개발 (D1 구획 파생 + B 격자 패킹).
                     bool worked = DevelopParcels(in Snap, in grid, owner, in OptA, in OptB,
@@ -1077,14 +1078,13 @@ namespace CitySim
         //   "건설은 베이스-연결에서만"(행위 규칙) — 전투/점령으로 단절된 자기 도로 섬은
         //   확장 앵커/입구로 쓰지 않는다(섬은 포위 '상태'로 존속 — 상태는 허용).
         static void ComputeBaseReached(
-            in GrowthSnap layers, int owner, int2 anchor, ref NativeHashSet<int2> reached)
+            in GrowthSnap layers, int owner, int2 anchor, int seedR, ref NativeHashSet<int2> reached)
         {
             var visited = new NativeHashSet<int2>(256, Allocator.Temp);
             var q       = new NativeQueue<int2>(Allocator.Temp);
-            const int SeedR = 8;
 
-            for (int dz = -SeedR; dz <= SeedR; dz++)
-            for (int dx = -SeedR; dx <= SeedR; dx++)
+            for (int dz = -seedR; dz <= seedR; dz++)
+            for (int dx = -seedR; dx <= seedR; dx++)
             {
                 int2 c = anchor + new int2(dx, dz);
                 if (layers.RoadLayer.TryGetValue(c, out var rc) && rc.OwnerLocalId == owner
@@ -1155,9 +1155,10 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  GrowthConfig — 성장 건물 키 (블록 = 건물 크기 {4,6,8}, 모서리 앵커로 정렬)
+    //  GrowthConfig — AI 성장 밸런스 (싱글톤, 없으면 Default)
+    //  Test.cs가 인스펙터 값을 매 프레임 push(통합 밸런스 패널) — 변경 즉시 반영.
     // ══════════════════════════════════════════════════════════════════════════
-    public struct GrowthConfig
+    public struct GrowthConfig : IComponentData
     {
         public int BuildingKeyA;
         public int BuildingKeyB;
@@ -1173,6 +1174,11 @@ namespace CitySim
         //   채우므로, 클수록 현재 지구가 빠르게 빽빽이 차고 막히면 바깥으로 확장된다.
         public int BuildPerTick;
 
+        // "베이스-연결"(행위 규칙) 판정의 시드 반경(셀, Chebyshev — Anchor 주변 이 반경 안
+        //   자기 도로에서 flood 시작). 성장 앵커/입구 게이트와 janitor(트림·섬·지선)가 공유
+        //   — 두 시스템이 같은 값을 봐야 "연결" 판정이 어긋나지 않는다.
+        public int BaseSeedRadius;
+
         public static GrowthConfig Default => new GrowthConfig
         {
             BuildingKeyA        = 1004,
@@ -1180,6 +1186,7 @@ namespace CitySim
             BalanceDeadband     = 8,
             RejectParallelSeam  = true,
             BuildPerTick        = 6,
+            BaseSeedRadius      = 8,
         };
     }
 }

@@ -20,14 +20,15 @@ namespace CitySim
     [UpdateAfter(typeof(MapLoaderSystem))]
     public partial struct SpawnSystem : ISystem
     {
-        // 건물 기본 체력(균일, 임시) — 전투로 파괴 가능하게 부여.
-        //   TODO: 프리팹별 값이 필요하면 BuildingAuthoring 베이킹으로 이전(능력=컴포넌트 원칙).
-        const float BuildingDefaultHealth = 500f;
-
         public void OnUpdate(ref SystemState state)
         {
             if (!SystemAPI.HasSingleton<PrefabLookup>()) return;
             var lookup = SystemAPI.GetSingleton<PrefabLookup>();
+
+            // 건물 기본 체력(균일, 임시) — 전투로 파괴 가능하게 부여. SpawnConfig 싱글톤(밸런스).
+            //   TODO: 프리팹별 값이 필요하면 BuildingAuthoring 베이킹으로 이전(능력=컴포넌트 원칙).
+            float buildingDefaultHealth = (SystemAPI.TryGetSingleton<SpawnConfig>(out var spawnCfg)
+                ? spawnCfg : SpawnConfig.Default).BuildingDefaultHealth;
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             var teamsByLocalId = new NativeArray<TeamInfoData>(8, Allocator.Temp);
@@ -107,7 +108,7 @@ namespace CitySim
 
                     int ownerLid = math.clamp(req.ValueRO.OwnerLocalId, 0, 7);
                     ecb.AddComponent(instance, new CombatTargetable { TargetType = CombatTargetMask.Building });
-                    ecb.AddComponent(instance, new CombatHealth { Health = BuildingDefaultHealth, MaxHealth = BuildingDefaultHealth });
+                    ecb.AddComponent(instance, new CombatHealth { Health = buildingDefaultHealth, MaxHealth = buildingDefaultHealth });
                     ecb.AddComponent<CombatDestroyOnDeath>(instance);
                     // friend/foe 판정용 팀 — 프리팹에 TeamInfoData 없을 때만 owner 팀으로 부여
                     //   (있으면 위 ApplySpawnTeam이 이미 set).

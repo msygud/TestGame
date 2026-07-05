@@ -74,13 +74,16 @@ namespace CitySim
                 Pursuing   = NeedType.None,
             });
 
-            // 욕구 컴포넌트 — 개별 부착(부정 방향, Level 0=만족에서 시작).
+            // 욕구 컴포넌트 — 개별 부착(부정 방향).
             // A-1: Hunger 하나로 골격. 다른 욕구/팩션 조합은 이후 단계에서 추가.
-            // 증가율·임계치는 기본값(추후 능력치/밸런싱 조정).
+            // 초기 Level·Rate 무작위 분산(시드 결정적, 2026-07-06): 동시 스폰 집단이
+            //   같은 주기로 일제히 배고파지면 보행자/탐색이 한 프레임에 몰려 스파이크
+            //   (동조화·thundering herd). 시작점과 주기를 흩어 영구히 탈동조화한다.
+            var needRng = Random.CreateFromIndex(seed ^ 0x9E3779B9u);
             ecb.AddComponent(e, new Hunger
             {
-                Level     = 0f,
-                Rate      = 0.010f,
+                Level     = needRng.NextFloat(0f, 0.55f),           // 임계(0.6) 미만에서 산포
+                Rate      = 0.010f * needRng.NextFloat(0.85f, 1.15f),
                 Threshold = 0.6f,
             });
 

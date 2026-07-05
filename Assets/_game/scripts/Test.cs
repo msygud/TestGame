@@ -14,14 +14,55 @@ using UnityEngine.InputSystem;
 //     우클릭 태깅은 프리팹 미설정 상태에서 영역 파이프라인을 즉시 검증하기 위한 테스트용.
 public class Test : MonoBehaviour
 {
-    [Header("Territory 테스트")]
-    [Tooltip("셀 1칸 점유에 필요한 인구(float). 영역 셀 수 = floor(거주건물 인구 / 이 값). "
-           + "매 프레임 TerritoryConfig 싱글톤에 반영 → TerritorySystem이 1초마다 전체 재계산.")]
-    public float PopPerCell = 5f;
+    // ═══════════════════════════════════════════════════════════════════
+    //  통합 밸런스 패널 (2026-07-05) — 도메인별 config 싱글톤에 매 프레임 push.
+    //  인스펙터에서 바꾸면 즉시 반영. 여기 안 보이는 값의 기본은 각 struct의 Default.
+    //  ⚠ 인스펙터 초기값은 씬에 직렬화됨 — struct Default를 바꿔도 씬 값이 우선.
+    // ═══════════════════════════════════════════════════════════════════
 
-    [Tooltip("우클릭 태깅 시, BuildingOccupancy가 '없는' 건물에만 줄 정원(인구). "
-           + "이미 베이킹된 BuildingOccupancy가 있으면 그 값을 존중(덮어쓰지 않음).")]
-    public int TestResidenceCapacity = 10;
+    [Header("영역 (TerritoryConfig)")]
+    [Tooltip("셀 1칸 점유에 필요한 인구(float). 영역 셀 수 = floor(거주건물 인구 / 이 값).")]
+    public float PopPerCell = 5f;
+    [Tooltip("영역 확산 윈도우 최대 반경(셀) — 성능·폭주 가드.")]
+    public int MaxRadius = 64;
+
+    [Header("영토 전환 파괴 (TerritoryCaptureConfig)")]
+    [Tooltip("타팀 영토에 놓인 구조물이 파괴되기까지의 유예(게임 시간). 1 = 게임 1시간 ≈ 현실 50초.")]
+    public float DwellGameHours = 1f;
+    [Tooltip("건물은 footprint 전체가 넘어가야 파괴 대상(경계 걸침 보호).")]
+    public bool RequireFullFootprint = true;
+    [Tooltip("패스당 파괴 상한(대량 함락 스파이크 방지 — 넘치면 이월).")]
+    public int MaxDestroysPerPass = 32;
+    [Tooltip("AI 확장이 적 영토에서 유지할 완충 거리(셀). 0 = 완충 없음.")]
+    public int AiEnemyBufferCells = 4;
+    [Tooltip("중립(무법지대) 도로의 전투 체력. 0 = 기능 끔(중립 도로 비타겟).")]
+    public float NeutralRoadHealth = 200f;
+
+    [Header("AI 성장 (GrowthConfig)")]
+    public int BuildingKeyA = 1004;
+    public int BuildingKeyB = 1005;
+    [Tooltip("확장 편향 데드밴드(셀) — 블록 한 변(4~8)보다 커야 좌우 떨림 방지.")]
+    public int BalanceDeadband = 8;
+    [Tooltip("기존 도로와 공유 없이 한 칸 평행으로 깔리는 블록을 거부.")]
+    public bool RejectParallelSeam = true;
+    [Tooltip("한 틱(게임-일)당 팀별 최대 배치 수.")]
+    public int BuildPerTick = 6;
+    [Tooltip("'베이스-연결' 판정 시드 반경(셀) — 성장 앵커 게이트와 janitor가 공유.")]
+    public int BaseSeedRadius = 8;
+
+    [Header("AI janitor (AiJanitorConfig)")]
+    [Tooltip("owner당 하루 입구 도로 복구 상한.")]
+    public int MaxEntranceRepairsPerDay = 2;
+    [Tooltip("고립 섬 재연결 BFS 탐색 상한(셀).")]
+    public int ReconnectMaxExplore = 8192;
+
+    [Header("스폰 (SpawnConfig)")]
+    [Tooltip("건물 기본 전투 체력(균일, 임시 — 추후 프리팹별 베이킹).")]
+    public float BuildingDefaultHealth = 500f;
+
+    [Header("시민 (CitizenConfig)")]
+    [Tooltip("게임-시간당 owner별 이민 유입 상한(빈 거주 정원 내). 0 = 유입 정지.")]
+    public int ImmigrantsPerHourPerPlayer = 4;
 
     [Header("Territory 팀/영향력 테스트 (인덱스 = LocalId 0~7)")]
     [Tooltip("플레이어별 영향력(경합 해소용 스칼라). 같은 팀끼리 합산해 승자팀−2등팀으로 경합 결정.")]
@@ -29,10 +70,14 @@ public class Test : MonoBehaviour
     [Tooltip("플레이어별 팀(동맹) id. 같은 값 = 동맹(영향력 합산·서로 경합 안 함). 기본 각자 자기 팀.")]
     public int[]   PlayerTeam      = { 0, 1, 2, 3, 4, 5, 6, 7 };
 
+    [Header("테스트 입력")]
+    [Tooltip("우클릭 태깅 시, BuildingOccupancy가 '없는' 건물에만 줄 정원(인구). "
+           + "이미 베이킹된 BuildingOccupancy가 있으면 그 값을 존중(덮어쓰지 않음).")]
+    public int TestResidenceCapacity = 10;
+
     void Update()
     {
-        SyncTerritoryConfig();
-        SyncPlayerInfluence();
+        SyncBalanceConfigs();
 
         var mouse = Mouse.current;
         if (mouse == null) return;
@@ -135,42 +180,85 @@ public class Test : MonoBehaviour
         Debug.Log($"[Test] 거주건물 지정 (Capacity={cap}, 베이킹값 존중) @ {mn} — F7로 영역 확인");
     }
 
-    // PopPerCell을 TerritoryConfig 싱글톤에 반영(없으면 생성). 매 프레임 — 인스펙터 변경 즉시 반영.
-    void SyncTerritoryConfig()
+    // ── 통합 밸런스 push ─────────────────────────────────────────────────
+    //  싱글톤 엔티티는 캐시(매 프레임 CreateEntityQuery는 관리형 쓰레기 → GC 스파이크).
+    //  월드 교체(플레이 재시작 등) 시 캐시 리셋.
+    World  _cfgWorld;
+    Entity _eTerritory, _eCapture, _eGrowth, _eJanitor, _eSpawn, _eCitizen, _eInfluence;
+
+    static Entity GetOrCreateSingleton<T>(EntityManager em, ref Entity cached)
+        where T : unmanaged, IComponentData
     {
-        var world = World.DefaultGameObjectInjectionWorld;
-        if (world == null || !world.IsCreated) return;
-        var em = world.EntityManager;
-
-        var q = em.CreateEntityQuery(typeof(TerritoryConfig));
-        Entity e = q.IsEmpty ? em.CreateEntity(typeof(TerritoryConfig)) : q.GetSingletonEntity();
+        if (cached != Entity.Null && em.Exists(cached) && em.HasComponent<T>(cached))
+            return cached;
+        var q = em.CreateEntityQuery(typeof(T));   // 최초/월드 교체 시에만 도달
+        cached = q.IsEmpty ? em.CreateEntity(typeof(T)) : q.GetSingletonEntity();
         q.Dispose();
-
-        em.SetComponentData(e, new TerritoryConfig
-        {
-            PopPerCell = Mathf.Max(0.01f, PopPerCell),
-            MaxRadius  = 64,
-        });
+        return cached;
     }
 
-    // PlayerInfluence/PlayerTeam을 싱글톤 버퍼에 반영(없으면 생성). 인덱스=LocalId 0~7.
-    void SyncPlayerInfluence()
+    void SyncBalanceConfigs()
     {
         var world = World.DefaultGameObjectInjectionWorld;
-        if (world == null || !world.IsCreated) return;
+        if (world == null || !world.IsCreated) { _cfgWorld = null; return; }
+        if (!ReferenceEquals(_cfgWorld, world))
+        {
+            _cfgWorld = world;
+            _eTerritory = _eCapture = _eGrowth = _eJanitor = _eSpawn = _eCitizen = _eInfluence = Entity.Null;
+        }
         var em = world.EntityManager;
 
-        var q = em.CreateEntityQuery(typeof(PlayerInfluenceConfig));
-        Entity e;
-        if (q.IsEmpty)
-        {
-            e = em.CreateEntity(typeof(PlayerInfluenceConfig));
-            em.AddBuffer<PlayerInfluenceElement>(e);
-        }
-        else e = q.GetSingletonEntity();
-        q.Dispose();
+        em.SetComponentData(GetOrCreateSingleton<TerritoryConfig>(em, ref _eTerritory),
+            new TerritoryConfig
+            {
+                PopPerCell = Mathf.Max(0.01f, PopPerCell),
+                MaxRadius  = Mathf.Max(1, MaxRadius),
+            });
 
-        var buf = em.GetBuffer<PlayerInfluenceElement>(e);
+        em.SetComponentData(GetOrCreateSingleton<TerritoryCaptureConfig>(em, ref _eCapture),
+            new TerritoryCaptureConfig
+            {
+                DwellGameHours       = Mathf.Max(0f, DwellGameHours),
+                RequireFullFootprint = RequireFullFootprint ? (byte)1 : (byte)0,
+                MaxDestroysPerPass   = Mathf.Max(1, MaxDestroysPerPass),
+                AiEnemyBufferCells   = Mathf.Max(0, AiEnemyBufferCells),
+                NeutralRoadHealth    = Mathf.Max(0f, NeutralRoadHealth),
+            });
+
+        em.SetComponentData(GetOrCreateSingleton<GrowthConfig>(em, ref _eGrowth),
+            new GrowthConfig
+            {
+                BuildingKeyA       = BuildingKeyA,
+                BuildingKeyB       = BuildingKeyB,
+                BalanceDeadband    = Mathf.Max(0, BalanceDeadband),
+                RejectParallelSeam = RejectParallelSeam,
+                BuildPerTick       = Mathf.Max(1, BuildPerTick),
+                BaseSeedRadius     = Mathf.Max(1, BaseSeedRadius),
+            });
+
+        em.SetComponentData(GetOrCreateSingleton<AiJanitorConfig>(em, ref _eJanitor),
+            new AiJanitorConfig
+            {
+                MaxEntranceRepairsPerDay = Mathf.Max(0, MaxEntranceRepairsPerDay),
+                ReconnectMaxExplore      = Mathf.Max(256, ReconnectMaxExplore),
+            });
+
+        em.SetComponentData(GetOrCreateSingleton<SpawnConfig>(em, ref _eSpawn),
+            new SpawnConfig
+            {
+                BuildingDefaultHealth = Mathf.Max(1f, BuildingDefaultHealth),
+            });
+
+        em.SetComponentData(GetOrCreateSingleton<CitizenConfig>(em, ref _eCitizen),
+            new CitizenConfig
+            {
+                ImmigrantsPerHourPerPlayer = Mathf.Max(0, ImmigrantsPerHourPerPlayer),
+            });
+
+        // 영향력/팀 버퍼 (인덱스 = LocalId 0~7)
+        var ie = GetOrCreateSingleton<PlayerInfluenceConfig>(em, ref _eInfluence);
+        if (!em.HasBuffer<PlayerInfluenceElement>(ie)) em.AddBuffer<PlayerInfluenceElement>(ie);
+        var buf = em.GetBuffer<PlayerInfluenceElement>(ie);
         buf.Clear();
         for (int i = 0; i < 8; i++)
             buf.Add(new PlayerInfluenceElement

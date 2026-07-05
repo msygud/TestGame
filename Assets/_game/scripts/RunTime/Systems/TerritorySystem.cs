@@ -138,10 +138,15 @@ namespace CitySim
             {
                 int owner = bf.ValueRO.OwnerLocalId;
                 if ((uint)owner >= MP) continue;
-                int pop = occ.ValueRO.Current > 0 ? occ.ValueRO.Current : occ.ValueRO.Capacity;
+                // 인구원 = 실제 거주민(Current)만. 구 'Current>0?Current:Capacity' 폴백은
+                //   시민 스폰 도입(2026-07-05, CitizenImmigration) 전의 잠재 인구 가시화용
+                //   placeholder — 빈 건물이 정원만큼 영역을 차지하던 원인이라 은퇴.
+                //   영역은 이제 이민으로 거주민이 차오르는 만큼 자란다.
+                int pop = occ.ValueRO.Current;
                 if (pop <= 0) continue;
-                int cells = (int)math.floor(pop / popPerCell);
-                if (cells <= 0) continue;
+                // 기여는 버림 없는 실수 — 버림(floor)은 owner 예산 합산 후 1회만.
+                //   (건물별 floor는 잔여 인구 증발: 3명+3명=0셀 문제. "5명 단위 계단" 완화, 2026-07-05)
+                float cells = pop / popPerCell;
 
                 int2 eff    = EntranceOps.RotateSize(bf.ValueRO.Size, bf.ValueRO.RotSteps);
                 int2 center = bf.ValueRO.Origin + eff / 2;
@@ -237,33 +242,47 @@ namespace CitySim
                 var reach = new NativeHashMap<int2, int>(2048, Allocator.Temp);
                 for (int owner = 0; owner < MP; owner++)
                 {
-                    int budget = 0;
+                    // 예산 = 실수 기여 합산 후 1회 floor — 소규모 거주지들의 잔여 인구가 합쳐짐.
+                    float budgetF = 0f;
                     int2 bbMin = default, bbMax = default;
                     bool any = false;
                     for (int i = 0; i < Residences.Length; i++)
                     {
                         if (Residences[i].Owner != owner) continue;
-                        budget += Residences[i].Cells;
+                        budgetF += Residences[i].Cells;
                         int2 c = Residences[i].Center;
                         if (!any) { bbMin = c; bbMax = c; any = true; }
                         else { bbMin = math.min(bbMin, c); bbMax = math.max(bbMax, c); }
                     }
+                    int budget = (int)math.floor(budgetF);
                     if (!any || budget <= 0) continue;
 
                     int margin = math.min(MaxRadius, (int)math.ceil(math.sqrt(budget / math.PI)) + 2);
                     int2 lo = bbMin - margin, hi = bbMax + margin;
                     int W = hi.x - lo.x + 1, H = hi.y - lo.y + 1;
 
-                    // 거리장 초기화(INF) + 거주지 시드(0).
+                    // 거리장 초기화(INF) + 거주지 가중 시드(-wᵢ) — (2026-07-05 가중 배분)
+                    //   wᵢ = √(기여ᵢ/π). 시드를 0이 아니라 -wᵢ에서 시작하면(가산 가중 최근접):
+                    //   · 떨어진 건물 = 반경 wᵢ 원 = 정확히 자기 인구만큼의 면적(인구 비례).
+                    //     (전역 컷이 자연히 조정거리 ~0에 걸림 — Σπwᵢ² = 예산이므로.)
+                    //   · 겹치는 건물들 = 합집합이 예산보다 작아져 컷이 0 위로 올라감
+                    //     → 공동 경계가 바깥으로 확장(기존 '중첩=확장' 설계 유지).
+                    //   구 0-시드(비가중)는 거리 링이 모든 시드에서 균등 성장해, 띄엄띄엄 놓인
+                    //   건물들이 개별 인구와 무관하게 같은 크기를 갖던 원인(유저 관찰).
                     const float INF = 1e9f, D1 = 1f, D2 = 1.4142135f;
                     var dist = new NativeArray<float>(W * H, Allocator.Temp,
                         NativeArrayOptions.UninitializedMemory);
                     for (int i = 0; i < dist.Length; i++) dist[i] = INF;
+                    float wMax = 0f;
                     for (int i = 0; i < Residences.Length; i++)
                     {
                         if (Residences[i].Owner != owner) continue;
                         int2 c = Residences[i].Center - lo;
-                        if (c.x >= 0 && c.x < W && c.y >= 0 && c.y < H) dist[c.y * W + c.x] = 0f;
+                        if (c.x < 0 || c.x >= W || c.y < 0 || c.y >= H) continue;
+                        float w = (float)math.sqrt(Residences[i].Cells / math.PI);
+                        wMax = math.max(wMax, w);
+                        int si = c.y * W + c.x;
+                        dist[si] = math.min(dist[si], -w);   // 같은 셀 중복 시 큰 w 우선
                     }
 
                     // 체임퍼 2패스 — 최근접 거주지까지의 근사 유클리드 거리.
@@ -295,9 +314,10 @@ namespace CitySim
                     }
 
                     // 거리 버킷(0.25 양자화) 카운팅 → budget 컷오프 버킷 산출.
+                    //   가중 시드로 조정거리가 음수(-wMax)까지 내려가므로 +wMax 오프셋 후 양자화.
                     //   마지막 버킷 = 오버플로(그 안의 순서는 스캔 순 — budget이 컷 반경을
                     //   넘는 극단에서만 근사, 결정적).
-                    int nb = margin * 8 + 16;
+                    int nb = (margin + (int)math.ceil(wMax)) * 8 + 16;
                     var counts = new NativeArray<int>(nb, Allocator.Temp);
                     for (int z = 0; z < H; z++)
                     for (int x = 0; x < W; x++)
@@ -305,7 +325,7 @@ namespace CitySim
                         float d = dist[z * W + x];
                         if (d >= INF) continue;
                         if (!TerrainKeys.Contains(lo + new int2(x, z))) continue;
-                        counts[math.min((int)(d * 4f), nb - 1)]++;
+                        counts[math.min((int)((d + wMax) * 4f), nb - 1)]++;
                     }
                     int cutBucket = nb - 1, cum = 0, remainInCut = 0;
                     for (int b = 0; b < nb; b++)
@@ -324,7 +344,7 @@ namespace CitySim
                         if (d >= INF) continue;
                         int2 cell = lo + new int2(x, z);
                         if (!TerrainKeys.Contains(cell)) continue;
-                        int q = math.min((int)(d * 4f), nb - 1);
+                        int q = math.min((int)((d + wMax) * 4f), nb - 1);
                         if (q > cutBucket) continue;
                         if (q == cutBucket) { if (remainInCut <= 0) continue; remainInCut--; }
                         reach.TryGetValue(cell, out int m);
@@ -442,7 +462,8 @@ namespace CitySim
             comp.Dispose(); q.Dispose(); visited.Dispose();
         }
 
-        struct ResInfo { public int Owner; public int2 Center; public int Cells; }
+        // Cells = 실수 기여(거주민/PopPerCell, 버림 없음) — 예산 floor는 owner 합산 후 1회.
+        struct ResInfo { public int Owner; public int2 Center; public float Cells; }
         struct Claim   { public float Dist; public int2 Cell; }
 
         // 거리 오름차순, 동률은 셀 좌표(결정적).

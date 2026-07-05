@@ -3309,7 +3309,7 @@ MonoBehaviour:
     Cell: {x: 0, y: 0}
     FactionId: 0
   - IsOpen: 1
-    TeamID: 3
+    TeamID: 2
     IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0
@@ -3329,8 +3329,23 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1a5415c6536d154449d191160dafd801, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Test
-  PopPerCell: 2.5
-  TestResidenceCapacity: 10
+  PopPerCell: 1.2
+  MaxRadius: 64
+  DwellGameHours: 1
+  RequireFullFootprint: 1
+  MaxDestroysPerPass: 32
+  AiEnemyBufferCells: 4
+  NeutralRoadHealth: 200
+  BuildingKeyA: 1002
+  BuildingKeyB: 1001
+  BalanceDeadband: 8
+  RejectParallelSeam: 1
+  BuildPerTick: 6
+  BaseSeedRadius: 8
+  MaxEntranceRepairsPerDay: 2
+  ReconnectMaxExplore: 8192
+  BuildingDefaultHealth: 500
+  ImmigrantsPerHourPerPlayer: 5
   PlayerInfluence:
   - 10
   - 10
@@ -3340,7 +3355,8 @@ MonoBehaviour:
   - 10
   - 10
   - 10
-  PlayerTeam: 0000000001000000020000000300000004000000050000000600000007000000
+  PlayerTeam: 0000000001000000020000000200000004000000050000000600000007000000
+  TestResidenceCapacity: 10
 --- !u!1 &1734226377
 GameObject:
   m_ObjectHideFlags: 0
@@ -3670,6 +3686,50 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2055829552}
   m_CullTransparentMesh: 1
+--- !u!1 &2085306010
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2085306012}
+  - component: {fileID: 2085306011}
+  m_Layer: 0
+  m_Name: CitizenHud
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &2085306011
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2085306010}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 066077fcaf7b5d545a4b6564c1de18cc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.CitizenDebugHud
+--- !u!4 &2085306012
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2085306010}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 11.79466, y: -18.05195, z: 21.13618}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2088061022
 GameObject:
   m_ObjectHideFlags: 0
@@ -3769,3 +3829,4 @@ SceneRoots:
   - {fileID: 752812473}
   - {fileID: 2001461607}
   - {fileID: 1151956973}
+  - {fileID: 2085306012}

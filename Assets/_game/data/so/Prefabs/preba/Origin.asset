@@ -573,9 +573,9 @@ MonoBehaviour:
     RoadMask: 0
     MultiCountPerCell: 5
     MultiItemSize: 0.5
-    IsSupplier: 0
-    ReliefRaw: 0
-    SupplyMaxDist: 0
+    IsSupplier: 1
+    ReliefRaw: 1
+    SupplyMaxDist: 30
     DlcKey: 0
     IsDeleted: 0
   - MainKey: 1003

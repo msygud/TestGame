@@ -72,6 +72,17 @@ namespace CitySim
                 {
                     st.Activity = CitizenActivity.Idle;
                 }
+
+                // 좌초 복구(2026-07-06): Idle인데 기준 건물이 없고 집은 살아있음 → 집에 앉힘.
+                //   CurrentBuilding이 없으면 ServiceSearch 출발점이 없어 욕구를 영영 해소 못 함
+                //   (실측: 인구 1.8만 중 UNMET 40 잔류 = 전부 이 상태). 위 복구가 Idle+Null로
+                //   내려놓기만 하고 '재착석' 경로가 없던 공백을 메운다.
+                if (st.Activity == CitizenActivity.Idle && st.CurrentBuilding == Entity.Null
+                    && res.Home != Entity.Null && em.Exists(res.Home))
+                {
+                    st.CurrentBuilding = res.Home;
+                    st.Activity        = CitizenActivity.AtHome;
+                }
             }
 
             ecb.Playback(state.EntityManager);

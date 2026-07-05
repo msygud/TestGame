@@ -119,4 +119,20 @@ namespace CitySim
     {
         public EntranceInfo Entrance;
     }
+
+    // ══════════════════════════════════════════════════════════════
+    //  SpawnConfig — 스폰 밸런스 (싱글톤, 없으면 Default)
+    //  Test.cs가 인스펙터 값을 매 프레임 push(통합 밸런스 패널).
+    // ══════════════════════════════════════════════════════════════
+    public struct SpawnConfig : IComponentData
+    {
+        /// <summary>건물 기본 전투 체력(균일, 임시). 프리팹별 값이 필요해지면
+        /// BuildingAuthoring 베이킹으로 이전(능력=컴포넌트 원칙) — 그때 이 필드는 폴백.</summary>
+        public float BuildingDefaultHealth;
+
+        public static SpawnConfig Default => new SpawnConfig
+        {
+            BuildingDefaultHealth = 500f,
+        };
+    }
 }

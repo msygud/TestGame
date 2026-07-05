@@ -1,4 +1,6 @@
+using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 
 namespace CitySim
 {
@@ -53,9 +55,18 @@ namespace CitySim
         {
             double now = SystemAPI.GetSingleton<GameClock>().TotalSeconds;
 
-            foreach (var (stateRW, targetRW, needsRW, entity) in
+            // 보행 비주얼(2026-07-06, 순수 코스메틱): 출발/귀가 시 CitizenWalkerRequest 발행
+            //   → CitizenWalkerSpawnSystem이 BFS 경로 보행자를 스폰(Carrier 인프라 재사용).
+            //   프리팹 싱글톤이 없으면 발행 자체를 생략 — 논리 이동(타이머)은 불변.
+            bool visuals = SystemAPI.TryGetSingleton<CitizenVisualPrefabSingleton>(out var vp)
+                           && vp.Prefab != Entity.Null;
+            var fpLookup  = SystemAPI.GetComponentLookup<BuildingFootprint>(true);
+            var entLookup = SystemAPI.GetComponentLookup<BuildingEntrance>(true);
+            var ecb = new EntityCommandBuffer(Allocator.Temp);
+
+            foreach (var (stateRW, targetRW, needsRW, owner, entity) in
                      SystemAPI.Query<RefRW<CitizenState>, RefRW<ServiceTarget>,
-                                     RefRW<CitizenNeeds>>()
+                                     RefRW<CitizenNeeds>, CitizenOwner>()
                          .WithAll<CitizenTag>()
                          .WithEntityAccess())
             {
@@ -68,6 +79,11 @@ namespace CitySim
                     case CitizenActivity.AtHome:
                         if (targetRW.ValueRO.Has)
                         {
+                            // 보행 비주얼: 현재 건물 입구 → 공급자 입구 (비우기 전에 발행).
+                            if (visuals)
+                                EmitWalker(cs.CurrentBuilding, targetRW.ValueRO.Supplier,
+                                    owner.LocalId, in fpLookup, in entLookup, ref ecb);
+
                             cs.Activity        = CitizenActivity.Traveling;
                             cs.ActionEndTime   = now + targetRW.ValueRO.Dist * SecPerCell;
                             cs.CurrentBuilding = Entity.Null;          // 이동 중
@@ -101,6 +117,11 @@ namespace CitySim
 
                             if (home != Entity.Null)
                             {
+                                // 보행 비주얼: 공급자 입구 → 집 입구 (귀가 — 덮기 전에 발행).
+                                if (visuals)
+                                    EmitWalker(cs.CurrentBuilding, home,
+                                        owner.LocalId, in fpLookup, in entLookup, ref ecb);
+
                                 cs.Activity        = CitizenActivity.AtHome;
                                 cs.CurrentBuilding = home;
                             }
@@ -116,6 +137,38 @@ namespace CitySim
                         break;
                 }
             }
+
+            ecb.Playback(state.EntityManager);
+            ecb.Dispose();
+        }
+
+        // 두 건물의 입구 도로셀을 풀어 보행 비주얼 요청 발행. 입구가 없거나 같은 셀이면 생략.
+        static void EmitWalker(Entity from, Entity to, int owner,
+            in ComponentLookup<BuildingFootprint> fp, in ComponentLookup<BuildingEntrance> ent,
+            ref EntityCommandBuffer ecb)
+        {
+            if (!TryEntranceCell(from, in fp, in ent, out int2 a)) return;
+            if (!TryEntranceCell(to,   in fp, in ent, out int2 b)) return;
+            if (a.Equals(b)) return;   // 같은 입구 도로셀(바로 옆) — 보행 생략
+
+            var e = ecb.CreateEntity();
+            ecb.AddComponent(e, new CitizenWalkerRequest
+            {
+                FromRoadCell = a, ToRoadCell = b, OwnerLocalId = owner,
+            });
+        }
+
+        static bool TryEntranceCell(Entity building,
+            in ComponentLookup<BuildingFootprint> fp, in ComponentLookup<BuildingEntrance> ent,
+            out int2 cell)
+        {
+            cell = default;
+            if (building == Entity.Null || !fp.HasComponent(building) || !ent.HasComponent(building))
+                return false;
+            var f  = fp[building];
+            var en = ent[building];
+            cell = EntranceOps.EntranceRoadCell(f.Origin, f.Size, in en.Entrance, f.RotSteps);
+            return true;
         }
     }
 }

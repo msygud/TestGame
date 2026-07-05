@@ -48,4 +48,31 @@ namespace CitySim
     {
         public Entity Prefab;
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  시민 보행 비주얼 (2026-07-06) — Carrier 이동 인프라 재사용
+    //
+    //  CitizenMovementSystem(논리 이동 = 타이머)이 출발/귀가 시 요청을 발행하면
+    //  CitizenWalkerSpawnSystem이 BFS 경로로 보행자 비주얼을 스폰한다.
+    //  이동·소멸은 CarrierTag/CarrierState/CarrierPathCell + CarrierMoveSystem을
+    //  그대로 재사용(= Carrier 인프라는 "범용 도로 보행 비주얼"). 순수 비주얼 —
+    //  시민 엔티티(논리)와 분리되어 시뮬레이션에 영향 없음.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>시민 보행 비주얼 스폰 요청. 시민 출발(집→공급자)/귀가(공급자→집) 시 발행.</summary>
+    public struct CitizenWalkerRequest : IComponentData
+    {
+        public int2 FromRoadCell;
+        public int2 ToRoadCell;
+        public int  OwnerLocalId;
+    }
+
+    /// <summary>
+    /// 시민 보행 비주얼 프리팹 싱글톤. CitizenVisualPrefabAuthoring Baker가 채운다.
+    /// 없으면 시민 이동은 타이머만(비주얼 생략) — 기능 저하 없이 동작.
+    /// </summary>
+    public struct CitizenVisualPrefabSingleton : IComponentData
+    {
+        public Entity Prefab;
+    }
 }

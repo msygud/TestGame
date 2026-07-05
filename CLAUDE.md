@@ -252,7 +252,18 @@ Assets/_game/scripts/
 | 소속 | `CitizenResidence` (집·직장) | 잘 안 바뀜 |
 | 동적 | `CitizenOwner` (SharedComponent, LocalId) | 청크 분리 → 플레이어별 일괄 처리 |
 
-- 욕구: 개별 `IComponentData` 모델. 해소 = Level 감소 (구조 변경 0).
+- 욕구: **개별 `IComponentData` 모델 — 영구 설계 방향(2026-07-06 재확인)**. 버퍼 아님.
+  - 근거: 욕구별 시스템의 Burst 청크 순회 / 팩션 비대칭 = 아키타입(휴먼 {Hunger,…} vs 메카닉
+    {EnergyLevel}) / 핫 데이터 격리. 재검토 신호는 "욕구 수십 종+" 또는 "런타임 가변 욕구 세트"뿐.
+  - **모양 규약(drift 방지)**: 모든 욕구 컴포넌트 = `Level / Rate / Threshold` + `IsActive` 프로퍼티.
+    증가·해소는 그 욕구의 전담 시스템만. 공통 시스템(결정/탐색/이동)은 욕구 타입을 모른다 —
+    `NeedType` 비트(`CitizenNeeds.Pursuing`, `SupplierRef.Relief`)만이 시스템 간 통화(currency).
+  - 해소 = Level 감소(값 변경뿐, 구조 변경 0). 일시적 욕구가 필요해지면 `IEnableableComponent` 토글.
+  - 새 욕구 추가 절차: ① 컴포넌트 정의 ② `NeedType` 비트 ③ 증가/해소 전담 시스템 1개
+    ④ `NeedDecisionSystem`에 긴급도 잡(`HungerUrgencyJob` 패턴 복사) + 스케줄 한 줄 — 공통 시스템 무수정.
+  - 결정 = **2패스 Burst 잡(2026-07-06 교체 완료)**: 욕구별 긴급도 잡(그 욕구 보유 청크만 순회)이
+    `CitizenNeeds.Candidate{Need,Urgency}`를 max 갱신 → 공통 선택 잡이 소비(Pursuing set)·리셋.
+    (구 메인스레드 HasComponent 랜덤 액세스는 인구 1.8만에서 정체 실측 → 은퇴.)
 - 건물은 거주자 명단 없음 — `BuildingOccupancy.Current` 카운트만 보유.
 - `UnassignedTag` → 미배정 시민만 쿼리 (매 프레임 전체 스캔 회피).
 
