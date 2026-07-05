@@ -79,6 +79,9 @@ namespace CitySim
 
             _lineMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
             _bandMesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+            // 전맵 규모에서 정점 65,535(UInt16 기본) 초과 시 인덱스 랩으로 메시 깨짐 → 32비트.
+            _lineMesh.indexFormat = IndexFormat.UInt32;
+            _bandMesh.indexFormat = IndexFormat.UInt32;
             _lineMesh.MarkDynamic();
             _bandMesh.MarkDynamic();
 

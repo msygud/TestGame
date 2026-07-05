@@ -50,6 +50,8 @@ namespace CitySim
             _mat.renderQueue = (int)RenderQueue.Transparent;       // UI 아래
 
             _mesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+            // 바 수천 개(대규모 전투/전맵 손상)면 정점 65,535(UInt16 기본) 초과 → 32비트.
+            _mesh.indexFormat = IndexFormat.UInt32;
             _mesh.MarkDynamic();
 
             RequireForUpdate<CombatHealth>();

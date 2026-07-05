@@ -452,3 +452,5 @@ foreach (var (evt, e) in SystemAPI.Query<RefRO<StampDirtyEvent>>().WithEntityAcc
 | 조기 동기화 | 프레임 중간 메인스레드에서 `Complete()` 강제 | `state.Dependency` 체인 + `[UpdateAfter]`로 순서 선언 |
 | 시민·물류 즉각 재계산 | 매 틱 전체 재계산 + 메인스레드 동기화 | `HourChanged` 게이트 + 라운드로빈 분산 |
 | 랜덤 액세스 쓰기 (대량 병렬) | 병렬 Job 내 `ComponentLookup` 직접 쓰기 | 결과를 NativeArray에 수집 → 후속 패스에서 적용 |
+| 대량 셀 동적 메시 | 기본 IndexFormat(UInt16) 그대로 사용 | 생성 시 `indexFormat = IndexFormat.UInt32` — 정점 65,535 초과 시 인덱스 랩으로 "한 셀 건너 깨짐" |
+| 매 프레임 UI/디버그 표시 | OnGUI마다 쿼리 생성·문자열 보간 | 쿼리 월드당 1회, 문자열은 값 변화 시만 재조립, TMP 대입은 참조 변화 시만 |

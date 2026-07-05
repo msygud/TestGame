@@ -40,8 +40,22 @@ namespace CitySim
         readonly System.Collections.Generic.Dictionary<int2, CachedLabel> _labels = new();
         readonly System.Collections.Generic.Dictionary<int, Color>        _colors = new();
 
+        // F9 = 오버레이 토글 — GC/비용 진단 스위치 겸용(끄면 이 컴포넌트 비용이 0인지 즉시 확인).
+        bool _enabled = true;
+
+        void Update()
+        {
+            var kb = UnityEngine.InputSystem.Keyboard.current;
+            if (kb != null && kb.f9Key.wasPressedThisFrame) _enabled = !_enabled;
+        }
+
         void OnGUI()
         {
+            if (!_enabled) return;
+            // 박스는 비대화형(GUI.Box + 명시 Rect) — Layout 이벤트 처리 불필요.
+            //   Repaint에서만 그려 IMGUI 순회를 프레임당 1회로 절반 절약.
+            if (Event.current.type != EventType.Repaint) return;
+
             var world = World.DefaultGameObjectInjectionWorld;
             if (world == null || !world.IsCreated) { _qWorld = null; return; }
             var em = world.EntityManager;
@@ -77,6 +91,8 @@ namespace CitySim
                 var world3 = new Vector3((cell.x + 0.5f) * cs, 0f, (cell.y + 0.5f) * cs);
                 Vector3 sp = cam.WorldToScreenPoint(world3);
                 if (sp.z <= 0f) continue;   // 카메라 뒤
+                if (sp.x < -30f || sp.x > Screen.width + 30f
+                    || sp.y < -20f || sp.y > Screen.height + 20f) continue;   // 화면 밖 컬링
 
                 if (!_labels.TryGetValue(cell, out var cl)
                     || cl.TypeId != rc.TypeId || cl.Amount != rc.Amount)

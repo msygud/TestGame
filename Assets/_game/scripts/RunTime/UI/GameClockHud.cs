@@ -40,6 +40,7 @@ namespace CitySim
         string _timeText = string.Empty;
         int    _lastDay = int.MinValue, _lastMin = -1;
         float  _lastScale = float.NaN;
+        float  _nextBuildRT;   // 고배속(60~120x)에선 게임-분이 매 프레임 바뀜 → 현실 시간 4Hz로 상한
 
         void OnGUI()
         {
@@ -65,8 +66,10 @@ namespace CitySim
 
             int totalMin = (int)(clock.DayProgress01 * 24 * 60);
 
-            if (clock.Day != _lastDay || totalMin != _lastMin || clock.TimeScale != _lastScale)
+            if ((clock.Day != _lastDay || totalMin != _lastMin || clock.TimeScale != _lastScale)
+                && Time.unscaledTime >= _nextBuildRT)
             {
+                _nextBuildRT = Time.unscaledTime + 0.25f;
                 _lastDay = clock.Day; _lastMin = totalMin; _lastScale = clock.TimeScale;
                 int hh = totalMin / 60;
                 int mm = totalMin % 60;

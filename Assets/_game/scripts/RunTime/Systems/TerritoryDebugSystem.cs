@@ -61,6 +61,9 @@ namespace CitySim
             _mat.renderQueue = (int)RenderQueue.Transparent;
 
             _mesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+            // 전맵 규모 영역 = 셀 수만 개 × 4정점 → 기본 UInt16(정점 65,535 한계)면 인덱스가
+            //   랩되어 "한 셀 건너 진함/빈칸" 깨짐(실측 2026-07-05). 32비트 인덱스 필수.
+            _mesh.indexFormat = IndexFormat.UInt32;
             _mesh.MarkDynamic();
 
             RequireForUpdate<GridLayers>();

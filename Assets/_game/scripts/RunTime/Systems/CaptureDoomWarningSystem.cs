@@ -42,6 +42,8 @@ namespace CitySim
             _mat.renderQueue = (int)RenderQueue.Transparent;
 
             _mesh = new Mesh { hideFlags = HideFlags.HideAndDontSave };
+            // 대량 capture(국경 대이동) 시 footprint 띠 정점이 65,535(UInt16 기본) 초과 가능 → 32비트.
+            _mesh.indexFormat = IndexFormat.UInt32;
             _mesh.MarkDynamic();
 
             RequireForUpdate<CaptureDoom>();
