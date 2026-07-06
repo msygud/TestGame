@@ -46,12 +46,22 @@ namespace CitySim
             {
                 bool anyDead = false;
 
-                // 집/직장 — 죽었으면 비우고 재배정 큐 복귀.
+                // 집/직장 — 죽었으면 비우고 각자의 재배정 큐로 복귀(큐 분리, 2026-07-06).
                 ref var res = ref resRW.ValueRW;
-                if (res.Home != Entity.Null && !em.Exists(res.Home)) { res.Home = Entity.Null; anyDead = true; }
-                if (res.Work != Entity.Null && !em.Exists(res.Work)) { res.Work = Entity.Null; anyDead = true; }
-                if (anyDead && !SystemAPI.HasComponent<UnassignedTag>(e))
-                    ecb.AddComponent<UnassignedTag>(e);
+                if (res.Home != Entity.Null && !em.Exists(res.Home))
+                {
+                    res.Home = Entity.Null; anyDead = true;
+                    if (!SystemAPI.HasComponent<UnassignedTag>(e))
+                        ecb.AddComponent<UnassignedTag>(e);          // 주거 대기 큐
+                }
+                if (res.Work != Entity.Null && !em.Exists(res.Work))
+                {
+                    res.Work = Entity.Null; anyDead = true;
+                    if (SystemAPI.HasComponent<JobData>(e))
+                        SystemAPI.GetComponentRW<JobData>(e).ValueRW.Job = JobType.Unemployed;
+                    if (!SystemAPI.HasComponent<JobSeekerTag>(e))
+                        ecb.AddComponent<JobSeekerTag>(e);           // 고용 대기 큐(재고용)
+                }
 
                 // 추구 중인 공급자 — 죽었으면 재탐색 유도.
                 if (SystemAPI.HasComponent<ServiceTarget>(e))
@@ -70,7 +80,22 @@ namespace CitySim
                 }
                 else if (anyDead && st.Activity == CitizenActivity.Traveling)
                 {
+                    // Service 이동 취소면 방문 예약 해제 + target 비움(좌석 누수 방지, 2026-07-07).
+                    //   공급자 자체가 죽은 경우는 엔티티와 함께 좌석도 소멸 — 해제 불필요.
+                    if (st.Purpose == TravelPurpose.Service && SystemAPI.HasComponent<ServiceTarget>(e))
+                    {
+                        ref var tgt2 = ref SystemAPI.GetComponentRW<ServiceTarget>(e).ValueRW;
+                        if (tgt2.Supplier != Entity.Null && em.Exists(tgt2.Supplier)
+                            && SystemAPI.HasComponent<VisitorOccupancy>(tgt2.Supplier))
+                        {
+                            ref var vo = ref SystemAPI
+                                .GetComponentRW<VisitorOccupancy>(tgt2.Supplier).ValueRW;
+                            vo.Release();
+                        }
+                        tgt2 = ServiceTarget.None;
+                    }
                     st.Activity = CitizenActivity.Idle;
+                    st.Purpose  = TravelPurpose.None;
                 }
 
                 // 좌초 복구(2026-07-06): Idle인데 기준 건물이 없고 집은 살아있음 → 집에 앉힘.

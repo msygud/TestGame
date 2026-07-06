@@ -465,3 +465,4 @@ foreach (var (evt, e) in SystemAPI.Query<RefRO<StampDirtyEvent>>().WithEntityAcc
 | 랜덤 액세스 쓰기 (대량 병렬) | 병렬 Job 내 `ComponentLookup` 직접 쓰기 | 결과를 NativeArray에 수집 → 후속 패스에서 적용 |
 | 대량 셀 동적 메시 | 기본 IndexFormat(UInt16) 그대로 사용 | 생성 시 `indexFormat = IndexFormat.UInt32` — 정점 65,535 초과 시 인덱스 랩으로 "한 셀 건너 깨짐" |
 | 매 프레임 UI/디버그 표시 | OnGUI마다 쿼리 생성·문자열 보간 | 쿼리 월드당 1회, 문자열은 값 변화 시만 재조립, TMP 대입은 참조 변화 시만 |
+| 게임 '시간(hour)' 환산 | 1시간 = 3600게임초 하드코딩 | 1게임시간 = `GameClock.SecondsPerDay / 24`(기본 50게임초) — 3600 가정 시 72배 오차 |

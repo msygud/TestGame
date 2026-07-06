@@ -73,4 +73,35 @@ namespace CitySim
         /// <summary>공급 영향력(도로 칸수). 반경 BFS 깊이(§4.2).</summary>
         public int Influence;
     }
+
+    /// <summary>
+    /// 방문(서비스 이용) 정원 — 예약 기반(2026-07-07): 출발 시 TryReserve(자리 맡기),
+    /// 떠남/취소/거절 시 Release. 고용·거주 정원(BuildingOccupancy)과 분리 —
+    /// 식당은 둘 다 가진다(일자리 4 + 좌석 N). 없으면 방문 무제한(하위호환).
+    /// 원자성: 예약/해제는 서비스 데스크(단일 잡)와 복구 패스에서만 쓴다.
+    /// </summary>
+    public struct VisitorOccupancy : IComponentData
+    {
+        /// <summary>현재 방문(예약 포함) 수.</summary>
+        public int Current;
+
+        /// <summary>동시 수용 정원(좌석).</summary>
+        public int Capacity;
+
+        public readonly bool Full => Current >= Capacity;
+
+        /// <summary>자리 예약 시도. 여유 있으면 Current++ 하고 true.</summary>
+        public bool TryReserve()
+        {
+            if (Current >= Capacity) return false;
+            Current++;
+            return true;
+        }
+
+        /// <summary>자리 해제. 0 미만 방지(정합성 가드).</summary>
+        public void Release()
+        {
+            if (Current > 0) Current--;
+        }
+    }
 }

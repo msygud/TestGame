@@ -65,8 +65,11 @@ namespace CitySim
 
                 if (j.Progress < 0f)
                 {
-                    // ── 대기: 재료가 충분하면 제작 시작 ───────────────────────
-                    if (DrawInput(ref stock, recipe.Input, recipe.InputAmount))
+                    // ── 대기: 일꾼이 있고(SkillFactor>0) 재료가 충분하면 제작 시작 ──
+                    //   무인(노동력 집계 0)이면 시작하지 않음 — 안 하면 재료만 차감된 채
+                    //   진행 0에서 동결(재료 잠김). 진행 중 무인화는 동결 후 재개(허용).
+                    if (j.SkillFactor > 0f
+                        && DrawInput(ref stock, recipe.Input, recipe.InputAmount))
                         j.Progress = 0f;
                 }
                 else

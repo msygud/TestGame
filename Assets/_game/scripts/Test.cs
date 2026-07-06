@@ -63,6 +63,19 @@ public class Test : MonoBehaviour
     [Header("시민 (CitizenConfig)")]
     [Tooltip("게임-시간당 owner별 이민 유입 상한(빈 거주 정원 내). 0 = 유입 정지.")]
     public int ImmigrantsPerHourPerPlayer = 4;
+    [Tooltip("허기 증가율(게임초당). 끼니 주기 = 0.6/이 값. 0.010=게임 1분 1끼(과속), "
+           + "0.0013≈하루 2~3끼(권장). 스폰 시 베이킹 — 새 시민부터 적용.")]
+    public float HungerRatePerGameSec = 0.010f;
+    [Tooltip("근무 시작 시(게임 시간 0~23). 이 시간대에 직장 있는 시민이 출근.")]
+    public int WorkStartHour = 8;
+    [Tooltip("근무 종료 시(게임 시간, Start보다 커야 함). 이 시각에 퇴근.")]
+    public int WorkEndHour = 18;
+    [Tooltip("근무 1게임시간당 숙련 기본 성장량(적성 배율 전). 1.0 ≈ 하루 +10.")]
+    public float SkillGrowthPerWorkHour = 1.0f;
+    [Tooltip("점심시간 시작 시(게임 시간). 길이가 0이면 무시.")]
+    public int LunchStartHour = 12;
+    [Tooltip("점심시간 길이(게임 시간). 0 = 점심 없음(기본). 켜면 12시 식당行→복귀가 창발.")]
+    public int LunchGameHours = 0;
 
     [Header("Territory 팀/영향력 테스트 (인덱스 = LocalId 0~7)")]
     [Tooltip("플레이어별 영향력(경합 해소용 스칼라). 같은 팀끼리 합산해 승자팀−2등팀으로 경합 결정.")]
@@ -253,6 +266,12 @@ public class Test : MonoBehaviour
             new CitizenConfig
             {
                 ImmigrantsPerHourPerPlayer = Mathf.Max(0, ImmigrantsPerHourPerPlayer),
+                HungerRatePerGameSec       = Mathf.Max(0.0001f, HungerRatePerGameSec),
+                WorkStartHour              = Mathf.Clamp(WorkStartHour, 0, 23),
+                WorkEndHour                = Mathf.Clamp(WorkEndHour, 1, 24),
+                SkillGrowthPerWorkHour     = Mathf.Max(0f, SkillGrowthPerWorkHour),
+                LunchStartHour             = Mathf.Clamp(LunchStartHour, 0, 23),
+                LunchGameHours             = Mathf.Max(0, LunchGameHours),
             });
 
         // 영향력/팀 버퍼 (인덱스 = LocalId 0~7)

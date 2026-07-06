@@ -37,6 +37,17 @@ namespace CitySim
         {
             switch (output)
             {
+                case Commodity.Grain:
+                    // 무입력 생산(원재료 산지 stub) — Input=None/0이면 ProductionSystem의
+                    //   DrawInput이 자연 통과(차감 없이 시작). 추후 채취(자원 레이어 소모)로 대체.
+                    return new RecipeDef
+                    {
+                        Input        = Commodity.None,
+                        InputAmount  = 0,
+                        Output       = Commodity.Grain,
+                        OutputAmount = 2,
+                        BaseDuration = 10f,  // 게임초 — 밀 레시피(2Grain/10s 소비)와 1:1 균형
+                    };
                 case Commodity.Flour:
                     return new RecipeDef
                     {

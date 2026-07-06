@@ -36,13 +36,18 @@ namespace CitySim
     {
         public void OnUpdate(ref SystemState state)
         {
+            // 허기 증가율(끼니 주기) — 밸런스 패널(CitizenConfig)에서. 스폰 시점 베이킹.
+            float hungerRate = (SystemAPI.TryGetSingleton<CitizenConfig>(out var cfg)
+                ? cfg : CitizenConfig.Default).HungerRatePerGameSec;
+            if (hungerRate <= 0f) hungerRate = CitizenConfig.Default.HungerRatePerGameSec;
+
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
             foreach (var (reqRO, reqEntity) in
                      SystemAPI.Query<RefRO<SpawnCitizenRequest>>().WithEntityAccess())
             {
                 var req = reqRO.ValueRO;
-                SpawnOne(req, ecb);
+                SpawnOne(req, hungerRate, ecb);
                 ecb.DestroyEntity(reqEntity);
             }
 
@@ -51,7 +56,7 @@ namespace CitySim
         }
 
         // ── 시민 1명 생성 ─────────────────────────────────────────────────
-        static void SpawnOne(in SpawnCitizenRequest req, EntityCommandBuffer ecb)
+        static void SpawnOne(in SpawnCitizenRequest req, float hungerRate, EntityCommandBuffer ecb)
         {
             var e = ecb.CreateEntity();
 
@@ -83,16 +88,13 @@ namespace CitySim
             ecb.AddComponent(e, new Hunger
             {
                 Level     = needRng.NextFloat(0f, 0.55f),           // 임계(0.6) 미만에서 산포
-                Rate      = 0.010f * needRng.NextFloat(0.85f, 1.15f),
+                Rate      = hungerRate * needRng.NextFloat(0.85f, 1.15f),
                 Threshold = 0.6f,
             });
 
-            // 콜드: 직업
-            ecb.AddComponent(e, new JobData
-            {
-                Job   = req.InitialJob,
-                Skill = 0f,
-            });
+            // 콜드: 직업 + 직업별 숙련(고용 2차 — 직업이 바뀌어도 각 숙련 보존)
+            ecb.AddComponent(e, new JobData { Job = req.InitialJob });
+            ecb.AddComponent(e, CitizenSkills.Empty);
 
             // 소속: 미배정으로 시작(배정 시스템이 채움)
             ecb.AddComponent(e, new CitizenResidence
@@ -100,7 +102,8 @@ namespace CitySim
                 Home = Entity.Null,
                 Work = Entity.Null,
             });
-            ecb.AddComponent<UnassignedTag>(e);   // 배정 대상 표시
+            ecb.AddComponent<UnassignedTag>(e);   // 주거 대기 큐
+            ecb.AddComponent<JobSeekerTag>(e);    // 고용 대기 큐(분리 — 2026-07-06)
 
             // 동적: 상태
             ecb.AddComponent(e, new CitizenState

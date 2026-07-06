@@ -3298,17 +3298,17 @@ MonoBehaviour:
     IsPlayer: 1
     Cell: {x: 0, y: 0}
     FactionId: 0
-  - IsOpen: 0
+  - IsOpen: 1
     TeamID: 1
     IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0
-  - IsOpen: 0
+  - IsOpen: 1
     TeamID: 2
     IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0
-  - IsOpen: 0
+  - IsOpen: 1
     TeamID: 2
     IsPlayer: 0
     Cell: {x: 0, y: 0}
@@ -3346,9 +3346,6 @@ MonoBehaviour:
   ReconnectMaxExplore: 8192
   BuildingDefaultHealth: 500
   ImmigrantsPerHourPerPlayer: 5
-  HungerRatePerGameSec: 0.0013
-  WorkStartHour: 8
-  WorkEndHour: 18
   PlayerInfluence:
   - 10
   - 10

@@ -78,7 +78,10 @@ namespace CitySim
             if (!SystemAPI.GetSingleton<GameClock>().HourChanged)
                 return;
 
-            var stamp = SystemAPI.GetSingleton<StampLayers>();
+            // RW 선언(확립 기법, 2026-07-06) — stamp 맵을 [ReadOnly]로 읽는 잡
+            //   (ServiceSearchJob)이 있으면 완료를 기다린 뒤 mutate(Clear/Add).
+            //   RO 선언(GetSingleton)이면 리더 잡과 컨테이너 안전성 충돌.
+            var stamp = SystemAPI.GetSingletonRW<StampLayers>().ValueRO;
 
             // ── ① 라운드로빈으로 dirty한 플레이어 1명 선택 ──────────────
             int target = -1;

@@ -21,13 +21,19 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(CitizenMovementSystem))]
+    // 변환 그룹보다 먼저 — 스폰 프레임 안에 LTW 계산(1프레임 원점 플래시 방지).
+    [UpdateBefore(typeof(Unity.Transforms.TransformSystemGroup))]
     public partial struct CitizenWalkerSpawnSystem : ISystem
     {
         // 스파이크 가드(2026-07-06, 실측 버벅 대응): 스폰은 BFS+Instantiate라 버스트에 취약.
-        //   · 프레임 버짓 — 초과 요청은 삭제하지 않고 다음 프레임으로 이월(시각 지연만).
+        //   · 프레임 버짓 — 초과 요청은 이월 상한까지 다음 프레임으로(시각 지연만).
         //   · 동시 보행자 상한 — 초과분은 비주얼 생략(드롭). 순수 코스메틱이라 무해.
-        const int MaxSpawnsPerFrame = 12;
-        const int MaxWalkersAlive   = 200;
+        //   · 이월 상한(과압 드롭, 120x 실측 대응) — 고배속에선 식사가 현실초당 배속만큼
+        //     몰려 요청 유입이 처리량을 수십 배 초과(큐 무한 적체·메모리 증가·시스템 최상위).
+        //     이월분이 상한을 넘으면 나머지는 그 자리에서 소비(비주얼 생략).
+        const int MaxSpawnsPerFrame   = 12;
+        const int MaxWalkersAlive     = 200;
+        const int MaxPendingRequests  = 64;
 
         EntityQuery _aliveQ;   // 살아있는 보행자/운반자 수 (CarrierTag 공유)
 
@@ -52,11 +58,18 @@ namespace CitySim
 
             int alive  = _aliveQ.CalculateEntityCount();
             int budget = MaxSpawnsPerFrame;
+            int kept   = 0;
 
             foreach (var (req, reqEntity) in
                      SystemAPI.Query<RefRO<CitizenWalkerRequest>>().WithEntityAccess())
             {
-                if (budget <= 0) break;   // 프레임 버짓 소진 — 나머지 요청은 다음 프레임에
+                // 버짓 소진 후: 이월 상한까지 보존, 초과분은 드롭(소비만 — 과압 방어).
+                if (budget <= 0)
+                {
+                    if (kept < MaxPendingRequests) { kept++; continue; }   // 다음 프레임에
+                    ecb.DestroyEntity(reqEntity);                          // 드롭(비주얼 생략)
+                    continue;
+                }
 
                 if (prefab != Entity.Null && alive < MaxWalkersAlive)
                 {

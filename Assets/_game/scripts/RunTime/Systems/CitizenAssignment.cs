@@ -53,11 +53,11 @@ namespace CitySim
                 .Build();
             if (unassignedQuery.IsEmpty) return;
 
-            // ── 2. 빈 집 / 빈 직장 수집 (소유자 포함 — 자기 소유자 건물에만 배정) ──
+            // ── 2. 빈 집 수집 (소유자 포함 — 자기 소유자 건물에만 배정) ──────────
             //  ※ 소유자 무시 배정은 멀티팀에서 남의 집을 채워 영역/인구 회계를 오염시킴
             //    (이민 도입(2026-07-05)으로 실제 발생 가능해져 owner 일치로 교정).
+            //  ※ 직장 배정은 EmploymentAssignmentSystem으로 분리(고용 1차, 2026-07-06).
             var freeHomes = new NativeList<BuildingSlot>(Allocator.Temp);
-            var freeWorks = new NativeList<WorkSlot>(Allocator.Temp);
 
             foreach (var (occ, bf, e) in
                      SystemAPI.Query<RefRO<BuildingOccupancy>, RefRO<BuildingFootprint>>()
@@ -70,27 +70,9 @@ namespace CitySim
                     { Building = e, Free = free, Owner = bf.ValueRO.OwnerLocalId });
             }
 
-            foreach (var (occ, work, bf, e) in
-                     SystemAPI.Query<RefRO<BuildingOccupancy>, RefRO<WorkplaceBuilding>,
-                                     RefRO<BuildingFootprint>>()
-                         .WithEntityAccess())
-            {
-                int free = occ.ValueRO.Capacity - occ.ValueRO.Current;
-                if (free > 0)
-                    freeWorks.Add(new WorkSlot
-                    {
-                        Building = e,
-                        Free     = free,
-                        Job      = work.ValueRO.ProvidedJob,
-                        Owner    = bf.ValueRO.OwnerLocalId,
-                    });
-            }
-
-            // 빈 건물이 둘 다 없으면 더 할 일 없음.
-            if (freeHomes.Length == 0 && freeWorks.Length == 0)
+            if (freeHomes.Length == 0)
             {
                 freeHomes.Dispose();
-                freeWorks.Dispose();
                 return;
             }
 
@@ -100,15 +82,14 @@ namespace CitySim
 
             int processed  = 0;
 
-            foreach (var (res, job, cstate, owner, e) in
-                     SystemAPI.Query<RefRW<CitizenResidence>, RefRW<JobData>,
+            foreach (var (res, cstate, owner, e) in
+                     SystemAPI.Query<RefRW<CitizenResidence>,
                                      RefRW<CitizenState>, CitizenOwner>()
                          .WithAll<CitizenTag, UnassignedTag>()
                          .WithEntityAccess())
             {
                 // 버짓은 '처리 수' 기준(2026-07-06) — 구 '완료 수' 기준은 완료가 0인 상황
-                //   (예: 직장이 하나도 없음)에서 발동하지 않아 매 프레임 전 시민을 순회했다
-                //   (인구 1.8만 실측 정체). 처리 기준이면 프레임 비용이 항상 상한 이하.
+                //   에서 발동하지 않아 매 프레임 전 시민을 순회했다(인구 1.8만 실측 정체).
                 if (processed++ >= MaxAssignPerFrame) break;
 
                 // 집 배정
@@ -124,20 +105,8 @@ namespace CitySim
                     cstate.ValueRW.CurrentBuilding = home;
                 }
 
-                // 직장 배정
-                if (res.ValueRO.Work == Entity.Null &&
-                    TakeWorkSlot(ref freeWorks, owner.LocalId, occLookup,
-                                 out Entity work, out JobType providedJob))
-                {
-                    res.ValueRW.Work = work;
-                    job.ValueRW.Job  = providedJob;   // 직장이 직업 부여
-                }
-
-                // 태그 제거 = '집 배정' 기준(2026-07-06 재정의: UnassignedTag = 집 없음 큐).
-                //   구 '집+직장 모두' 기준은 직장이 없는 현 단계에서 큐가 영영 안 비어
-                //   전 시민 상시 순회의 원인이었음. 고용(직장 배정/재배정)은 직장 건물이
-                //   생길 때 별도 큐(JobData.Job==Unemployed 필터 등)로 분리 — 그 전까지
-                //   위 TakeWorkSlot 시도는 큐에 있는 동안만 덤으로 수행.
+                // 태그 제거 = '집 배정' 기준(UnassignedTag = 주거 대기 큐).
+                //   직장 배정은 EmploymentAssignmentSystem(JobSeekerTag 큐)이 독립 수행.
                 if (res.ValueRO.Home != Entity.Null)
                     ecb.RemoveComponent<UnassignedTag>(e);
             }
@@ -145,7 +114,6 @@ namespace CitySim
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
             freeHomes.Dispose();
-            freeWorks.Dispose();
         }
 
         // ── 빈 거주 슬롯 하나 점유 (소유자 일치만) ──────────────────────────
@@ -175,6 +143,92 @@ namespace CitySim
             return false;
         }
 
+        // ── 수집용 임시 구조 ────────────────────────────────────────────────
+        struct BuildingSlot
+        {
+            public Entity Building;
+            public int    Free;
+            public int    Owner;   // BuildingFootprint.OwnerLocalId
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  EmploymentAssignmentSystem — 고용 배정 (고용 1차, 2026-07-06)
+    //
+    //  구직 시민(JobSeekerTag)을 owner 일치 직장(WorkplaceBuilding)의 빈 정원에 배정.
+    //  주거 배정(CitizenAssignmentSystem, UnassignedTag)과 큐를 분리 — 두 큐가 섞이면
+    //  한쪽 부족이 다른 쪽 순회를 인질로 잡는다(직장 0개 시절의 상시 순회 실측).
+    //
+    //  · 배정 = Residence.Work + JobData.Job(직장이 직업 부여) + 직장 Occupancy.Current++
+    //    (장기 점유 — 거주와 동일 메커니즘). 태그 제거 = 직장 배정 시.
+    //  · 재고용: 직장 소실 시 DeadReferenceReclaim이 JobSeekerTag 재부착 → 큐 복귀.
+    //  · 노숙 여부와 무관하게 고용 가능(집 없어도 일함 — 출퇴근 트리가 처리).
+    //  · 출퇴근/근무는 CitizenMovementSystem의 활동 우선순위 트리 소관 — 여기선 배정만.
+    // ══════════════════════════════════════════════════════════════════════════
+    [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(CitizenAssignmentSystem))]
+    public partial struct EmploymentAssignmentSystem : ISystem
+    {
+        const int MaxAssignPerFrame = 128;   // 처리 수 기준 버짓
+
+        public void OnUpdate(ref SystemState state)
+        {
+            // 구직자가 없으면 즉시 반환(태그 큐 — 평상시 비어 있음).
+            var seekerQuery = SystemAPI.QueryBuilder()
+                .WithAll<CitizenTag, JobSeekerTag>()
+                .WithAllRW<CitizenResidence, JobData>()
+                .Build();
+            if (seekerQuery.IsEmpty) return;
+
+            // 빈 일자리 수집(소유자 포함).
+            var freeWorks = new NativeList<WorkSlot>(Allocator.Temp);
+            foreach (var (occ, work, bf, e) in
+                     SystemAPI.Query<RefRO<BuildingOccupancy>, RefRO<WorkplaceBuilding>,
+                                     RefRO<BuildingFootprint>>()
+                         .WithEntityAccess())
+            {
+                int free = occ.ValueRO.Capacity - occ.ValueRO.Current;
+                if (free > 0)
+                    freeWorks.Add(new WorkSlot
+                    {
+                        Building = e,
+                        Free     = free,
+                        Job      = work.ValueRO.ProvidedJob,
+                        Owner    = bf.ValueRO.OwnerLocalId,
+                    });
+            }
+            if (freeWorks.Length == 0) { freeWorks.Dispose(); return; }
+
+            var ecb       = new EntityCommandBuffer(Allocator.Temp);
+            var occLookup = SystemAPI.GetComponentLookup<BuildingOccupancy>(false);
+            int processed = 0;
+
+            foreach (var (res, job, owner, e) in
+                     SystemAPI.Query<RefRW<CitizenResidence>, RefRW<JobData>, CitizenOwner>()
+                         .WithAll<CitizenTag, JobSeekerTag>()
+                         .WithEntityAccess())
+            {
+                if (processed++ >= MaxAssignPerFrame) break;
+                if (res.ValueRO.Work != Entity.Null)          // 이미 취업(방어) → 태그만 정리
+                {
+                    ecb.RemoveComponent<JobSeekerTag>(e);
+                    continue;
+                }
+
+                if (TakeWorkSlot(ref freeWorks, owner.LocalId, occLookup,
+                        out Entity work, out JobType providedJob))
+                {
+                    res.ValueRW.Work = work;
+                    job.ValueRW.Job  = providedJob;           // 직장이 직업 부여
+                    ecb.RemoveComponent<JobSeekerTag>(e);
+                }
+            }
+
+            ecb.Playback(state.EntityManager);
+            ecb.Dispose();
+            freeWorks.Dispose();
+        }
+
         // ── 빈 일자리 슬롯 하나 점유 (소유자 일치만) ────────────────────────
         static bool TakeWorkSlot(
             ref NativeList<WorkSlot>              slots,
@@ -192,7 +246,7 @@ namespace CitySim
                 slots[i] = slot;
 
                 var occ = occLookup[slot.Building];
-                occ.Current++;
+                occ.Current++;                       // 장기 고용 점유
                 occLookup[slot.Building] = occ;
 
                 building = slot.Building;
@@ -202,14 +256,6 @@ namespace CitySim
             building = Entity.Null;
             job      = JobType.Unemployed;
             return false;
-        }
-
-        // ── 수집용 임시 구조 ────────────────────────────────────────────────
-        struct BuildingSlot
-        {
-            public Entity Building;
-            public int    Free;
-            public int    Owner;   // BuildingFootprint.OwnerLocalId
         }
 
         struct WorkSlot

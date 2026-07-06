@@ -35,7 +35,7 @@ namespace CitySim
         bool _enabled = true;   // F10 토글
 
         World       _qWorld;
-        EntityQuery _qState, _qNeeds, _qHunger, _qUnassigned, _qResidence;
+        EntityQuery _qState, _qNeeds, _qHunger, _qUnassigned, _qResidence, _qMealStock, _qCond;
 
         GUIStyle _style;
         string   _text = string.Empty;
@@ -70,6 +70,9 @@ namespace CitySim
                     ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<UnassignedTag>());
                 _qResidence = em.CreateEntityQuery(
                     ComponentType.ReadOnly<ResidenceBuilding>(), ComponentType.ReadOnly<BuildingOccupancy>());
+                _qMealStock = em.CreateEntityQuery(ComponentType.ReadOnly<StockEntry>());
+                _qCond = em.CreateEntityQuery(
+                    ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<CitizenConditions>());
             }
 
             if (Time.unscaledTime >= _nextBuildRT)
@@ -85,7 +88,7 @@ namespace CitySim
                 alignment = TextAnchor.UpperLeft,
             };
 
-            float w = 250f, h = 112f;
+            float w = 250f, h = 128f;
             GUI.Box(new Rect(Screen.width - w - 12f, 12f, w, h), _text, _style);
         }
 
@@ -138,6 +141,13 @@ namespace CitySim
             float hungerAvg = hungers.Length > 0 ? hungerSum / hungers.Length : 0f;
             hungers.Dispose();
 
+            // Energy 평균(컨디션 — 근무 소모/휴식 회복 동역학 관찰)
+            var conds = _qCond.ToComponentDataArray<CitizenConditions>(Allocator.Temp);
+            float energySum = 0f;
+            for (int i = 0; i < conds.Length; i++) energySum += conds[i].Energy;
+            float energyAvg = conds.Length > 0 ? energySum / conds.Length : 0f;
+            conds.Dispose();
+
             // 거주 점유
             var occs = _qResidence.ToComponentDataArray<BuildingOccupancy>(Allocator.Temp);
             int cur = 0, cap = 0;
@@ -146,12 +156,32 @@ namespace CitySim
 
             int unassigned = _qUnassigned.CalculateEntityCount();
 
+            // 전 건물 재고 합(경제 체인 관찰): Meal은 소비로 줄고 생산으로 차고,
+            //   Grain/Flour는 농장→창고→제분소→식당 흐름의 총량.
+            var em2 = _qWorld.EntityManager;
+            var stockEnts = _qMealStock.ToEntityArray(Allocator.Temp);
+            int meals = 0, mealCap = 0, grain = 0, flour = 0;
+            for (int i = 0; i < stockEnts.Length; i++)
+            {
+                var stock = em2.GetBuffer<StockEntry>(stockEnts[i], true);
+                for (int s = 0; s < stock.Length; s++)
+                    switch (stock[s].Commodity)
+                    {
+                        case Commodity.Meal:
+                            meals += stock[s].Current; mealCap += stock[s].Capacity; break;
+                        case Commodity.Grain: grain += stock[s].Current; break;
+                        case Commodity.Flour: flour += stock[s].Current; break;
+                    }
+            }
+            stockEnts.Dispose();
+
             return $"Citizens {total}  (unassigned {unassigned})\n"
                  + $"Idle {idle}  Home {home}  Work {work}\n"
                  + $"Travel {travel}  Eat {dest}  Stuck {stuck}\n"
-                 + $"Hunger avg {hungerAvg:0.00}  hungry {hungry}\n"
+                 + $"Hunger avg {hungerAvg:0.00}  hungry {hungry}  En {energyAvg:0.00}\n"
                  + $"pursuing {pursuing}  UNMET {unmet}\n"
-                 + $"Housing {cur}/{cap}";
+                 + $"Housing {cur}/{cap}\n"
+                 + $"Meals {meals}/{mealCap}  Grain {grain}  Flour {flour}";
         }
     }
 }

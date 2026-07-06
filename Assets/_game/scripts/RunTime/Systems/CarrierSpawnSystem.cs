@@ -21,6 +21,8 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(LogisticsPullSystem))]
+    // 변환 그룹보다 먼저 — 스폰 프레임 안에 LTW 계산(1프레임 원점 플래시 방지).
+    [UpdateBefore(typeof(Unity.Transforms.TransformSystemGroup))]
     public partial struct CarrierSpawnSystem : ISystem
     {
         public void OnCreate(ref SystemState state)
