@@ -41,6 +41,7 @@ namespace CitySim
         const int WarehouseStampMaxDist = 40;
         const int WorkerSlots       = 4;     // 생산 건물 일자리 정원(stub — 프리팹 베이킹 이관 예정.
                                              //   ⚠ ECB AddComponent라 베이킹된 Occupancy가 있으면 덮음)
+        const int WarehouseWorkerSlots = 6;  // 창고 일자리(24h 3교대 → 교대당 ~2명)
         const int VisitorSlots      = 10;    // 식당 동시 방문 좌석(stub) — 식사 3게임초라 회전 빠름
 
         public void OnUpdate(ref SystemState state)
@@ -152,6 +153,7 @@ namespace CitySim
                             ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WorkerSlots });
                             // 방문 좌석(예약 기반, 2026-07-07) — 고용 정원과 분리.
                             ecb.AddComponent(instance, new VisitorOccupancy { Current = 0, Capacity = VisitorSlots });
+                            ecb.AddComponent(instance, new ServiceStats { TodayServed = 0, YesterdayServed = 0 });
                         }
                     }
                     // ── 생산 체인 stub — MainKey 기반 임시 역할(상수 정의부 주석 참조) ──
@@ -203,6 +205,11 @@ namespace CitySim
                             OwnerLocalId = req.ValueRO.OwnerLocalId,
                             MaxDist      = WarehouseStampMaxDist,
                         });
+                        // 창고 고용(2026-07-07) — Administrator 직종, 24h 3교대(JobSchedule).
+                        //   잉여 노동력 흡수(직업군 부족으로 식당 과잉 왜곡 완화) + 미래 24h 서비스 기반.
+                        //   물류 게이트는 v1 미적용(decision 2b) — 고용만, Pull/Push는 무조건 작동.
+                        ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Administrator });
+                        ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WarehouseWorkerSlots });
                     }
 
                     // ── 건물 전투 타겟화: 공격으로 파괴 가능(캡처 후 적 건물 제거의 토대) ──

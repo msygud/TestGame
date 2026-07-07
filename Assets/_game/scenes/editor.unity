@@ -3298,17 +3298,17 @@ MonoBehaviour:
     IsPlayer: 1
     Cell: {x: 0, y: 0}
     FactionId: 0
-  - IsOpen: 0
+  - IsOpen: 1
     TeamID: 1
     IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0
-  - IsOpen: 0
+  - IsOpen: 1
     TeamID: 2
     IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0
-  - IsOpen: 0
+  - IsOpen: 1
     TeamID: 2
     IsPlayer: 0
     Cell: {x: 0, y: 0}
@@ -3336,7 +3336,7 @@ MonoBehaviour:
   MaxDestroysPerPass: 32
   AiEnemyBufferCells: 4
   NeutralRoadHealth: 200
-  BuildingKeyA: 1002
+  BuildingKeyA: 1000
   BuildingKeyB: 1001
   BalanceDeadband: 8
   RejectParallelSeam: 1
@@ -3349,6 +3349,9 @@ MonoBehaviour:
   HungerRatePerGameSec: 0.0013
   WorkStartHour: 8
   WorkEndHour: 18
+  SkillGrowthPerWorkHour: 1
+  LunchStartHour: 12
+  LunchGameHours: 0
   PlayerInfluence:
   - 10
   - 10
@@ -3358,7 +3361,7 @@ MonoBehaviour:
   - 10
   - 10
   - 10
-  PlayerTeam: 0000000001000000020000000200000004000000050000000600000007000000
+  PlayerTeam: 0000000001000000020000000300000004000000050000000600000007000000
   TestResidenceCapacity: 10
 --- !u!1 &1734226377
 GameObject:

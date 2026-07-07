@@ -134,6 +134,10 @@ namespace CitySim
         public JobType Job;
         // Skill 필드 은퇴(2026-07-06, 고용 2차): 숙련은 직업별 개별 보유 —
         //   CitizenSkills[(int)Job] 단일 소스(이중 소스 금지).
+
+        /// <summary>교대 슬롯(0~ShiftCount-1). 고용 시 라운드로빈 배정 — 건물이
+        /// 운영시간 내내 staffed 되도록 근로자를 서브-근무창에 분산(2026-07-07).</summary>
+        public byte Shift;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -181,19 +185,33 @@ namespace CitySim
     //  재능 있는 초보 < 평범한 베테랑). 성실성(Diligence)은 전 직업 공통 보정.
     // ──────────────────────────────────────────────────────────────────────────
     // ──────────────────────────────────────────────────────────────────────────
-    //  직업별 근무 창 시프트(교대 그룹, 2026-07-07 유저 설계) — 결정 테이블.
-    //  전 직업 동시 출퇴근이면 수요 피크(퇴근 후 식사·여가)가 정확히 서비스 노동자의
-    //  퇴근 시간과 겹쳐 "저녁에 무인 식당" 모순 발생(실측) → 서비스직은 창을 늦춰
-    //  러시를 커버한다. 근무 창 = [WorkStart+shift, WorkEnd+shift). 점심 창도 함께 이동.
-    //  ※ 자정 넘는 야간조(wrap)는 미지원 — 필요 시 창 판정에 wrap 추가.
+    //  직업별 근무 프로파일 + 교대(2026-07-07 유저 설계) — 결정 테이블.
+    //  각 직업 = 운영시간 [Open,Close) + 교대수. 고용 시 근로자를 교대 슬롯에
+    //  라운드로빈 분산 → 건물이 운영시간 내내 최소 1명 staffed(서비스 상시 이용가능).
+    //    · 생산(농장·제분소): 기본 창(config WorkStart/End), 1교대.
+    //    · 서비스(식당):      8~24, 2교대(8~16 / 16~24) — 조식~심야, 소비자 시간대 커버.
+    //    · 물류(창고):        0~24, 3교대(0~8/8~16/16~24) — 24시간(미래 서비스 대비).
+    //  ※ 무인 시 폐점(decision 1a): 서비스는 staffed(ProductionJob.SkillFactor>0)일 때만 이용가능.
+    //  ※ Close=24는 wrap 없음(Hour<24). 자정 넘는 창이 필요하면 wrap 추가.
     // ──────────────────────────────────────────────────────────────────────────
     public static class JobSchedule
     {
-        public static int ShiftHours(JobType job) => job switch
+        public struct Window { public int Open; public int Close; public int Shifts; }
+
+        /// <summary>직업 운영 프로파일. 생산 기본창은 config(defOpen/defClose) 사용.</summary>
+        public static Window Profile(JobType job, int defOpen, int defClose) => job switch
         {
-            JobType.Merchant => 3,   // 서비스(식당 등): 기본 8~18 → 11~21시. 점심·저녁 러시 커버,
-                                     //   자기 식사는 러시 밖(재고로 해결).
-            _                => 0,   // 생산직 기본 창.
+            JobType.Merchant      => new Window { Open = 8,  Close = 24, Shifts = 2 },  // 식당
+            JobType.Administrator => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 창고 24h
+            _                     => new Window { Open = defOpen, Close = defClose, Shifts = 1 },
+        };
+
+        /// <summary>교대수(운영창과 무관 — 고용 시 슬롯 배정용).</summary>
+        public static int ShiftCount(JobType job) => job switch
+        {
+            JobType.Merchant      => 2,
+            JobType.Administrator => 3,
+            _                     => 1,
         };
     }
 

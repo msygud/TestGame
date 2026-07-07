@@ -1,5 +1,6 @@
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 
 namespace CitySim
 {
@@ -216,10 +217,11 @@ namespace CitySim
                 }
 
                 if (TakeWorkSlot(ref freeWorks, owner.LocalId, occLookup,
-                        out Entity work, out JobType providedJob))
+                        out Entity work, out JobType providedJob, out byte shift))
                 {
-                    res.ValueRW.Work = work;
-                    job.ValueRW.Job  = providedJob;           // 직장이 직업 부여
+                    res.ValueRW.Work  = work;
+                    job.ValueRW.Job   = providedJob;          // 직장이 직업 부여
+                    job.ValueRW.Shift = shift;                // 교대 슬롯(라운드로빈)
                     ecb.RemoveComponent<JobSeekerTag>(e);
                 }
             }
@@ -235,7 +237,8 @@ namespace CitySim
             int                                   owner,
             ComponentLookup<BuildingOccupancy>    occLookup,
             out Entity                            building,
-            out JobType                           job)
+            out JobType                           job,
+            out byte                              shift)
         {
             for (int i = 0; i < slots.Length; i++)
             {
@@ -246,15 +249,19 @@ namespace CitySim
                 slots[i] = slot;
 
                 var occ = occLookup[slot.Building];
+                // 교대 슬롯 = 이번 고용 이전 인원 % 교대수(라운드로빈 → 교대 균등 분산).
+                int preCount = occ.Current;
                 occ.Current++;                       // 장기 고용 점유
                 occLookup[slot.Building] = occ;
 
                 building = slot.Building;
                 job      = slot.Job;
+                shift    = (byte)(preCount % math.max(1, JobSchedule.ShiftCount(slot.Job)));
                 return true;
             }
             building = Entity.Null;
             job      = JobType.Unemployed;
+            shift    = 0;
             return false;
         }
 

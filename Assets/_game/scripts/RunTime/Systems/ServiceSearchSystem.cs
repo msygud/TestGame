@@ -64,6 +64,7 @@ namespace CitySim
                 EntLookup     = SystemAPI.GetComponentLookup<BuildingEntrance>(true),
                 StockLookup   = SystemAPI.GetBufferLookup<StockEntry>(true),
                 VisitorLookup = SystemAPI.GetComponentLookup<VisitorOccupancy>(true),
+                ProdLookup    = SystemAPI.GetComponentLookup<ProductionJob>(true),
             }.ScheduleParallel(state.Dependency);
         }
     }
@@ -78,6 +79,7 @@ namespace CitySim
         [ReadOnly] public ComponentLookup<BuildingEntrance>  EntLookup;
         [ReadOnly] public BufferLookup<StockEntry>           StockLookup;
         [ReadOnly] public ComponentLookup<VisitorOccupancy>  VisitorLookup;
+        [ReadOnly] public ComponentLookup<ProductionJob>     ProdLookup;
 
         void Execute(ref ServiceTarget target, in CitizenNeeds needs, in CitizenState st)
         {
@@ -120,10 +122,14 @@ namespace CitySim
                 {
                     if ((sr.Relief & want) == NeedType.None)
                         continue;
+                    // 무인 폐점(2026-07-07 decision 1a) — 직원 미출근(SkillFactor<=0)이면 영업 안 함.
+                    //   ProductionJob 없는 공급자(광장 등)는 게이트 없음(항상 열림).
+                    if (ProdLookup.HasComponent(sr.Supplier)
+                        && ProdLookup[sr.Supplier].SkillFactor <= 0f)
+                        continue;
                     if (!SupplierHasGoods(sr.Supplier))
                         continue;
-                    // 만석 제외(2026-07-07) — 대안탐색의 본체: 최근접이 만석이면
-                    //   자연히 차선(다음 Dist)이 선택된다. VisitorOccupancy 없으면 무제한.
+                    // 만석 제외 — 대안탐색의 본체: 최근접이 만석이면 자연히 차선(다음 Dist) 선택.
                     if (VisitorLookup.HasComponent(sr.Supplier)
                         && VisitorLookup[sr.Supplier].Full)
                         continue;

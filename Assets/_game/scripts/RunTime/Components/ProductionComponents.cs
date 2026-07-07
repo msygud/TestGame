@@ -58,12 +58,15 @@ namespace CitySim
                         BaseDuration = 10f,  // 게임초
                     };
                 case Commodity.Meal:
+                    // 처리량 수정(2026-07-07): 구 Flour1→Meal2/8s는 수요(인구×허기) 대비 ~10배
+                    //   부족(식당 아무리 지어도 Meal 즉시 소진, 허기 0.5 고착 — 유저 실측).
+                    //   Flour1→Meal10/8s로 상향(한 주방이 다수 급식). 스텁 노브 — 밸런스 시 재조정.
                     return new RecipeDef
                     {
                         Input        = Commodity.Flour,
                         InputAmount  = 1,
                         Output       = Commodity.Meal,
-                        OutputAmount = 2,
+                        OutputAmount = 10,
                         BaseDuration = 8f,
                     };
                 default:

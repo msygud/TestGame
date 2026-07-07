@@ -104,4 +104,15 @@ namespace CitySim
             if (Current > 0) Current--;
         }
     }
+
+    /// <summary>
+    /// 서비스 건물의 손님 누적 통계(2026-07-07) — 오늘/어제 접객 수.
+    /// ServiceDeskJob이 서빙 성공마다 TodayServed++, DayChanged에 롤오버
+    /// (Yesterday=Today, Today=0). 처리량·수요 추이 관찰용(인스펙터 표시).
+    /// </summary>
+    public struct ServiceStats : IComponentData
+    {
+        public int TodayServed;
+        public int YesterdayServed;
+    }
 }

@@ -629,7 +629,10 @@ MonoBehaviour:
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 0
-  NeedMaps: []
+  NeedMaps:
+  - MainKey: 1002
+    NeedMask: 1
+    FactionFlags: 0
   Entrances:
   - MainKey: 1000
     Offset: {x: 1, y: 0}

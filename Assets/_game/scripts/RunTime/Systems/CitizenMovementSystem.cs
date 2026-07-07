@@ -93,6 +93,8 @@ namespace CitySim
                 LeaveQueue    = leaveQueue,
                 ServeQueue    = serveQueue,
                 VisitorLookup = SystemAPI.GetComponentLookup<VisitorOccupancy>(false),
+                StatsLookup   = SystemAPI.GetComponentLookup<ServiceStats>(false),
+                ProdLookup    = SystemAPI.GetComponentLookup<ProductionJob>(true),
                 StockLookup   = SystemAPI.GetBufferLookup<StockEntry>(false),
                 StateLookup   = SystemAPI.GetComponentLookup<CitizenState>(false),
                 TargetLookup  = SystemAPI.GetComponentLookup<ServiceTarget>(false),
@@ -140,20 +142,19 @@ namespace CitySim
         public NativeQueue<Entity>.ParallelWriter       LeaveQueue;
         public NativeQueue<ServeRequest>.ParallelWriter ServeQueue;
 
-        // 이 직업의 근무 시간대인가 — 교대 그룹(JobSchedule.ShiftHours)만큼 창을 이동.
-        //   점심 창도 함께 이동(퇴근 게이트와 동일 취급). ※ 자정 넘는 창(wrap) 미지원.
-        bool IsWorkHours(JobType job)
+        // 이 근로자의 근무 시간대인가 — 직업 운영창을 교대수로 나눈 내 서브-근무창.
+        //   생산(1교대)은 config 창, 서비스/창고는 프로파일 창. 점심은 1교대만 적용.
+        //   ※ 자정 넘는 창(wrap) 미지원 — Close=24는 Hour<24라 안전.
+        bool IsWorkHours(JobType job, int shift)
         {
-            int shift = JobSchedule.ShiftHours(job);
-            float ws = WorkStart + shift;
-            float we = WorkEnd + shift;
-            if (!(ws < we)) return false;
+            var w = JobSchedule.Profile(job, WorkStart, WorkEnd);
+            if (w.Close <= w.Open || w.Shifts < 1) return false;
+            float len = (w.Close - w.Open) / (float)w.Shifts;
+            float ws = w.Open + shift * len;
+            float we = ws + len;
             if (Hour < ws || Hour >= we) return false;
-            if (LunchHours > 0)
-            {
-                float ls = LunchStart + shift;
-                if (Hour >= ls && Hour < ls + LunchHours) return false;   // 점심 = 근무 아님
-            }
+            if (w.Shifts == 1 && LunchHours > 0
+                && Hour >= LunchStart && Hour < LunchStart + LunchHours) return false;
             return true;
         }
 
@@ -161,7 +162,7 @@ namespace CitySim
                      ref CitizenState cs, ref ServiceTarget target, ref CitizenNeeds needs,
                      ref CitizenSkills skills, in JobData job, in CitizenAttributes attr)
         {
-            bool workHours = IsWorkHours(job.Job);
+            bool workHours = IsWorkHours(job.Job, job.Shift);
 
             switch (cs.Activity)
             {
@@ -177,12 +178,15 @@ namespace CitySim
                     }
                     else if (workHours)
                     {
-                        // ② 출근 — 직장이 있고 아직 직장에 있지 않으면.
-                        //   탐색 실패로 대기 중(Pursuing 유지)이어도 출근한다 — 못 먹는
-                        //   채로 집에 매이는 것보다 일하는 게 낫고, 해소는 퇴근 후 재시도.
+                        // ② 출근 — 직장이 있으면. 이 분기는 정의상 AtWork가 아니므로
+                        //   무조건 출근을 시도한다(BeginTravel이 같은 건물이면 dist 0으로 즉시 처리).
+                        //   ⚠ 구 `cs.CurrentBuilding != work` 가드는 노숙 일꾼이 퇴근 후 직장에서
+                        //   Idle(CurrentBuilding=work)로 머물 때 재출근을 영구 차단해, 배고파질
+                        //   때까지 매 교대 결근시켰다(적대적 리뷰 2026-07-07 발견 — 노숙 일꾼은
+                        //   재하우징 전까지 격교대 결근). 가드 제거로 노숙 일꾼도 정상 재출근.
                         Entity work = ResLookup.HasComponent(entity)
                             ? ResLookup[entity].Work : Entity.Null;
-                        if (work != Entity.Null && cs.CurrentBuilding != work)
+                        if (work != Entity.Null)
                             BeginTravel(sortKey, ref cs, cs.CurrentBuilding, work, TravelPurpose.Work);
                     }
                     // ③ 휴식 = 현상 유지(AtHome). Energy 회복은 고용 2차(컨디션 동역학).
@@ -352,6 +356,8 @@ namespace CitySim
         public NativeQueue<Entity>       LeaveQueue;
         public NativeQueue<ServeRequest> ServeQueue;
         public ComponentLookup<VisitorOccupancy> VisitorLookup;
+        public ComponentLookup<ServiceStats>     StatsLookup;
+        [ReadOnly] public ComponentLookup<ProductionJob> ProdLookup;
         public BufferLookup<StockEntry>          StockLookup;
         public ComponentLookup<CitizenState>     StateLookup;
         public ComponentLookup<ServiceTarget>    TargetLookup;
@@ -405,8 +411,14 @@ namespace CitySim
                 // 재고 버퍼 없음 = 무한 공급(통과).
                 if (!StockLookup.HasBuffer(req.Supplier)) continue;
 
+                // 무인 폐점(decision 1a) — 도착 직전 직원이 퇴근(SkillFactor<=0)했으면 서빙 거부
+                //   (탐색-도착 레이스 방어). 아래 거절 경로로 자리 반납 + 귀가.
+                bool closed = ProdLookup.HasComponent(req.Supplier)
+                              && ProdLookup[req.Supplier].SkillFactor <= 0f;
+
                 var stock  = StockLookup[req.Supplier];
                 bool served = false;
+                if (!closed)
                 for (int i = 0; i < stock.Length; i++)
                 {
                     var s = stock[i];
@@ -420,7 +432,17 @@ namespace CitySim
                     }
                     break;
                 }
-                if (served) continue;
+                if (served)
+                {
+                    // 손님 누적 통계(오늘). DayChanged 롤오버는 ServiceStatsRolloverSystem.
+                    if (StatsLookup.HasComponent(req.Supplier))
+                    {
+                        var stat = StatsLookup[req.Supplier];
+                        stat.TodayServed++;
+                        StatsLookup[req.Supplier] = stat;
+                    }
+                    continue;
+                }
 
                 // ── 거절: 자리 해제 + 식사 없이 즉시 귀가(해소 없음, Pursuing 유지) ──
                 if (!StateLookup.HasComponent(req.Citizen)) continue;
