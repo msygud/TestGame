@@ -93,6 +93,8 @@ namespace CitySim
                         ecb.SetComponent(walker, LocalTransform.FromPosition(startPos));
                         ecb.AddComponent<CarrierTag>(walker);
                         ecb.AddComponent(walker, new CarrierState { PathIndex = 0, MoveTimer = 0f });
+                        // 소유: SharedComponent (플레이어 LocalId별 청크 분리 — 소유물 공통 골격).
+                        ecb.AddSharedComponent(walker, new OwnerShared(req.ValueRO.OwnerLocalId));
 
                         var buf = ecb.AddBuffer<CarrierPathCell>(walker);
                         for (int i = 0; i < path.Length; i++)

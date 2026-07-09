@@ -38,7 +38,7 @@ namespace CitySim
         const int WarehouseMainKey  = 1005;
         const int ProducerStockCap  = 40;    // 생산 건물 입출력 칸 용량
         const int WarehouseStoreCap = 200;   // 창고 품목당 보관 용량
-        const int WarehouseStampMaxDist = 40;
+        const int WarehouseStampMaxDist = 20;   // 커버리지 축소 테스트(2026-07-09, 구 40의 1/2)
         const int WorkerSlots       = 4;     // 생산 건물 일자리 정원(stub — 프리팹 베이킹 이관 예정.
                                              //   ⚠ ECB AddComponent라 베이킹된 Occupancy가 있으면 덮음)
         const int WarehouseWorkerSlots = 6;  // 창고 일자리(24h 3교대 → 교대당 ~2명)
@@ -107,6 +107,11 @@ namespace CitySim
                         RotSteps     = req.ValueRO.RotSteps,
                         OwnerLocalId = req.ValueRO.OwnerLocalId,
                     });
+
+                    // 소유: SharedComponent (플레이어 LocalId별 청크 분리 — 시민/도로/캐리어와 동일 축).
+                    //   BuildingFootprint.OwnerLocalId(필드)는 Burst 잡의 per-entity 값 읽기용 유지,
+                    //   OwnerShared는 시스템 레벨 청크 필터(WithSharedComponentFilter)용. 스폰 후 불변.
+                    ecb.AddSharedComponent(instance, new OwnerShared(req.ValueRO.OwnerLocalId));
 
                     if (req.ValueRO.HasEntrance)
                         ecb.AddComponent(instance, new BuildingEntrance

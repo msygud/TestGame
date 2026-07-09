@@ -15,25 +15,20 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  LogisticsPullSystem (slice 2) — 입력 재고 par-level 보충(pull), stamp 경유
+    //  LogisticsPullSystem — 입력 재고 par-level 보충(pull), 창고 공유 풀 경유
+    //  (2026-07-09 재작성: 개별 창고 직거래 → LogisticsPool)
     //
-    //  입력(Input) 재고가 reorder 밑으로 떨어지면, 건물이 자기 입구 도로셀의 stamp에서
-    //  `Kind=Warehouse` 도장을 읽어 **그 품목을 보유한 최근접 창고**를 골라 target까지
-    //  끌어온다(가상 이동, 즉시 수량 이전).
-    //
-    //  - 건물 owner = BuildingFootprint.OwnerLocalId → stamp[owner] 슬롯.
-    //  - 도로셀 = EntranceOps.EntranceRoadCell(footprint, entrance) (ServiceSearch와 동일).
-    //  - 창고 재고/용량은 stamp에 없음 → 후보 창고 stock 버퍼에서 그 순간 직접 읽음
-    //    (capacity 직접읽기 원칙). 보유량 있는(>0) 창고 중 최단 Dist 선택.
+    //  입력(Input) 재고가 reorder 밑으로 떨어지면, 건물이 자기 입구 도로셀의 stamp에
+    //  **그 플레이어 창고(Kind=Warehouse)가 하나라도 닿는지**(커버리지)만 확인하고,
+    //  닿으면 **공유 풀 전체**(그 플레이어 모든 창고 합)에서 target까지 끌어온다.
+    //    · 커버리지 = 이진(닿음/안 닿음). 개별 창고 반경·재고에 안 갇힘 → 창고를 더
+    //      지어 커버를 넓히거나 용량을 키우면 곧바로 이 건물이 혜택(요청 #1 해소).
+    //    · 재고는 창고 buffer가 아니라 LogisticsPool.Cells[(owner,commodity)]에서 차감.
+    //    · 운반자 비주얼 출발점 = 최근접 창고 입구(코스메틱 — 실제 재고는 풀이 진실).
     //
     //  anti-oscillation: Current < Reorder일 때만, Target까지 채움(hysteresis 밴드).
-    //
-    //  ※ 메인스레드: 건물 버퍼 + 후보 창고 버퍼를 GetBuffer로(StockEntry를 쿼리에
-    //    안 넣어 alias 회피). 저빈도라 충분(게이팅 후속).
-    //  ※ 건물 후보 = footprint+입구 있는 모든 건물; StockEntry 버퍼 없으면 스킵,
-    //    Input 칸 없으면 무동작(창고=Store, 생산자=Output은 자연 스킵).
-    //  ※ slice 2 단순화: 최근접 1개 창고에서 가능한 만큼. 부족분은 다음 틱 재시도
-    //    (또는 다음 최근접). 여러 창고 합산·운송지연·혼잡은 후속.
+    //  ※ 메인스레드: 건물 버퍼를 GetBuffer로(StockEntry를 쿼리에 안 넣어 alias 회피).
+    //    저빈도라 충분(게이팅 후속). 풀 용량은 LogisticsPoolSystem이 선반영.
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct LogisticsPullSystem : ISystem
@@ -41,11 +36,15 @@ namespace CitySim
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<StampLayers>();
+            state.RequireForUpdate<LogisticsPool>();
         }
 
         public void OnUpdate(ref SystemState state)
         {
             var stamp = SystemAPI.GetSingleton<StampLayers>();
+            var pool  = SystemAPI.GetSingleton<LogisticsPool>();
+            var fpL   = SystemAPI.GetComponentLookup<BuildingFootprint>(true);
+            var entL  = SystemAPI.GetComponentLookup<BuildingEntrance>(true);
             var ecb   = new EntityCommandBuffer(Allocator.Temp);
 
             foreach (var (footprint, entrance, entity) in
@@ -63,8 +62,11 @@ namespace CitySim
                     footprint.ValueRO.Origin, footprint.ValueRO.Size,
                     in entrance.ValueRO.Entrance, footprint.ValueRO.RotSteps);
 
-                var input = SystemAPI.GetBuffer<StockEntry>(entity);
+                // ── 커버리지 + 운반자 출발 창고(최근접, 비주얼용) — stamp 1회 스캔 ──
+                Entity nearestW = FindNearestWarehouse(in map, roadCell);
+                if (nearestW == Entity.Null) continue;   // 풀 미접속(창고 stamp 안 닿음)
 
+                var input = SystemAPI.GetBuffer<StockEntry>(entity);
                 for (int i = 0; i < input.Length; i++)
                 {
                     var e = input[i];
@@ -73,54 +75,25 @@ namespace CitySim
                     int want = e.Target - e.Current;
                     if (want <= 0) continue;
 
-                    // 그 품목 보유한 최근접 창고(Kind=Warehouse) 찾기.
-                    Entity bestW   = Entity.Null;
-                    int    bestDst = int.MaxValue;
-                    if (map.TryGetFirstValue(roadCell, out var sr, out var it))
+                    // ── 공유 풀에서 draw ──
+                    var key = LogisticsPool.Key(owner, e.Commodity);
+                    if (!pool.Cells.TryGetValue(key, out var cell) || cell.Stored <= 0) continue;
+
+                    int got = want < cell.Stored ? want : cell.Stored;
+                    cell.Stored   -= got;
+                    pool.Cells[key] = cell;
+                    e.Current += got;
+                    input[i]   = e;
+
+                    // 운반자 비주얼(최근접 창고 입구 → 건물 입구). 실제 재고는 풀이 진실.
+                    int2 warehouseCell = WarehouseEntranceCell(nearestW, roadCell, in fpL, in entL);
+                    var reqE = ecb.CreateEntity();
+                    ecb.AddComponent(reqE, new LogisticsCarrierRequest
                     {
-                        do
-                        {
-                            if (sr.Kind != StampKind.Warehouse) continue;
-                            if (sr.Dist >= bestDst) continue;
-                            if (!SystemAPI.HasBuffer<StockEntry>(sr.Supplier)) continue;
-                            if (!HasStoreStock(SystemAPI.GetBuffer<StockEntry>(sr.Supplier), e.Commodity))
-                                continue;
-                            bestW   = sr.Supplier;
-                            bestDst = sr.Dist;
-                        }
-                        while (map.TryGetNextValue(out sr, ref it));
-                    }
-
-                    if (bestW != Entity.Null)
-                    {
-                        var store = SystemAPI.GetBuffer<StockEntry>(bestW);
-                        int got = DrawFromStore(ref store, e.Commodity, want);
-                        if (got > 0)
-                        {
-                            // 즉시 재고 이전 (기존 동작 유지)
-                            e.Current += got;
-                            input[i]   = e;
-
-                            // 운반자 비주얼 요청 발행 (창고 입구 → 건물 입구)
-                            int2 warehouseCell = roadCell; // 창고 입구가 없으면 폴백
-                            if (SystemAPI.HasComponent<BuildingFootprint>(bestW) &&
-                                SystemAPI.HasComponent<BuildingEntrance>(bestW))
-                            {
-                                var wfp  = SystemAPI.GetComponent<BuildingFootprint>(bestW);
-                                var went = SystemAPI.GetComponent<BuildingEntrance>(bestW);
-                                warehouseCell = EntranceOps.EntranceRoadCell(
-                                    wfp.Origin, wfp.Size, in went.Entrance, wfp.RotSteps);
-                            }
-
-                            var reqE = ecb.CreateEntity();
-                            ecb.AddComponent(reqE, new LogisticsCarrierRequest
-                            {
-                                SourceRoadCell = warehouseCell,
-                                DestRoadCell   = roadCell,
-                                OwnerLocalId   = owner,
-                            });
-                        }
-                    }
+                        SourceRoadCell = warehouseCell,
+                        DestRoadCell   = roadCell,
+                        OwnerLocalId   = owner,
+                    });
                 }
             }
 
@@ -128,35 +101,39 @@ namespace CitySim
             ecb.Dispose();
         }
 
-        // 창고에 그 품목 Store 재고가 1 이상 있나.
-        static bool HasStoreStock(DynamicBuffer<StockEntry> store, Commodity c)
+        // 도로셀에 닿는 창고(Kind=Warehouse) 중 최근접 엔티티(커버리지 확인 겸 비주얼 출발점).
+        //   Null = 창고 stamp가 안 닿음(= 풀 미접속).
+        static Entity FindNearestWarehouse(
+            in NativeParallelMultiHashMap<int2, SupplierRef> map, int2 roadCell)
         {
-            for (int j = 0; j < store.Length; j++)
+            Entity best    = Entity.Null;
+            int    bestDst = int.MaxValue;
+            if (map.TryGetFirstValue(roadCell, out var sr, out var it))
             {
-                var s = store[j];
-                if (s.Role == StockRole.Store && s.Commodity == c && s.Current > 0)
-                    return true;
+                do
+                {
+                    if (sr.Kind != StampKind.Warehouse) continue;
+                    if (sr.Dist >= bestDst) continue;
+                    best    = sr.Supplier;
+                    bestDst = sr.Dist;
+                }
+                while (map.TryGetNextValue(out sr, ref it));
             }
-            return false;
+            return best;
         }
 
-        // 창고의 같은 품목 Store 칸(들)에서 want만큼(있는 만큼) 차감. 가져온 양 반환.
-        static int DrawFromStore(ref DynamicBuffer<StockEntry> store, Commodity c, int want)
+        // 창고 입구 도로셀(운반자 비주얼 출발점). 입구 정보 없으면 폴백 셀 반환.
+        static int2 WarehouseEntranceCell(
+            Entity warehouse, int2 fallback,
+            in ComponentLookup<BuildingFootprint> fpL, in ComponentLookup<BuildingEntrance> entL)
         {
-            int drawn = 0;
-            for (int j = 0; j < store.Length && drawn < want; j++)
+            if (fpL.HasComponent(warehouse) && entL.HasComponent(warehouse))
             {
-                var s = store[j];
-                if (s.Role != StockRole.Store || s.Commodity != c) continue;
-                if (s.Current <= 0) continue;
-
-                int remain = want - drawn;
-                int take   = remain < s.Current ? remain : s.Current;
-                s.Current -= take;
-                store[j]   = s;
-                drawn     += take;
+                var wfp  = fpL[warehouse];
+                var went = entL[warehouse];
+                return EntranceOps.EntranceRoadCell(wfp.Origin, wfp.Size, in went.Entrance, wfp.RotSteps);
             }
-            return drawn;
+            return fallback;
         }
     }
 }

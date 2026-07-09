@@ -1913,7 +1913,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2de996b8a36ec4c4d9bad0e1026a0a3f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Game.CamCtrl.CamCtrl
-  moveSpeed: 20
+  moveSpeed: 100
   rotateSpeed: 120
   camRoot: {fileID: 1181421717}
   l:
@@ -3295,7 +3295,7 @@ MonoBehaviour:
   _slots:
   - IsOpen: 1
     TeamID: 0
-    IsPlayer: 1
+    IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0
   - IsOpen: 1
@@ -3309,7 +3309,7 @@ MonoBehaviour:
     Cell: {x: 0, y: 0}
     FactionId: 0
   - IsOpen: 1
-    TeamID: 2
+    TeamID: 3
     IsPlayer: 0
     Cell: {x: 0, y: 0}
     FactionId: 0

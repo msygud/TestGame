@@ -69,7 +69,7 @@ namespace CitySim
             // ── owner별 대기자(스폰됐지만 집 미배정 — 다음 배정에서 정원을 차지할 인원) ──
             var pending = new NativeArray<int>(MP, Allocator.Temp);
             foreach (var (res, owner) in
-                     SystemAPI.Query<RefRO<CitizenResidence>, CitizenOwner>()
+                     SystemAPI.Query<RefRO<CitizenResidence>, OwnerShared>()
                               .WithAll<CitizenTag, UnassignedTag>())
             {
                 if (res.ValueRO.Home != Entity.Null) continue;   // 집 있음(직장 대기) → 정원 예약됨

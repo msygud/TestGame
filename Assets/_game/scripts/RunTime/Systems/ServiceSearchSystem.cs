@@ -6,6 +6,24 @@ using Unity.Mathematics;
 namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════════════════
+    //  ServiceOutcome — 서비스 검색 결과의 실패 사유(2026-07-08, 욕구 주도 배치 통계)
+    // ──────────────────────────────────────────────────────────────────────────
+    //  "지어서 고칠 수 있는 실패"의 분류. WHERE의 의미가 사유마다 다르다:
+    //    · NoCoverage : 이 욕구를 푸는 공급자가 사거리(현재 건물 입구 stamp) 내 아예 없음
+    //                   → 그 자리에 공급 건물 신설이 정답(WHERE = 시민 위치).
+    //    · Reached    : 공급자는 도달 가능하나 서빙 불가(재고 0·만석·무인 폐점)
+    //                   → 상류 보강/용량 증설/노동력(WHERE = 그 공급자). 건물 난사 억제.
+    //  검색 잡이 후보 순회 중 확정(필터가 이미 계산 — 재계산 0). 잠금 중(요청 없음)
+    //  시민은 애초에 검색 자체를 안 하므로 통계에 안 들어감(시도 게이트 = 오염 필터).
+    // ══════════════════════════════════════════════════════════════════════════
+    public enum ServiceOutcome : byte
+    {
+        None       = 0,   // 미검색 / 성공(Has=true) — 실패 아님
+        NoCoverage = 1,   // 사거리 내 해당 욕구 공급자 없음
+        Reached    = 2,   // 도달했으나 서빙 실패(재고·만석·폐점)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     //  ServiceTarget — 시민이 찾아낸 "이번에 갈 공급자" (찾기 결과)
     // ──────────────────────────────────────────────────────────────────────────
     //  ServiceSearchSystem이 채운다. 이동/해소는 후속 단계가 이 값을 소비.
@@ -17,13 +35,19 @@ namespace CitySim
         public NeedType Relief;    // 그 공급자가 해소하는(이번에 추구한) 욕구 비트.
         public int      Dist;      // 시민 현재 건물 입구 도로셀에서의 거리(도로 칸 수).
 
+        /// <summary>이번 검색의 실패 사유(욕구 주도 배치 입력). Has=true면 None,
+        /// 실패면 NoCoverage/Reached. DemandAggregation이 1초마다 이 값을 샘플한다
+        /// (검색은 매 프레임 덮어쓰기 — 계측 비용 ~0, 카운팅은 저빈도 집계가 담당).</summary>
+        public ServiceOutcome LastOutcome;
+
         public readonly bool Has => Supplier != Entity.Null;
 
         public static ServiceTarget None => new ServiceTarget
         {
-            Supplier = Entity.Null,
-            Relief   = NeedType.None,
-            Dist     = int.MaxValue,
+            Supplier   = Entity.Null,
+            Relief     = NeedType.None,
+            Dist       = int.MaxValue,
+            LastOutcome = ServiceOutcome.None,
         };
     }
 
@@ -41,7 +65,7 @@ namespace CitySim
     //  최상위 실측 → 교체):
     //    · IJobEntity 병렬 — 대다수 시민(추구 없음/이동 중/목적지 보유)은 첫 분기에서
     //      탈락하는 청크 선형 순회.
-    //    · 플레이어 슬롯 해석: CitizenOwner(SharedComponent) 대신 **현재 건물
+    //    · 플레이어 슬롯 해석: OwnerShared(SharedComponent) 대신 **현재 건물
     //      footprint의 OwnerLocalId**를 사용 — 배정이 owner-일치(2026-07-05)라 동치이고,
     //      잡에서 공유 컴포넌트 접근/8중 필터 루프가 불필요해진다.
     //    · StampLayers는 [ReadOnly] 캡처. 쓰기자(StampRebuildSystem)는 RW 선언으로
@@ -116,12 +140,15 @@ namespace CitySim
             //   영원히 이긴다(실측: 고용 24 중 출근 11). 제외되면 target=None → UNMET으로
             //   정직하게 잡히고, 근무시간이면 출근 규칙이 발동. 재고가 차면 자동 복귀.
             var best = ServiceTarget.None;
+            bool reached = false;   // 이 욕구를 푸는 공급자가 사거리 내 존재(필터 전) — 실패 사유 분류용
             if (map.TryGetFirstValue(roadCell, out var sr, out var it))
             {
                 do
                 {
                     if ((sr.Relief & want) == NeedType.None)
                         continue;
+                    // Relief 일치 = 이 욕구 공급자가 도달 가능 → 실패해도 NoCoverage 아닌 Reached.
+                    reached = true;
                     // 무인 폐점(2026-07-07 decision 1a) — 직원 미출근(SkillFactor<=0)이면 영업 안 함.
                     //   ProductionJob 없는 공급자(광장 등)는 게이트 없음(항상 열림).
                     if (ProdLookup.HasComponent(sr.Supplier)
@@ -144,6 +171,10 @@ namespace CitySim
                 while (map.TryGetNextValue(out sr, ref it));
             }
 
+            // 실패 사유 기록(욕구 주도 배치 입력) — 성공이면 None, 실패면 도달여부로 2분류.
+            //   reached=false → NoCoverage(공급자 자체가 없음) / true → Reached(있으나 못 서빙).
+            best.LastOutcome = best.Has ? ServiceOutcome.None
+                             : (reached ? ServiceOutcome.Reached : ServiceOutcome.NoCoverage);
             target = best;
         }
 

@@ -7,18 +7,23 @@ using Unity.Mathematics;
 namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════════════════
-    //  DemandAggregationSystem — 미충족 욕구 → 수요 필드 (2026-07-07)
+    //  DemandAggregationSystem — 시도 실패 → 수요 필드 (2026-07-08 재정의)
     // ──────────────────────────────────────────────────────────────────────────
-    //  ~1초마다 재계산. "미충족" 시민(추구 중인데 목적지 없음, Idle/AtHome)을 집의
-    //  수요셀 + 추구 욕구 비트로 집계 → DemandField(더블 버퍼) back에 쓰고 스왑.
+    //  ~1초마다 샘플. "미충족"(추구 중인데 목적지 없음, Idle/AtHome) 시민을 **현재
+    //  건물 셀**(시도 위치) + 추구 욕구 비트 + **실패 사유**(ServiceTarget.LastOutcome)로
+    //  집계 → DemandField에 **누적**(존재하는 동안, Clear 없음).
     //
-    //  실행 모델("느슨함=백그라운드 잡" 원칙):
-    //    ① CollectDemandJob(병렬, 라이브 시민 컴포넌트 읽음 → state.Dependency 등록):
-    //       미충족 시민마다 key(owner,dx,dy,needBit)를 큐에 넣음.
-    //    ② TallyDemandJob(단일): 큐를 back 맵에 tally(Clear 후 누적).
-    //    ③ 폴링: IsCompleted 후 front↔back 스왑 + Version++.
+    //  실행 모델("느슨함=백그라운드 잡" + "누적·즉시성 불필요"):
+    //    ① CollectDemandJob(병렬, 라이브 읽기 → state.Dependency 등록):
+    //       미충족 시민마다 (key(owner,dx,dy,needBit), 사유)를 큐에 넣음.
+    //    ② TallyDemandJob(단일): 큐를 누적 back 맵에 접음(fold — Clear 없음).
+    //    ③ 폴링: IsCompleted 후 back → front(DemandField.Stats) **복사 발행** + Version++.
+    //       front은 메인만 쓰므로 독자(히트맵/배치)는 항상 안전한 스냅샷을 읽는다.
     //    집계는 저빈도라 체인이 dependency에 있어도 부담 없음(라이브 읽기 안전 확보).
-    //    독자(히트맵/배치)는 스왑 사이 불변 front만 읽는다.
+    //
+    //  ※ 사유는 ServiceSearchJob이 매 프레임 ServiceTarget.LastOutcome에 기록(계측 ~0).
+    //     여기선 1초에 한 번 그 값을 읽어 누적할 뿐(카운팅 = 저빈도 게이트).
+    //  ※ 요청/비율(성공 계측)은 v1 미포함 — 실패 강도만. 후속 슬라이스에서 추가.
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct DemandAggregationSystem : ISystem
@@ -26,21 +31,22 @@ namespace CitySim
         double    _next;
         JobHandle _handle;
         bool      _running;
-        NativeHashMap<int4, int> _back;   // 스왑 상대(Persistent)
-        NativeQueue<int4>        _keys;   // 런별(TempJob)
+        NativeHashMap<int4, DemandStat> _back;   // 누적 truth(Persistent) — 잡이 fold
+        NativeQueue<DemandSample>       _keys;   // 런별(TempJob)
 
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<CitizenTag>();
+            state.RequireForUpdate<StampLayers>();
             _next = 0;
-            _back = new NativeHashMap<int4, int>(1024, Allocator.Persistent);
+            _back = new NativeHashMap<int4, DemandStat>(1024, Allocator.Persistent);
 
             if (!SystemAPI.HasSingleton<DemandField>())
             {
                 var e = state.EntityManager.CreateEntity(typeof(DemandField));
                 state.EntityManager.SetComponentData(e, new DemandField
                 {
-                    Counts  = new NativeHashMap<int4, int>(1024, Allocator.Persistent),
+                    Stats   = new NativeHashMap<int4, DemandStat>(1024, Allocator.Persistent),
                     Version = 0,
                 });
             }
@@ -53,20 +59,26 @@ namespace CitySim
             if (SystemAPI.HasSingleton<DemandField>())
             {
                 var df = SystemAPI.GetSingleton<DemandField>();
-                if (df.Counts.IsCreated) df.Counts.Dispose();
+                if (df.Stats.IsCreated) df.Stats.Dispose();
             }
         }
 
         public void OnUpdate(ref SystemState state)
         {
-            // ── 완료 폴링: front↔back 스왑 + 버전 ──
+            // ── 완료 폴링: 누적 back → front 복사 발행 + 버전 ──
             if (_running)
             {
                 if (!_handle.IsCompleted) return;
                 _handle.Complete();
+
                 ref var df = ref SystemAPI.GetSingletonRW<DemandField>().ValueRW;
-                (df.Counts, _back) = (_back, df.Counts);   // 새 데이터가 front로
+                df.Stats.Clear();
+                var kv = _back.GetKeyValueArrays(Allocator.Temp);
+                for (int i = 0; i < kv.Keys.Length; i++)
+                    df.Stats[kv.Keys[i]] = kv.Values[i];
+                kv.Dispose();
                 df.Version++;
+
                 _keys.Dispose();
                 _running = false;
             }
@@ -75,61 +87,147 @@ namespace CitySim
             if (now < _next) return;
             _next = now + 1.0;
 
-            // 영업시간(현재 게임 시각) — 구조적/일시적 수요 분리용(STEP 1, 2026-07-07).
+            // 영업시간(현재 게임 시각) — 영업시간 외(일시적) 미충족은 집계에서 제외.
             int hour = SystemAPI.TryGetSingleton<GameClock>(out var clock) ? clock.Hour : 12;
 
-            // ── 스케줄: 수집(병렬, 라이브 읽기 → dependency) → tally(단일) ──
-            _keys = new NativeQueue<int4>(Allocator.TempJob);
+            // ── 스케줄 ──
+            //  ① 공급자 수요는 **메인스레드**에서 수집(2b 픽스): 연결 수요가 stamp 커버리지를 읽어야 하는데,
+            //     백그라운드(폴링) 잡이 라이브 stamp를 캡처하면 폴링 프레임에서 프레임워크가 의존성 추적을
+            //     놓쳐 StampRebuild(메인 쓰기)와 컨테이너 충돌한다(InvalidOperationException). 공급 건물은
+            //     소수라 메인 순회가 저렴하고, stamp도 메인끼리 순차라 안전. 시민 수집 잡보다 먼저 큐에 넣음.
+            //  ② 시민 수집(병렬, 라이브 읽기 → dependency) → ③ tally(단일, 누적 fold).
+            _keys = new NativeQueue<DemandSample>(Allocator.TempJob);
+
+            var stamp = SystemAPI.GetSingleton<StampLayers>();
+            foreach (var (prodRO, fpRO, entRO, stock) in
+                     SystemAPI.Query<RefRO<ProductionJob>, RefRO<BuildingFootprint>,
+                                     RefRO<BuildingEntrance>, DynamicBuffer<StockEntry>>())
+            {
+                var prod = prodRO.ValueRO;
+                if (prod.SkillFactor <= 0f) continue;                 // 무인 — 노동 문제(상류 아님)
+                var recipe = RecipeDefs.Get(prod.RecipeOutput);
+
+                bool outputEmpty = true, hasInputSlot = false, outputFull = false;
+                int inputCurrent = 0;
+                for (int i = 0; i < stock.Length; i++)
+                {
+                    var s = stock[i];
+                    if (s.Commodity == prod.RecipeOutput)
+                    {
+                        if ((s.Role == StockRole.Output || s.Role == StockRole.LocalFinal) && s.Current > 0)
+                            outputEmpty = false;
+                        if (s.Role == StockRole.Output && s.Free <= 0)
+                            outputFull = true;
+                    }
+                    if (recipe.Input != Commodity.None && s.Commodity == recipe.Input && s.Role == StockRole.Input)
+                    { hasInputSlot = true; inputCurrent = s.Current; }
+                }
+
+                var fp     = fpRO.ValueRO;
+                int2 dcell = DemandGrid.ToCell(fp.Origin);
+                int owner  = fp.OwnerLocalId;
+
+                // ① 창고 수요: 출력이 가득 = offload 불가(범위 내 창고 없음/pool 만석). LocalFinal은 로컬 소비라 제외.
+                if (outputFull)
+                {
+                    _keys.Enqueue(new DemandSample
+                    { Key = new int4(owner, dcell.x, dcell.y, DemandResource.WarehouseId), Cause = 0 });
+                    continue;
+                }
+
+                // ② 상류 굶주림: 출력 0 + 그 레시피 입력 0(무입력·입력칸 없음 제외).
+                if (recipe.Input == Commodity.None) continue;
+                if (!outputEmpty || !hasInputSlot || inputCurrent > 0) continue;
+
+                // 연결 수요(2b): Input 굶었는데 창고 커버 없으면 = "못 받는 것"(굶은 생산자는 Output도
+                //   못 채워 ①이 안 뜨는 데드락) → 창고 수요. 커버 있는데 Input 0 = 진짜 상류 부족 → commodity.
+                int2 roadCell = EntranceOps.EntranceRoadCell(fp.Origin, fp.Size, in entRO.ValueRO.Entrance, fp.RotSteps);
+                int resId = SupplyHasWarehouseCoverage(in stamp, owner, roadCell)
+                    ? DemandResource.ForCommodity(recipe.Input)
+                    : DemandResource.WarehouseId;
+                _keys.Enqueue(new DemandSample
+                { Key = new int4(owner, dcell.x, dcell.y, resId), Cause = 0 });
+            }
+
             var collectH = new CollectDemandJob
             {
                 FpLookup = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
                 Hour     = hour,
-                Keys     = _keys.AsParallelWriter(),
+                Samples  = _keys.AsParallelWriter(),
             }.ScheduleParallel(state.Dependency);
 
-            _handle = new TallyDemandJob { Keys = _keys, Back = _back }.Schedule(collectH);
+            _handle = new TallyDemandJob { Samples = _keys, Back = _back }.Schedule(collectH);
             state.Dependency = _handle;   // 라이브 시민 컴포넌트 읽기 안전(프레임워크 추적)
             _running = true;
         }
+
+        // 이 도로셀에 그 owner의 창고(Kind=Warehouse) 도장이 하나라도 닿는가(풀 접속 여부). 메인 전용.
+        static bool SupplyHasWarehouseCoverage(in StampLayers stamp, int owner, int2 roadCell)
+        {
+            if ((uint)owner >= StampLayers.MaxPlayers) return false;
+            var map = stamp[owner];
+            if (!map.IsCreated) return false;
+            if (map.TryGetFirstValue(roadCell, out var sr, out var it))
+            {
+                do { if (sr.Kind == StampKind.Warehouse) return true; }
+                while (map.TryGetNextValue(out sr, ref it));
+            }
+            return false;
+        }
     }
 
-    // ── ① 미충족 시민 → key 수집(병렬) ─────────────────────────────────────────
-    //   미충족 = 추구 욕구 있음(Pursuing) + 목적지 없음(못 찾음/못 감) + Idle/AtHome.
-    //   위치 = 집의 수요셀(사는 곳 근처에 서비스가 필요). 노숙(Home==Null)은 제외.
-    //   ★영업시간 게이트(STEP 1): 그 욕구의 공급자가 영업하는 시간대 밖이면 집계 제외 —
-    //     구조적 부족(영업 중에도 못 감)만 남기고 일시적(심야 폐점) 노이즈 제거. 안 하면
-    //     심야에 전 시민이 미충족으로 잡혀 맵 전체가 맥동 → 배치가 식당을 난사(설계 검증).
+    /// <summary>집계 샘플 1건 — 시도 위치 key + 실패 사유(0=NoCoverage, 1=Reached).</summary>
+    public struct DemandSample
+    {
+        public int4 Key;    // (owner, dx, dy, needBit)
+        public byte Cause;  // 0 = NoCoverage / 1 = Reached
+    }
+
+    // ── ① 미충족 시민 → (시도위치 key, 사유) 수집(병렬) ─────────────────────────
+    //   미충족 = 추구 욕구 있음 + 목적지 없음 + Idle/AtHome + 사유 확정(LastOutcome≠None).
+    //   위치 = **현재 건물**의 수요셀(추구를 시작한 자리 = 노출된 실수요). CurrentBuilding
+    //   없으면(이동 중 등) 제외. 영업시간 외는 제외(구조적 부족만 남김).
     [BurstCompile]
     [WithAll(typeof(CitizenTag))]
     public partial struct CollectDemandJob : IJobEntity
     {
         [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
         public int Hour;                          // 현재 게임 시각(0~23)
-        public NativeQueue<int4>.ParallelWriter Keys;
+        public NativeQueue<DemandSample>.ParallelWriter Samples;
 
-        void Execute(in CitizenNeeds needs, in ServiceTarget target,
-                     in CitizenState st, in CitizenResidence res)
+        void Execute(in CitizenNeeds needs, in ServiceTarget target, in CitizenState st)
         {
             if (needs.Pursuing == NeedType.None) return;
             if (target.Has) return;
             if (st.Activity != CitizenActivity.Idle && st.Activity != CitizenActivity.AtHome) return;
 
-            int bit = math.tzcnt((ulong)needs.Pursuing);   // 욕구 비트 인덱스(제네릭)
-            if (!NeedServiceHours.IsOpen(bit, Hour)) return;   // 폐점 시간대 → 일시적 노이즈 제외
+            // 사유 미확정(추구 전이 직후 아직 미검색) → 다음 초에 잡힘.
+            var outcome = target.LastOutcome;
+            if (outcome == ServiceOutcome.None) return;
 
-            Entity home = res.Home;
-            if (home == Entity.Null || !FpLookup.HasComponent(home)) return;
-            var fp = FpLookup[home];
+            int bit = math.tzcnt((ulong)needs.Pursuing);      // 욕구 비트 인덱스(제네릭)
+            if (!NeedServiceHours.IsOpen(bit, Hour)) return;   // 영업시간 외 → 일시적 노이즈 제외
+
+            Entity cur = st.CurrentBuilding;
+            if (cur == Entity.Null || !FpLookup.HasComponent(cur)) return;
+            var fp = FpLookup[cur];
 
             int2 dcell = DemandGrid.ToCell(fp.Origin);
-            Keys.Enqueue(new int4(fp.OwnerLocalId, dcell.x, dcell.y, bit));
+            Samples.Enqueue(new DemandSample
+            {
+                Key   = new int4(fp.OwnerLocalId, dcell.x, dcell.y, bit),
+                Cause = (byte)(outcome == ServiceOutcome.Reached ? 1 : 0),
+            });
         }
     }
 
-    // 욕구별 공급자 영업시간(STEP 1, D1 권장안 A — needBit 정적 스위치).
+    // (구 CollectSupplyDemandJob은 2b에서 메인스레드 수집으로 이관 — OnUpdate 인라인 + SupplyHasWarehouseCoverage.
+    //  이유: 연결 수요가 stamp를 읽는데 백그라운드 폴링 잡이 라이브 stamp를 들면 StampRebuild 쓰기와 충돌.)
+
+    // 욕구별 공급자 영업시간(needBit 정적 스위치) — 영업시간 외 미충족은 집계 제외.
     //   ⚠ 값은 실제 공급자 staffing(JobSchedule.Profile)과 일치해야 함(불일치 시 드리프트).
     //   Hunger=식당(Merchant 8~24)과 일치. 미래 욕구는 여기 case 한 줄(제네릭 유지).
-    //   2번째 욕구 도입 시 JobSchedule.Profile 파생(D1 (B))으로 이관해 드리프트 제거 검토.
+    //   2번째 욕구 도입 시 JobSchedule.Profile 파생으로 이관해 드리프트 제거 검토.
     public static class NeedServiceHours
     {
         public static bool IsOpen(int needBit, int hour) => needBit switch
@@ -139,20 +237,21 @@ namespace CitySim
         };
     }
 
-    // ── ② 큐 → back 맵 tally(단일) ──────────────────────────────────────────────
+    // ── ② 큐 → 누적 back 맵 fold(단일, Clear 없음 — 존재하는 동안 누적) ──────────
     [BurstCompile]
     public struct TallyDemandJob : IJob
     {
-        public NativeQueue<int4>        Keys;
-        public NativeHashMap<int4, int> Back;
+        public NativeQueue<DemandSample>       Samples;
+        public NativeHashMap<int4, DemandStat> Back;
 
         public void Execute()
         {
-            Back.Clear();
-            while (Keys.TryDequeue(out var k))
+            while (Samples.TryDequeue(out var s))
             {
-                Back.TryGetValue(k, out int c);
-                Back[k] = c + 1;
+                Back.TryGetValue(s.Key, out var stat);
+                if (s.Cause == 1) stat.FailReached++;
+                else              stat.FailNoCoverage++;
+                Back[s.Key] = stat;
             }
         }
     }

@@ -104,8 +104,9 @@ namespace CitySim
             var map = stamp[target]; // 핸들 값 복사 — 같은 버퍼 가리킴.
             map.Clear();
 
-            // ── ③ 그 플레이어 소유 공급자 전수 → 각자 BFS ──────────────
-            //   (공급자 수는 시민보다 압도적으로 적어 전수 스캔 + 값 비교로 충분 — 메모리 원칙.)
+            // ── ③ 그 플레이어 소유 공급자 → 각자 BFS ──────────────────────
+            //   OwnerShared 청크 필터(2026-07-09): 대상 플레이어 청크만 순회 →
+            //   타 플레이어 공급자 전수 스캔 + 값 비교(구 if OwnerLocalId!=target continue) 제거.
             //   footprint/입구는 BuildingFootprint/BuildingEntrance에서 읽는다.
             //   BuildingEntrance를 쿼리에 포함 → 입구 없는 공급자는 자동 제외
             //   (BFS 시작점=입구 도로셀이 없으므로 도달 범위를 그릴 수 없음).
@@ -114,11 +115,10 @@ namespace CitySim
 
             foreach (var (supplier, footprint, bEntrance, entity) in
                      SystemAPI.Query<RefRO<StampSupplier>, RefRO<BuildingFootprint>,
-                                     RefRO<BuildingEntrance>>().WithEntityAccess())
+                                     RefRO<BuildingEntrance>>()
+                         .WithSharedComponentFilter(new OwnerShared(target))
+                         .WithEntityAccess())
             {
-                if (supplier.ValueRO.OwnerLocalId != target)
-                    continue;
-
                 StampOne(in footprint.ValueRO, in bEntrance.ValueRO, entity, target,
                          supplier.ValueRO.Relief, supplier.ValueRO.MaxDist, StampKind.Supplier,
                          ref map, in roadLayer, ref queue, ref visited);
@@ -131,11 +131,10 @@ namespace CitySim
             //   입구 없는 창고(BuildingEntrance 미부착)는 쿼리에서 자동 제외.
             foreach (var (warehouse, footprint, bEntrance, entity) in
                      SystemAPI.Query<RefRO<WarehouseTag>, RefRO<BuildingFootprint>,
-                                     RefRO<BuildingEntrance>>().WithEntityAccess())
+                                     RefRO<BuildingEntrance>>()
+                         .WithSharedComponentFilter(new OwnerShared(target))
+                         .WithEntityAccess())
             {
-                if (warehouse.ValueRO.OwnerLocalId != target)
-                    continue;
-
                 StampOne(in footprint.ValueRO, in bEntrance.ValueRO, entity, target,
                          NeedType.None, warehouse.ValueRO.MaxDist, StampKind.Warehouse,
                          ref map, in roadLayer, ref queue, ref visited);

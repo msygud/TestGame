@@ -13,7 +13,7 @@ namespace CitySim
     //    2. 능력치(콜드) 결정적 랜덤 생성 (Seed)
     //    3. 컨디션(핫) Healthy 초기화, 욕구 비움
     //    4. 직업·소속·상태 초기화
-    //    5. CitizenOwner(SharedComponent) 부착 — 플레이어 LocalId별 청크 분리
+    //    5. OwnerShared(SharedComponent) 부착 — 플레이어 LocalId별 청크 분리
     //    6. 요청 엔티티 파괴
     //
     //  소속(집·직장) 실제 배정은 Stage A 후반 또는 별도 배정 시스템에서.
@@ -25,7 +25,7 @@ namespace CitySim
 
     public struct SpawnCitizenRequest : IComponentData
     {
-        public int     LocalId;       // 0~7. 소유 플레이어 슬롯. CitizenOwner 부착에 사용.
+        public int     LocalId;       // 0~7. 소유 플레이어 슬롯. OwnerShared 부착에 사용.
         public float3   Position;     // 스폰 위치
         public uint     Seed;         // 능력치 결정적 생성 시드(0이면 위치로 파생)
         public JobType  InitialJob;   // 초기 직업(Unemployed 가능)
@@ -113,8 +113,8 @@ namespace CitySim
                 ActionEndTime   = 0.0,
             });
 
-            // 소유: SharedComponent (플레이어 LocalId별 청크 분리)
-            ecb.AddSharedComponent(e, new CitizenOwner(req.LocalId));
+            // 소유: SharedComponent (플레이어 LocalId별 청크 분리 — 모든 소유물 공통 골격)
+            ecb.AddSharedComponent(e, new OwnerShared(req.LocalId));
 
             // 서비스 탐색 결과 슬롯(초기 비어있음). ServiceSearchSystem이 채운다.
             ecb.AddComponent(e, ServiceTarget.None);

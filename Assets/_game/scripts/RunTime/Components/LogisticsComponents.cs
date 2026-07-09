@@ -1,4 +1,6 @@
+using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 
 namespace CitySim
 {
@@ -141,5 +143,36 @@ namespace CitySim
 
         /// <summary>stamp 도달 범위 상한(BFS 최대 도로 칸 수). 0 이하면 무제한.</summary>
         public int MaxDist;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  LogisticsPool — 플레이어별 창고 공유 풀 (2026-07-09, 요청 #1)
+    // ──────────────────────────────────────────────────────────────────────────
+    //  창고 여러 채를 "한 논리 저장소"로 묶는다. 개별 창고 buffer 대신 (owner,commodity)
+    //  단위 집계 슬롯 하나로 재고를 보관:
+    //    · Capacity = 그 플레이어 모든 창고의 그 품목 Store 칸 Capacity 합.
+    //    · Stored   = 풀 자체가 보관하는 진실. **창고 StockEntry.Current는 미사용(vestigial)** —
+    //      창고는 이제 "용량 기여 + stamp 커버리지"만 담당(Store 칸은 Capacity 선언용).
+    //  커버리지 = 이진: 건물 입구 도로셀에 그 플레이어 창고 stamp(Kind=Warehouse)가 하나라도
+    //  닿으면 "풀 접속" → 풀 전체(모든 창고 합)에 접근. 개별 창고 반경에 안 갇힘 → 창고를
+    //  어디에 더 지어도 커버 겹치는 건물은 전체 용량을 공유(요청 #1 해소).
+    //
+    //  key = int2(owner, (int)commodity). LogisticsPoolSystem이 Capacity 재계산·clamp,
+    //  Pull/Push가 Stored 증감. 싱글톤 NativeHashMap(메인만 접근 — DemandField 패턴,
+    //  맵 내용 변경은 SetSingleton 불필요: 핸들이 공유 데이터를 가리킴).
+    // ══════════════════════════════════════════════════════════════════════════
+    public struct PoolCell
+    {
+        public int Stored;
+        public int Capacity;
+        public readonly int Free => Capacity - Stored;
+    }
+
+    public struct LogisticsPool : IComponentData
+    {
+        /// <summary>key=int2(owner,(int)commodity) → (Stored, Capacity). owner별 창고 Store 합.</summary>
+        public NativeHashMap<int2, PoolCell> Cells;
+
+        public static int2 Key(int owner, Commodity c) => new int2(owner, (int)c);
     }
 }

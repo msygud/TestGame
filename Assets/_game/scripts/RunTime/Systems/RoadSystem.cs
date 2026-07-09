@@ -177,6 +177,8 @@ namespace CitySim
                         });
                         ecb.AddComponent(newRoad, new RoadVisualInstance { Instance = Entity.Null });
                         ecb.AddComponent(newRoad, new DirtyRoadTag());
+                        // 소유: SharedComponent (플레이어 LocalId별 청크 분리 — 소유물 공통 골격).
+                        ecb.AddSharedComponent(newRoad, new OwnerShared(ownerLocalId));
                     }
 
                     var drawnDirty = ecb.CreateEntity();
@@ -257,6 +259,8 @@ namespace CitySim
                     });
                     ecb.AddComponent(road, new RoadVisualInstance { Instance = Entity.Null });
                     ecb.AddComponent(road, new DirtyRoadTag());
+                    // 소유: SharedComponent (플레이어 LocalId별 청크 분리 — 소유물 공통 골격).
+                    ecb.AddSharedComponent(road, new OwnerShared(ownerLocalId));
                 }
 
                 // footprint 외곽 이웃 셀 방향 비트 갱신

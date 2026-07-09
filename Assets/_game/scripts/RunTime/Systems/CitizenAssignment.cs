@@ -16,7 +16,8 @@ namespace CitySim
     //    - 시민 Residence/Job, 건물 Occupancy 수정은 "값 변경"이라 구조 변경 아님
     //      → RefRW / ComponentLookup로 직접 수정.
     //    - 단, UnassignedTag 제거는 구조 변경 → EntityCommandBuffer로 처리.
-    //    - 대량 동시 생성 대비 프레임당 버짓(MaxAssignPerFrame).
+    //    - 대량 동시 생성 대비 owner별 프레임 상한(MaxAssignPerOwnerPerFrame). 구 전역 버짓은
+    //      owner-청크 순회에서 마지막 슬롯을 굶겨 폐기(2026-07-09).
     //
     //  점유 의미: 거주/소속 점유는 장기 유지(방문 예약과 달리 해제하지 않음).
     //
@@ -42,7 +43,8 @@ namespace CitySim
     [UpdateAfter(typeof(CitizenSpawnSystem))]
     public partial struct CitizenAssignmentSystem : ISystem
     {
-        const int MaxAssignPerFrame = 256;   // 프레임당 버짓(스파이크 방지)
+        const int MaxAssignPerOwnerPerFrame = 128;   // owner별 상한(구 전역 256은 마지막 owner 기아 위험)
+        const int MaxOwners                 = 8;     // LocalId 0~7
 
         public void OnUpdate(ref SystemState state)
         {
@@ -81,17 +83,21 @@ namespace CitySim
             var ecb        = new EntityCommandBuffer(Allocator.Temp);
             var occLookup  = SystemAPI.GetComponentLookup<BuildingOccupancy>(false);
 
-            int processed  = 0;
+            var perOwner = new NativeArray<int>(MaxOwners, Allocator.Temp);
 
             foreach (var (res, cstate, owner, e) in
                      SystemAPI.Query<RefRW<CitizenResidence>,
-                                     RefRW<CitizenState>, CitizenOwner>()
+                                     RefRW<CitizenState>, OwnerShared>()
                          .WithAll<CitizenTag, UnassignedTag>()
                          .WithEntityAccess())
             {
-                // 버짓은 '처리 수' 기준(2026-07-06) — 구 '완료 수' 기준은 완료가 0인 상황
-                //   에서 발동하지 않아 매 프레임 전 시민을 순회했다(인구 1.8만 실측 정체).
-                if (processed++ >= MaxAssignPerFrame) break;
+                // owner별 상한(구 전역 break는 owner-청크 순회에서 마지막 슬롯을 굶긴다 —
+                //   OwnerShared=SharedComponent라 청크가 owner별로 갈림. 고용 시스템과 동일
+                //   버그. '처리 수' 기준 유지, continue로 전 owner 방문).
+                int o = owner.LocalId;
+                if ((uint)o >= (uint)MaxOwners) continue;
+                if (perOwner[o] >= MaxAssignPerOwnerPerFrame) continue;
+                perOwner[o]++;
 
                 // 집 배정
                 if (res.ValueRO.Home == Entity.Null &&
@@ -112,6 +118,7 @@ namespace CitySim
                     ecb.RemoveComponent<UnassignedTag>(e);
             }
 
+            perOwner.Dispose();
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
             freeHomes.Dispose();
@@ -170,7 +177,8 @@ namespace CitySim
     [UpdateAfter(typeof(CitizenAssignmentSystem))]
     public partial struct EmploymentAssignmentSystem : ISystem
     {
-        const int MaxAssignPerFrame = 128;   // 처리 수 기준 버짓
+        const int MaxAssignPerOwnerPerFrame = 64;   // owner별 상한(구 전역 128은 마지막 owner 기아 버그)
+        const int MaxOwners                 = 8;    // LocalId 0~7
 
         public void OnUpdate(ref SystemState state)
         {
@@ -202,14 +210,21 @@ namespace CitySim
 
             var ecb       = new EntityCommandBuffer(Allocator.Temp);
             var occLookup = SystemAPI.GetComponentLookup<BuildingOccupancy>(false);
-            int processed = 0;
+            var perOwner  = new NativeArray<int>(MaxOwners, Allocator.Temp);
 
             foreach (var (res, job, owner, e) in
-                     SystemAPI.Query<RefRW<CitizenResidence>, RefRW<JobData>, CitizenOwner>()
+                     SystemAPI.Query<RefRW<CitizenResidence>, RefRW<JobData>, OwnerShared>()
                          .WithAll<CitizenTag, JobSeekerTag>()
                          .WithEntityAccess())
             {
-                if (processed++ >= MaxAssignPerFrame) break;
+                // owner별 상한(구 전역 break는 마지막 owner를 굶겼다 — OwnerShared=SharedComponent라
+                //   청크가 owner별로 갈리고, 전역 예산이 앞 owner들에서 소진되면 마지막 슬롯이 영영
+                //   미처리. 유저 실측: 4팀 중 마지막만 제분소 무인. continue로 전 owner 방문 + owner별 상한).
+                int o = owner.LocalId;
+                if ((uint)o >= (uint)MaxOwners) continue;
+                if (perOwner[o] >= MaxAssignPerOwnerPerFrame) continue;
+                perOwner[o]++;
+
                 if (res.ValueRO.Work != Entity.Null)          // 이미 취업(방어) → 태그만 정리
                 {
                     ecb.RemoveComponent<JobSeekerTag>(e);
@@ -226,6 +241,7 @@ namespace CitySim
                 }
             }
 
+            perOwner.Dispose();
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
             freeWorks.Dispose();

@@ -42,7 +42,7 @@ namespace CitySim
         bool _enabled = true;   // F11 토글
 
         World       _qWorld;
-        EntityQuery _gsQ, _bfQ, _citQ;
+        EntityQuery _gsQ, _bfQ, _citQ, _poolQ;
 
         GUIStyle _style;
         Entity   _hovered = Entity.Null;
@@ -73,6 +73,7 @@ namespace CitySim
                     ComponentType.ReadOnly<CitizenTag>(),
                     ComponentType.ReadOnly<CitizenResidence>(),
                     ComponentType.ReadOnly<CitizenState>());
+                _poolQ = em.CreateEntityQuery(ComponentType.ReadOnly<LogisticsPool>());
                 _hovered = Entity.Null; _text = string.Empty;
             }
 
@@ -226,6 +227,22 @@ namespace CitySim
                     sb.Append('\n').Append(s.Commodity.ToString())
                       .Append(' ').Append(s.Current).Append('/').Append(s.Capacity)
                       .Append(" [").Append(s.Role.ToString()).Append(']');
+                }
+            }
+
+            // ── 창고: 실제 재고는 owner 공유 풀(LogisticsPool)이 진실 — 위 [Store] 칸은 용량
+            //   기여분(Current=0 vestigial). 이 창고가 속한 풀의 품목별 Stored/Capacity 표시. ──
+            if (em.HasComponent<WarehouseTag>(e) && _poolQ.CalculateEntityCount() == 1)
+            {
+                var pool = _poolQ.GetSingleton<LogisticsPool>();
+                if (pool.Cells.IsCreated)
+                {
+                    sb.Append("\n-- shared pool (P").Append(bf.OwnerLocalId).Append(") --");
+                    foreach (var kv in pool.Cells)
+                        if (kv.Key.x == bf.OwnerLocalId)
+                            sb.Append('\n').Append(((Commodity)kv.Key.y).ToString())
+                              .Append(' ').Append(kv.Value.Stored).Append('/').Append(kv.Value.Capacity)
+                              .Append(" [Pool]");
                 }
             }
 

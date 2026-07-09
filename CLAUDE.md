@@ -250,7 +250,19 @@ Assets/_game/scripts/
 | 핫 | `CitizenConditions`, `Hunger`, `CitizenNeeds`, `CitizenState` | 매 틱 변경 |
 | 콜드 | `CitizenAttributes`, `JobData` | 불변 또는 희소 변경 |
 | 소속 | `CitizenResidence` (집·직장) | 잘 안 바뀜 |
-| 동적 | `CitizenOwner` (SharedComponent, LocalId) | 청크 분리 → 플레이어별 일괄 처리 |
+| 동적 | `OwnerShared` (SharedComponent, LocalId) | 청크 분리 → 플레이어별 일괄 처리 |
+
+- **소유 골격 `OwnerShared`(2026-07-09 통일)**: 소유 단위 = 개별 플레이어(LocalId 0~7) 하나.
+  **모든 소유 엔티티가 이 한 SharedComponent로 정렬**(시민·건물·도로 시각·캐리어·워커 —
+  예외 금지). 정의는 시민 전용 아님 → `Components/OwnerComponents.cs`.
+  - **필드 + SharedComponent 이중(drift 없음)**: Burst 잡은 SharedComponent 값을 per-entity로
+    못 읽으므로, 잡 안 owner 값은 `IComponentData` 필드(`BuildingFootprint.OwnerLocalId` 등)에서
+    읽는다. `OwnerShared`는 **시스템 레벨 청크 필터**(`WithSharedComponentFilter`) 전용. 둘 다
+    스폰 시 같은 값으로 세팅 + 소유권 스폰 후 불변(capture=파괴)이라 어긋날 수 없음.
+  - 부착 = 스폰 지점에서 `ecb.AddSharedComponent`(건물=`BuildingFootprint` 옆, 도로=RoadSystem
+    엔티티 생성 2곳, 캐리어/워커=Instantiate 직후). 건물은 `BuildingFootprint`가 붙는 곳과 동일.
+  - per-player 처리 시스템은 `WithSharedComponentFilter(new OwnerShared(p))`로 그 플레이어
+    청크만 순회(선례: `StampRebuildSystem` 공급자/창고 재빌드, 창고 공유 풀 예정).
 
 - 욕구: **개별 `IComponentData` 모델 — 영구 설계 방향(2026-07-06 재확인)**. 버퍼 아님.
   - 근거: 욕구별 시스템의 Burst 청크 순회 / 팩션 비대칭 = 아키타입(휴먼 {Hunger,…} vs 메카닉

@@ -575,7 +575,7 @@ MonoBehaviour:
     MultiItemSize: 0.5
     IsSupplier: 1
     ReliefRaw: 1
-    SupplyMaxDist: 30
+    SupplyMaxDist: 10
     DlcKey: 0
     IsDeleted: 0
   - MainKey: 1003

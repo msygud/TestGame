@@ -45,8 +45,13 @@ namespace CitySim.Authoring
         public JobType ProvidedJob = JobType.Unemployed;
 
         [Header("서비스 전용")]
-        [Tooltip("Kind=Service일 때, 이 건물이 해소하는 욕구 조합.")]
-        public NeedType ReliefMask = NeedType.None;
+        [Tooltip("Kind=Service일 때, 이 건물이 해소하는 욕구 조합(NeedType 비트마스크의 ulong 값).\n" +
+                 "예: Hunger=1, Homeless=2, Unemployed=4, LowEntertainment=8. 여러 개면 합(OR).")]
+        public ulong ReliefRaw = 0;
+
+        // NeedType : ulong 은 Unity 직렬화(베이킹) 미지원 → ulong 백킹 필드 + 프로퍼티로 우회
+        //   (RegistryItem.ReliefRaw/Relief와 동일 패턴). Baker는 이 프로퍼티로 읽는다.
+        public NeedType ReliefMask => (NeedType)ReliefRaw;
 
         [Tooltip("Kind=Service일 때, 공급 영향력(도로 칸수). 반경 BFS 깊이.")]
         public int Influence = 5;

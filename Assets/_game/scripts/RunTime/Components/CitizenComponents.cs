@@ -15,7 +15,7 @@ namespace CitySim
     //  한 시민 엔티티 구성:
     //    [핫]   CitizenConditions, 욕구 컴포넌트(Hunger 등), CitizenNeeds, CitizenState
     //    [콜드] CitizenAttributes, JobData
-    //    [소속] CitizenResidence(집·직장), CitizenOwner(SharedComponent, LocalId)
+    //    [소속] CitizenResidence(집·직장), OwnerShared(SharedComponent, LocalId — OwnerComponents.cs)
     //    [동적] CitizenLocation(현재 건물 / 이동중)
     //    + LocalTransform (Unity.Transforms)
     // ══════════════════════════════════════════════════════════════════════════
@@ -334,27 +334,8 @@ namespace CitySim
         public TravelPurpose Purpose;
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    //  소유: 개별 플레이어 단위 (SharedComponentData — 변하지/사라지지 않음 → 청크 분리)
-    //
-    //  소유 단위는 "개별 플레이어(LocalId 0~7)" 하나로 통일한다. 팀 개념을 쓰지
-    //  않음 — 건물·도로·stamp 슬롯·시민이 모두 같은 LocalId 축으로 정렬되어,
-    //  교차 참조(시민→자기 stamp 슬롯, 도로 소유 검사 등)가 한 키로 떨어진다.
-    //
-    //  SharedComponent인 이유: LocalId는 생성 후 바뀌지 않으므로 청크가 플레이어
-    //  별로 갈린다 → WithSharedComponentFilter(LocalId)로 한 플레이어 시민만 묶어
-    //  그 플레이어의 stamp 슬롯으로 일괄 처리(거의 공짜). 단일 SharedComponent라
-    //  조합 폭발 없음.
-    // ──────────────────────────────────────────────────────────────────────────
-    public struct CitizenOwner : ISharedComponentData
-    {
-        public int LocalId;   // 소유 플레이어 슬롯 (0~7). stamp[LocalId] 등에 직접 사용.
-
-        public CitizenOwner(int localId)
-        {
-            LocalId = localId;
-        }
-    }
+    // 소유: OwnerShared(ISharedComponentData) — 모든 소유 엔티티 공통 골격이라
+    //   CitizenComponents가 아니라 OwnerComponents.cs에 정의(시민 전용 아님).
 
     // ──────────────────────────────────────────────────────────────────────────
     //  CitizenConfig — 시민 밸런스 (싱글톤, 없으면 Default). Test.cs 통합 패널이 push.

@@ -11,9 +11,10 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════════════════
     //  DemandHeatmapSystem — 미충족 수요 히트맵 (에디터/개발빌드, F12 토글, 기본 OFF)
     // ──────────────────────────────────────────────────────────────────────────
-    //  DemandField(수요셀별 미충족 시민 수)를 색 강도로 채운다. "어디에 무엇이
-    //  부족한가"를 눈으로 확인 — 욕구 주도 배치의 입력 신호가 맞는지 검증.
-    //  욕구 비트로 색을 나눠 미래 욕구도 구분(Hunger=주황). 알파 = 미충족 강도.
+    //  DemandField(수요셀·욕구별 실패 누적)를 색으로 채운다. "어디에 무엇이 왜
+    //  부족한가"를 눈으로 확인 — 욕구 주도 배치의 입력 신호 검증.
+    //  색조 = 욕구(Hunger=주황) / 알파 = 실패 강도 / 파란색 편이 = Reached 비율
+    //  (선명 = NoCoverage = 신설 / 파랑 = Reached = 기존 공급 보강).
     //
     //  렌더: 동적 Mesh + Graphics.DrawMesh(Transparent) — TerritoryDebug와 동일 패턴.
     //  버전 게이트: DemandField.Version 바뀔 때만 메시 재구축(매 프레임 재구축 방지).
@@ -32,17 +33,20 @@ namespace CitySim
         readonly List<Color>   _c = new(1024);
         readonly List<int>     _i = new(1536);
 
-        const int   IntensityCap = 15;         // 이 미충족 수에서 알파 최대
+        const int   IntensityCap = 15;         // 상대 정규화 하한(이 값 미만이면 옅게, 이상은 최댓값 기준)
         const float MaxAlpha     = 0.6f;
 
-        // 욕구 비트 인덱스 → 색(미래 욕구 구분). 미정의 비트는 흰색.
-        static Color NeedColor(int bit) => bit switch
+        // resource id → 색. 0~63=욕구 비트 / 64+=commodity 수요(공급자 상류 부족, 진단용 구분색).
+        static Color NeedColor(int res) => res switch
         {
-            0 => new Color(1.00f, 0.45f, 0.10f, 1f),   // Hunger 주황
-            1 => new Color(0.60f, 0.40f, 0.90f, 1f),   // Homeless 보라
-            2 => new Color(0.30f, 0.60f, 1.00f, 1f),   // Unemployed 파랑
-            3 => new Color(0.95f, 0.30f, 0.55f, 1f),   // LowEntertainment 분홍
-            _ => new Color(0.90f, 0.90f, 0.90f, 1f),
+            0  => new Color(1.00f, 0.45f, 0.10f, 1f),   // Hunger 주황
+            1  => new Color(0.60f, 0.40f, 0.90f, 1f),   // Homeless 보라
+            2  => new Color(0.30f, 0.60f, 1.00f, 1f),   // Unemployed 파랑
+            3  => new Color(0.95f, 0.30f, 0.55f, 1f),   // LowEntertainment 분홍
+            65  => new Color(0.30f, 0.85f, 0.35f, 1f),   // Grain 수요(64+1) — 농장 필요(초록)
+            66  => new Color(0.95f, 0.80f, 0.20f, 1f),   // Flour 수요(64+2) — 제분소 필요(노랑)
+            128 => new Color(0.25f, 0.80f, 0.85f, 1f),   // 창고 수요 — offload 불가(청록)
+            _   => new Color(0.90f, 0.90f, 0.90f, 1f),
         };
 
         protected override void OnCreate()
@@ -86,16 +90,24 @@ namespace CitySim
             _builtVersion = ver; _builtEnabled = _enabled;
 
             _v.Clear(); _c.Clear(); _i.Clear();
-            if (!_enabled || !df.Counts.IsCreated) { _mesh.Clear(); return; }
+            if (!_enabled || !df.Stats.IsCreated) { _mesh.Clear(); return; }
 
             float cs = SystemAPI.GetSingleton<GridSettings>().CellSize;
             if (cs <= 0f) { _mesh.Clear(); return; }
             float cell = DemandGrid.CellSize * cs;   // 수요셀 월드 변
 
-            foreach (var kv in df.Counts)
+            // 누적이라 고정 상한은 곧 포화 → 현재 필드 최댓값 기준 상대 정규화(항상 가독).
+            //   소수 실패는 옅게 유지: denom = max(IntensityCap, 현재 최대). (재구축은 1초 1회.)
+            int maxFail = 0;
+            foreach (var kv in df.Stats)
+                if (kv.Value.Failures > maxFail) maxFail = kv.Value.Failures;
+            float denom = math.max(IntensityCap, maxFail);
+
+            foreach (var kv in df.Stats)
             {
-                int count = kv.Value;
-                if (count <= 0) continue;
+                var stat  = kv.Value;
+                int total = stat.Failures;
+                if (total <= 0) continue;
 
                 int2 dcell = new int2(kv.Key.y, kv.Key.z);   // key = (owner, dx, dy, bit)
                 int  bit   = kv.Key.w;
@@ -105,8 +117,11 @@ namespace CitySim
                 float z0 = ro.y * cs, z1 = z0 + cell;
                 const float h = 0.06f;
 
+                // 색조=욕구 / 알파=실패 강도 / 파란색 편이=Reached 비율(기존 보강 신호).
                 Color col = NeedColor(bit);
-                col.a = MaxAlpha * math.min(1f, count / (float)IntensityCap);
+                float reachedFrac = stat.FailReached / (float)total;
+                col = Color.Lerp(col, new Color(0.20f, 0.55f, 1.00f, 1f), 0.7f * reachedFrac);
+                col.a = MaxAlpha * math.min(1f, total / denom);
 
                 int b = _v.Count;
                 _v.Add(new Vector3(x0, h, z0));

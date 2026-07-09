@@ -35,7 +35,7 @@ namespace CitySim
         bool _enabled = true;   // F10 토글
 
         World       _qWorld;
-        EntityQuery _qState, _qNeeds, _qHunger, _qUnassigned, _qResidence, _qMealStock, _qCond;
+        EntityQuery _qState, _qNeeds, _qHunger, _qUnassigned, _qResidence, _qMealStock, _qCond, _qPool;
 
         GUIStyle _style;
         string   _text = string.Empty;
@@ -73,6 +73,7 @@ namespace CitySim
                 _qMealStock = em.CreateEntityQuery(ComponentType.ReadOnly<StockEntry>());
                 _qCond = em.CreateEntityQuery(
                     ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<CitizenConditions>());
+                _qPool = em.CreateEntityQuery(ComponentType.ReadOnly<LogisticsPool>());
             }
 
             if (Time.unscaledTime >= _nextBuildRT)
@@ -174,6 +175,19 @@ namespace CitySim
                     }
             }
             stockEnts.Dispose();
+
+            // 창고 재고는 이제 공유 풀(LogisticsPool)이 진실 — 창고 buffer는 Current=0(vestigial).
+            //   전 건물 합(=생산자 Output + 소비자 Input 인플라이트)에 풀 Stored를 더해야 진짜 총량.
+            if (_qPool.CalculateEntityCount() == 1)
+            {
+                var pool = _qPool.GetSingleton<LogisticsPool>();
+                if (pool.Cells.IsCreated)
+                    foreach (var kv in pool.Cells)
+                    {
+                        if (kv.Key.y == (int)Commodity.Grain)      grain += kv.Value.Stored;
+                        else if (kv.Key.y == (int)Commodity.Flour) flour += kv.Value.Stored;
+                    }
+            }
 
             return $"Citizens {total}  (unassigned {unassigned})\n"
                  + $"Idle {idle}  Home {home}  Work {work}\n"
