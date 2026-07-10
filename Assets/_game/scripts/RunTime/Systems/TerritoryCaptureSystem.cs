@@ -180,6 +180,8 @@ namespace CitySim
                         stampDirty.Add(bf.OwnerLocalId);
                     ecb.DestroyEntity(e);
                     destroyed++;
+                    // 파괴 원인 추적(2026-07-11 — "창고가 지어지자마자 사라짐" 진단용).
+                    UnityEngine.Debug.Log($"[Capture] P{bf.OwnerLocalId} 건물 파괴(영토 전환) origin={bf.Origin} size={bf.Size}");
                 }
                 else if (SystemAPI.HasComponent<Road>(e))
                 {

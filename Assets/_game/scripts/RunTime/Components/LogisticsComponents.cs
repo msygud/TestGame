@@ -168,11 +168,66 @@ namespace CitySim
         public readonly int Free => Capacity - Stored;
     }
 
+    /// <summary>풀 흐름 창(성장 틱마다 소비·클리어) — Out=실제 유출, In=실제 유입. **물리 흐름만**
+    /// (2026-07-10 층 분리 합의): 미충족 요구(desire)는 풀 장부가 아니라 소비자의 결핍 신호 —
+    /// 수요층(LogisticsMissLog→DemandField) 소관. 풀은 알아도 모른척.</summary>
+    public struct PoolFlow
+    {
+        public int Out, In;
+    }
+
     public struct LogisticsPool : IComponentData
     {
         /// <summary>key=int2(owner,(int)commodity) → (Stored, Capacity). owner별 창고 Store 합.</summary>
         public NativeHashMap<int2, PoolCell> Cells;
 
+        /// <summary>풀 거래 계측(P v2/v3, 2026-07-10 — 합의 모델 "창고만 보면 모든 흐름이 보인다"):
+        /// Raw·Intermediate는 전부 풀을 경유하므로 풀 인터페이스의 **물리 거래량**이 물량 흐름의
+        /// 완전한 통계. 생산자 스케일링 판단 = 유출>유입 + 목표재고 미달(고갈 전 선제). 결핍
+        /// (못 받은 요구)은 수요층 소관 — 이 장부엔 없음. AiCityGrowth가 성장 틱마다 읽고 Clear.</summary>
+        public NativeHashMap<int2, PoolFlow> Flow;
+
         public static int2 Key(int owner, Commodity c) => new int2(owner, (int)c);
+
+        /// <summary>유출 기록: got=실제 꺼낸 양만(물리 장부 — 미충족분은 여기 안 남음). 메인 전용.</summary>
+        public void RecordDraw(int2 key, int got)
+        {
+            Flow.TryGetValue(key, out var f);
+            f.Out += got;
+            Flow[key] = f;
+        }
+
+        /// <summary>유입 기록: put=실제 넣은 양(In). 메인 전용.</summary>
+        public void RecordDeposit(int2 key, int put)
+        {
+            Flow.TryGetValue(key, out var f);
+            f.In += put;
+            Flow[key] = f;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  LogisticsMissLog — 결핍(미스) 신호 창 → 수요층 (2026-07-10, 층 분리 확정)
+    // ──────────────────────────────────────────────────────────────────────────
+    //  Pull/Push가 미스를 플래그로 세우고 DemandAggregation 1초 틱이 DemandSample로 변환 후
+    //  Clear. 플래그(idempotent)라 실행 빈도 무관 셀당 1샘플/윈도. 원인별 2채널:
+    //    · 커버 미스(stamp 안 닿음 + 거래할 것 있음) → WarehouseId → 그 셀의 창고 수요(지역).
+    //    · 양적 미스(커버 있음 + 풀에서 요구를 못 채움) → ForCommodity → 생산자 수요.
+    //      **부트스트랩·절대 결핍 전담**(흐름 0이면 풀 층이 못 봄) — 시민 미충족과 같은 층/기계.
+    //  층 분리: 풀(LogisticsPool.Flow) = 물리 흐름만 보고 정상 체인의 선제 스케일링,
+    //  수요층(여기) = 결핍 해소. 풀은 결핍을 알아도 모른척(장부 분리).
+    //  ※ 커버 있음+풀 만석 = 과잉생산 — 수요 발행 안 함. 메인 전용(DemandField 패턴).
+    // ══════════════════════════════════════════════════════════════════════════
+    public struct LogisticsMissLog : IComponentData
+    {
+        /// <summary>(owner, 수요셀x, 수요셀y, resId) → 이 창(~1초) 동안 미스 발생(1).</summary>
+        public NativeHashMap<int4, byte> Window;
+
+        /// <summary>미스 기록 — 건물 origin을 수요셀로 양자화. 메인 전용, idempotent.</summary>
+        public void Record(int owner, int2 buildingOrigin, int resId)
+        {
+            int2 d = DemandGrid.ToCell(buildingOrigin);
+            Window[new int4(owner, d.x, d.y, resId)] = 1;
+        }
     }
 }

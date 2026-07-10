@@ -22,16 +22,26 @@ namespace CitySim
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct LogisticsPushSystem : ISystem
     {
+        double _nextGameSec;   // 게임초 게이트(P v2) — Pull과 동일
+
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<StampLayers>();
             state.RequireForUpdate<LogisticsPool>();
+            state.RequireForUpdate<LogisticsMissLog>();
         }
 
         public void OnUpdate(ref SystemState state)
         {
+            if (SystemAPI.TryGetSingleton<GameClock>(out var clk))
+            {
+                if (clk.TotalSeconds < _nextGameSec) return;
+                _nextGameSec = clk.TotalSeconds + clk.SecondsPerDay / 48f;
+            }
+
             var stamp = SystemAPI.GetSingleton<StampLayers>();
             var pool  = SystemAPI.GetSingleton<LogisticsPool>();
+            var miss  = SystemAPI.GetSingleton<LogisticsMissLog>();
 
             foreach (var (footprint, entrance, entity) in
                      SystemAPI.Query<RefRO<BuildingFootprint>, RefRO<BuildingEntrance>>()
@@ -48,10 +58,24 @@ namespace CitySim
                     footprint.ValueRO.Origin, footprint.ValueRO.Size,
                     in entrance.ValueRO.Entrance, footprint.ValueRO.RotSteps);
 
-                // 커버리지: 그 플레이어 창고가 이 도로셀에 하나라도 닿는가(풀 접속 여부).
-                if (!HasWarehouseCoverage(in map, roadCell)) continue;
-
                 var output = SystemAPI.GetBuffer<StockEntry>(entity);
+
+                // 커버리지: 그 플레이어 창고가 이 도로셀에 하나라도 닿는가(풀 접속 여부).
+                if (!HasWarehouseCoverage(in map, roadCell))
+                {
+                    // 풀 미접속: 배출 대기 출력이 있으면 커버 미스 → 그 셀의 창고 수요(지역 채널, 계획 P).
+                    for (int i = 0; i < output.Length; i++)
+                    {
+                        var e = output[i];
+                        if (e.Role == StockRole.Output && e.Current > e.Discharge)
+                        {
+                            miss.Record(owner, footprint.ValueRO.Origin, DemandResource.WarehouseId);
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
                 for (int i = 0; i < output.Length; i++)
                 {
                     var e = output[i];
@@ -66,11 +90,14 @@ namespace CitySim
                     var key = LogisticsPool.Key(owner, e.Commodity);
                     pool.Cells.TryGetValue(key, out var cell);   // 없으면 Capacity 0(용량 미반영)
                     int free = cell.Capacity - cell.Stored;
-                    if (free <= 0) continue;                     // 풀 만석 → 출력이 참(창고 수요 신호)
+                    // 커버 있음 + 풀 만석 = 과잉생산 — 창고 수요로 답하지 않음(계획 P: 무한 버퍼
+                    //   증식 차단. 생산은 출력 포화 클램프가 유휴 처리, 진짜 답은 하류 소비자 = tier 수요).
+                    if (free <= 0) continue;
 
                     int put = want < free ? want : free;
                     cell.Stored    += put;
                     pool.Cells[key]  = cell;
+                    pool.RecordDeposit(key, put);   // 유입 계측(P v2) — 생산측 공급 능력의 실측
                     e.Current -= put;
                     output[i]  = e;
                 }

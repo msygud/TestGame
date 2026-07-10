@@ -8,6 +8,8 @@ namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════════════════
     //  DemandAggregationSystem — 시도 실패 → 수요 필드 (2026-07-08 재정의)
+    //  (2026-07-10 계획 P: 생산자 신호는 물류 미스 창(LogisticsMissLog) 드레인으로 교체 —
+    //   이 시스템의 자체 수집은 시민 채널만. stamp 접근 0.)
     // ──────────────────────────────────────────────────────────────────────────
     //  ~1초마다 샘플. "미충족"(추구 중인데 목적지 없음, Idle/AtHome) 시민을 **현재
     //  건물 셀**(시도 위치) + 추구 욕구 비트 + **실패 사유**(ServiceTarget.LastOutcome)로
@@ -37,7 +39,6 @@ namespace CitySim
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<CitizenTag>();
-            state.RequireForUpdate<StampLayers>();
             _next = 0;
             _back = new NativeHashMap<int4, DemandStat>(1024, Allocator.Persistent);
 
@@ -91,62 +92,18 @@ namespace CitySim
             int hour = SystemAPI.TryGetSingleton<GameClock>(out var clock) ? clock.Hour : 12;
 
             // ── 스케줄 ──
-            //  ① 공급자 수요는 **메인스레드**에서 수집(2b 픽스): 연결 수요가 stamp 커버리지를 읽어야 하는데,
-            //     백그라운드(폴링) 잡이 라이브 stamp를 캡처하면 폴링 프레임에서 프레임워크가 의존성 추적을
-            //     놓쳐 StampRebuild(메인 쓰기)와 컨테이너 충돌한다(InvalidOperationException). 공급 건물은
-            //     소수라 메인 순회가 저렴하고, stamp도 메인끼리 순차라 안전. 시민 수집 잡보다 먼저 큐에 넣음.
+            //  ① 생산자/창고 신호(계획 P, 2026-07-10): 구 "굶은 생산자 상태 스캔"(outputFull·연결수요)은
+            //     은퇴 — LogisticsPull/Push가 기록한 **실제 미스 창**(LogisticsMissLog, 메인 전용)을
+            //     드레인해 샘플로 변환. 플래그 창이라 셀당 1샘플/초(시민 채널과 동등 가중). 이로써 이
+            //     시스템은 stamp를 전혀 읽지 않는다(구 2b 메인스레드 우회 코드 삭제).
             //  ② 시민 수집(병렬, 라이브 읽기 → dependency) → ③ tally(단일, 누적 fold).
             _keys = new NativeQueue<DemandSample>(Allocator.TempJob);
 
-            var stamp = SystemAPI.GetSingleton<StampLayers>();
-            foreach (var (prodRO, fpRO, entRO, stock) in
-                     SystemAPI.Query<RefRO<ProductionJob>, RefRO<BuildingFootprint>,
-                                     RefRO<BuildingEntrance>, DynamicBuffer<StockEntry>>())
+            if (SystemAPI.TryGetSingleton<LogisticsMissLog>(out var missLog) && missLog.Window.IsCreated)
             {
-                var prod = prodRO.ValueRO;
-                if (prod.SkillFactor <= 0f) continue;                 // 무인 — 노동 문제(상류 아님)
-                var recipe = RecipeDefs.Get(prod.RecipeOutput);
-
-                bool outputEmpty = true, hasInputSlot = false, outputFull = false;
-                int inputCurrent = 0;
-                for (int i = 0; i < stock.Length; i++)
-                {
-                    var s = stock[i];
-                    if (s.Commodity == prod.RecipeOutput)
-                    {
-                        if ((s.Role == StockRole.Output || s.Role == StockRole.LocalFinal) && s.Current > 0)
-                            outputEmpty = false;
-                        if (s.Role == StockRole.Output && s.Free <= 0)
-                            outputFull = true;
-                    }
-                    if (recipe.Input != Commodity.None && s.Commodity == recipe.Input && s.Role == StockRole.Input)
-                    { hasInputSlot = true; inputCurrent = s.Current; }
-                }
-
-                var fp     = fpRO.ValueRO;
-                int2 dcell = DemandGrid.ToCell(fp.Origin);
-                int owner  = fp.OwnerLocalId;
-
-                // ① 창고 수요: 출력이 가득 = offload 불가(범위 내 창고 없음/pool 만석). LocalFinal은 로컬 소비라 제외.
-                if (outputFull)
-                {
-                    _keys.Enqueue(new DemandSample
-                    { Key = new int4(owner, dcell.x, dcell.y, DemandResource.WarehouseId), Cause = 0 });
-                    continue;
-                }
-
-                // ② 상류 굶주림: 출력 0 + 그 레시피 입력 0(무입력·입력칸 없음 제외).
-                if (recipe.Input == Commodity.None) continue;
-                if (!outputEmpty || !hasInputSlot || inputCurrent > 0) continue;
-
-                // 연결 수요(2b): Input 굶었는데 창고 커버 없으면 = "못 받는 것"(굶은 생산자는 Output도
-                //   못 채워 ①이 안 뜨는 데드락) → 창고 수요. 커버 있는데 Input 0 = 진짜 상류 부족 → commodity.
-                int2 roadCell = EntranceOps.EntranceRoadCell(fp.Origin, fp.Size, in entRO.ValueRO.Entrance, fp.RotSteps);
-                int resId = SupplyHasWarehouseCoverage(in stamp, owner, roadCell)
-                    ? DemandResource.ForCommodity(recipe.Input)
-                    : DemandResource.WarehouseId;
-                _keys.Enqueue(new DemandSample
-                { Key = new int4(owner, dcell.x, dcell.y, resId), Cause = 0 });
+                foreach (var kv in missLog.Window)
+                    _keys.Enqueue(new DemandSample { Key = kv.Key, Cause = 0 });
+                missLog.Window.Clear();
             }
 
             var collectH = new CollectDemandJob
@@ -161,19 +118,8 @@ namespace CitySim
             _running = true;
         }
 
-        // 이 도로셀에 그 owner의 창고(Kind=Warehouse) 도장이 하나라도 닿는가(풀 접속 여부). 메인 전용.
-        static bool SupplyHasWarehouseCoverage(in StampLayers stamp, int owner, int2 roadCell)
-        {
-            if ((uint)owner >= StampLayers.MaxPlayers) return false;
-            var map = stamp[owner];
-            if (!map.IsCreated) return false;
-            if (map.TryGetFirstValue(roadCell, out var sr, out var it))
-            {
-                do { if (sr.Kind == StampKind.Warehouse) return true; }
-                while (map.TryGetNextValue(out sr, ref it));
-            }
-            return false;
-        }
+        // (구 SupplyHasWarehouseCoverage는 계획 P에서 은퇴 — 커버 판정은 LogisticsPull/Push가
+        //  이미 수행하며 미스를 LogisticsMissLog에 기록. 이 시스템은 stamp를 읽지 않는다.)
     }
 
     /// <summary>집계 샘플 1건 — 시도 위치 key + 실패 사유(0=NoCoverage, 1=Reached).</summary>

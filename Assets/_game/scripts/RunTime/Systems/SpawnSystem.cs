@@ -25,7 +25,8 @@ namespace CitySim
     public partial struct SpawnSystem : ISystem
     {
         // 식당(stub) 재고 상수 — BuildingAuthoring 베이킹 이관 전까지의 임시값.
-        const int MealInitialStock   = 100;   // 초기 Meal(개점 완충 — 소진 후엔 생산/물류가 공급)
+        const int MealInitialStock   = 10;    // 개점 완충 소량(계획 D, 2026-07-11: 100은 생산 체인을 장기간
+                                              //   가려 수요 신호를 왜곡 — 곧 소진돼 Flour pull부터 경제 가동)
         const int MealStockCapacity  = 100;
         const int FlourStockCapacity = 50;
 
@@ -38,11 +39,14 @@ namespace CitySim
         const int WarehouseMainKey  = 1005;
         const int ProducerStockCap  = 40;    // 생산 건물 입출력 칸 용량
         const int WarehouseStoreCap = 200;   // 창고 품목당 보관 용량
-        const int WarehouseStampMaxDist = 20;   // 커버리지 축소 테스트(2026-07-09, 구 40의 1/2)
+        // public: AiCityGrowth가 커버 '잔여 깊이'(MaxDist−Dist) 계산에 참조(드리프트 방지 — 단일 출처).
+        public const int WarehouseStampMaxDist = 30;   // 20은 과소(연결 실패 다발) → 30 상향(2026-07-10, 구 40→20→30)
         const int WorkerSlots       = 4;     // 생산 건물 일자리 정원(stub — 프리팹 베이킹 이관 예정.
                                              //   ⚠ ECB AddComponent라 베이킹된 Occupancy가 있으면 덮음)
         const int WarehouseWorkerSlots = 6;  // 창고 일자리(24h 3교대 → 교대당 ~2명)
-        const int VisitorSlots      = 10;    // 식당 동시 방문 좌석(stub) — 식사 3게임초라 회전 빠름
+        const int VisitorSlots      = 30;    // 식당 동시 방문 좌석(stub). ⚠ 좌석은 출발 시점에 예약되어
+                                             //   이동 내내 점유(ServiceDeskJob) — 실질 상한은 "동시 이동+식사
+                                             //   파이프라인". 10은 UNMET 백로그 주범(2026-07-10 실측) → 30.
 
         public void OnUpdate(ref SystemState state)
         {

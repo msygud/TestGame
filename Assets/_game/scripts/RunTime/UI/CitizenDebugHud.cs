@@ -36,10 +36,12 @@ namespace CitySim
 
         World       _qWorld;
         EntityQuery _qState, _qNeeds, _qHunger, _qUnassigned, _qResidence, _qMealStock, _qCond, _qPool;
+        EntityQuery _qProd, _qWh, _qDemand;   // 플레이어별 분해(2026-07-10): 생산 건물/창고/수요장
 
         GUIStyle _style;
         string   _text = string.Empty;
         float    _nextBuildRT;
+        float    _boxH = 128f;   // 텍스트 줄 수에 따라 재계산(플레이어별 섹션 가변)
 
         void Update()
         {
@@ -59,27 +61,41 @@ namespace CitySim
             if (!ReferenceEquals(_qWorld, world))
             {
                 _qWorld = world;
+                // OwnerShared 포함 = 플레이어별 SetSharedComponentFilter 가능(전 시민/건물이 보유 —
+                //   매칭 집합 불변). 전역 집계는 필터 없이, 플레이어별은 필터 걸고 같은 쿼리 재사용.
                 _qState = em.CreateEntityQuery(
-                    ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<CitizenState>());
+                    ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<CitizenState>(),
+                    ComponentType.ReadOnly<OwnerShared>());
                 _qNeeds = em.CreateEntityQuery(
                     ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<CitizenNeeds>(),
-                    ComponentType.ReadOnly<ServiceTarget>(), ComponentType.ReadOnly<CitizenState>());
+                    ComponentType.ReadOnly<ServiceTarget>(), ComponentType.ReadOnly<CitizenState>(),
+                    ComponentType.ReadOnly<OwnerShared>());
                 _qHunger = em.CreateEntityQuery(
-                    ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<Hunger>());
+                    ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<Hunger>(),
+                    ComponentType.ReadOnly<OwnerShared>());
                 _qUnassigned = em.CreateEntityQuery(
                     ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<UnassignedTag>());
                 _qResidence = em.CreateEntityQuery(
-                    ComponentType.ReadOnly<ResidenceBuilding>(), ComponentType.ReadOnly<BuildingOccupancy>());
-                _qMealStock = em.CreateEntityQuery(ComponentType.ReadOnly<StockEntry>());
+                    ComponentType.ReadOnly<ResidenceBuilding>(), ComponentType.ReadOnly<BuildingOccupancy>(),
+                    ComponentType.ReadOnly<BuildingFootprint>());
+                _qMealStock = em.CreateEntityQuery(
+                    ComponentType.ReadOnly<StockEntry>(), ComponentType.ReadOnly<BuildingFootprint>());
                 _qCond = em.CreateEntityQuery(
                     ComponentType.ReadOnly<CitizenTag>(), ComponentType.ReadOnly<CitizenConditions>());
                 _qPool = em.CreateEntityQuery(ComponentType.ReadOnly<LogisticsPool>());
+                _qProd = em.CreateEntityQuery(
+                    ComponentType.ReadOnly<ProductionJob>(), ComponentType.ReadOnly<BuildingFootprint>());
+                _qWh   = em.CreateEntityQuery(ComponentType.ReadOnly<WarehouseTag>());
+                _qDemand = em.CreateEntityQuery(ComponentType.ReadOnly<DemandField>());
             }
 
             if (Time.unscaledTime >= _nextBuildRT)
             {
                 _nextBuildRT = Time.unscaledTime + 0.5f;
                 _text = BuildText();
+                int lines = 1;
+                for (int i = 0; i < _text.Length; i++) if (_text[i] == '\n') lines++;
+                _boxH = 14f + lines * 15f;
             }
             if (string.IsNullOrEmpty(_text)) return;
 
@@ -89,8 +105,8 @@ namespace CitySim
                 alignment = TextAnchor.UpperLeft,
             };
 
-            float w = 250f, h = 128f;
-            GUI.Box(new Rect(Screen.width - w - 12f, 12f, w, h), _text, _style);
+            float w = 430f;
+            GUI.Box(new Rect(Screen.width - w - 12f, 12f, w, _boxH), _text, _style);
         }
 
         string BuildText()
@@ -117,17 +133,23 @@ namespace CitySim
             //   unmet = 욕구는 켜졌는데 목적지 없이 Idle/AtHome — 커버리지 밖 집·집 미배정 등.
             //   이 수치가 곧 "미충족 욕구 통계"(욕구 주도 배치의 입력 신호)의 원형.
             //   같은 쿼리의 배열들은 엔티티 순서가 정렬 일치(상관 분석 가능).
+            // UNMET 세분화(2026-07-10): cov=커버 공백(NoCoverage — 건설 신호가 되는 실수요) /
+            //   full=도달 가능하나 못 서빙(Reached — 만석·재고·무인 = 수용량/일시 대기, 증설 신호 아님).
             var needs   = _qNeeds.ToComponentDataArray<CitizenNeeds>(Allocator.Temp);
             var targets = _qNeeds.ToComponentDataArray<ServiceTarget>(Allocator.Temp);
             var nStates = _qNeeds.ToComponentDataArray<CitizenState>(Allocator.Temp);
-            int pursuing = 0, unmet = 0;
+            int pursuing = 0, unmet = 0, unmetCov = 0, unmetFull = 0;
             for (int i = 0; i < needs.Length; i++)
             {
                 if (needs[i].Pursuing == NeedType.None) continue;
                 pursuing++;
                 var a = nStates[i].Activity;
                 if (!targets[i].Has && (a == CitizenActivity.Idle || a == CitizenActivity.AtHome))
+                {
                     unmet++;
+                    if (targets[i].LastOutcome == ServiceOutcome.Reached)         unmetFull++;
+                    else if (targets[i].LastOutcome == ServiceOutcome.NoCoverage) unmetCov++;
+                }
             }
             needs.Dispose(); targets.Dispose(); nStates.Dispose();
 
@@ -149,53 +171,198 @@ namespace CitySim
             float energyAvg = conds.Length > 0 ? energySum / conds.Length : 0f;
             conds.Dispose();
 
-            // 거주 점유
-            var occs = _qResidence.ToComponentDataArray<BuildingOccupancy>(Allocator.Temp);
+            // 거주 점유 — footprint owner로 전역+플레이어별 동시 집계(단일 패스).
+            var occs   = _qResidence.ToComponentDataArray<BuildingOccupancy>(Allocator.Temp);
+            var resFps = _qResidence.ToComponentDataArray<BuildingFootprint>(Allocator.Temp);
             int cur = 0, cap = 0;
-            for (int i = 0; i < occs.Length; i++) { cur += occs[i].Current; cap += occs[i].Capacity; }
-            occs.Dispose();
+            var pCur = new NativeArray<int>(8, Allocator.Temp);
+            var pCap = new NativeArray<int>(8, Allocator.Temp);
+            for (int i = 0; i < occs.Length; i++)
+            {
+                cur += occs[i].Current; cap += occs[i].Capacity;
+                int o = resFps[i].OwnerLocalId;
+                if ((uint)o < 8) { pCur[o] += occs[i].Current; pCap[o] += occs[i].Capacity; }
+            }
+            occs.Dispose(); resFps.Dispose();
 
             int unassigned = _qUnassigned.CalculateEntityCount();
 
-            // 전 건물 재고 합(경제 체인 관찰): Meal은 소비로 줄고 생산으로 차고,
-            //   Grain/Flour는 농장→창고→제분소→식당 흐름의 총량.
+            // 전 건물 재고 합(경제 체인 관찰) — footprint owner로 플레이어별 Meal도 동시 집계.
             var em2 = _qWorld.EntityManager;
             var stockEnts = _qMealStock.ToEntityArray(Allocator.Temp);
+            var stockFps  = _qMealStock.ToComponentDataArray<BuildingFootprint>(Allocator.Temp);
             int meals = 0, mealCap = 0, grain = 0, flour = 0;
+            var pMeal = new NativeArray<int>(8, Allocator.Temp);
+            var pMealCap = new NativeArray<int>(8, Allocator.Temp);
             for (int i = 0; i < stockEnts.Length; i++)
             {
+                int o = stockFps[i].OwnerLocalId;
                 var stock = em2.GetBuffer<StockEntry>(stockEnts[i], true);
                 for (int s = 0; s < stock.Length; s++)
                     switch (stock[s].Commodity)
                     {
                         case Commodity.Meal:
-                            meals += stock[s].Current; mealCap += stock[s].Capacity; break;
+                            meals += stock[s].Current; mealCap += stock[s].Capacity;
+                            if ((uint)o < 8) { pMeal[o] += stock[s].Current; pMealCap[o] += stock[s].Capacity; }
+                            break;
                         case Commodity.Grain: grain += stock[s].Current; break;
                         case Commodity.Flour: flour += stock[s].Current; break;
                     }
             }
-            stockEnts.Dispose();
+            stockEnts.Dispose(); stockFps.Dispose();
 
-            // 창고 재고는 이제 공유 풀(LogisticsPool)이 진실 — 창고 buffer는 Current=0(vestigial).
-            //   전 건물 합(=생산자 Output + 소비자 Input 인플라이트)에 풀 Stored를 더해야 진짜 총량.
+            // 풀(공유 저장소) — 전역 합 + 플레이어별 Grain/Flour Stored/Capacity + 흐름 창
+            //   (o=물리 유출/i=유입, 지난 성장 틱 이후 누적 — 풀 층 스케일링 판단의 원재료.
+            //    결핍(미충족)은 수요층 → dmd C에 집계).
+            var pGrainS = new NativeArray<int>(8, Allocator.Temp);
+            var pGrainC = new NativeArray<int>(8, Allocator.Temp);
+            var pFlourS = new NativeArray<int>(8, Allocator.Temp);
+            var pFlourC = new NativeArray<int>(8, Allocator.Temp);
+            var pGD = new NativeArray<int>(8, Allocator.Temp);
+            var pGI = new NativeArray<int>(8, Allocator.Temp);
+            var pFD = new NativeArray<int>(8, Allocator.Temp);
+            var pFI = new NativeArray<int>(8, Allocator.Temp);
             if (_qPool.CalculateEntityCount() == 1)
             {
                 var pool = _qPool.GetSingleton<LogisticsPool>();
                 if (pool.Cells.IsCreated)
                     foreach (var kv in pool.Cells)
                     {
-                        if (kv.Key.y == (int)Commodity.Grain)      grain += kv.Value.Stored;
-                        else if (kv.Key.y == (int)Commodity.Flour) flour += kv.Value.Stored;
+                        int o = kv.Key.x;
+                        if (kv.Key.y == (int)Commodity.Grain)
+                        {
+                            grain += kv.Value.Stored;
+                            if ((uint)o < 8) { pGrainS[o] += kv.Value.Stored; pGrainC[o] += kv.Value.Capacity; }
+                        }
+                        else if (kv.Key.y == (int)Commodity.Flour)
+                        {
+                            flour += kv.Value.Stored;
+                            if ((uint)o < 8) { pFlourS[o] += kv.Value.Stored; pFlourC[o] += kv.Value.Capacity; }
+                        }
+                    }
+                if (pool.Flow.IsCreated)
+                    foreach (var kv in pool.Flow)
+                    {
+                        int o = kv.Key.x;
+                        if ((uint)o >= 8) continue;
+                        int d = kv.Value.Out;   // 물리 유출(결핍은 수요층 — dmd C에 나타남)
+                        if (kv.Key.y == (int)Commodity.Grain)      { pGD[o] += d; pGI[o] += kv.Value.In; }
+                        else if (kv.Key.y == (int)Commodity.Flour) { pFD[o] += d; pFI[o] += kv.Value.In; }
                     }
             }
 
-            return $"Citizens {total}  (unassigned {unassigned})\n"
-                 + $"Idle {idle}  Home {home}  Work {work}\n"
-                 + $"Travel {travel}  Eat {dest}  Stuck {stuck}\n"
-                 + $"Hunger avg {hungerAvg:0.00}  hungry {hungry}  En {energyAvg:0.00}\n"
-                 + $"pursuing {pursuing}  UNMET {unmet}\n"
-                 + $"Housing {cur}/{cap}\n"
-                 + $"Meals {meals}/{mealCap}  Grain {grain}  Flour {flour}";
+            // 건물 구성(플레이어별): 생산 건물은 레시피 출력으로 분류(Meal=식당/Flour=제분/Grain=농장),
+            //   창고는 WarehouseTag. MainKey 무관 — 능력 기준이라 프리팹이 늘어도 유효.
+            var pRest = new NativeArray<int>(8, Allocator.Temp);
+            var pMill = new NativeArray<int>(8, Allocator.Temp);
+            var pFarm = new NativeArray<int>(8, Allocator.Temp);
+            var pWh   = new NativeArray<int>(8, Allocator.Temp);
+            {
+                var prods = _qProd.ToComponentDataArray<ProductionJob>(Allocator.Temp);
+                var pfps  = _qProd.ToComponentDataArray<BuildingFootprint>(Allocator.Temp);
+                for (int i = 0; i < prods.Length; i++)
+                {
+                    int o = pfps[i].OwnerLocalId;
+                    if ((uint)o >= 8) continue;
+                    switch (prods[i].RecipeOutput)
+                    {
+                        case Commodity.Meal:  pRest[o]++; break;
+                        case Commodity.Flour: pMill[o]++; break;
+                        case Commodity.Grain: pFarm[o]++; break;
+                    }
+                }
+                prods.Dispose(); pfps.Dispose();
+                var whs = _qWh.ToComponentDataArray<WarehouseTag>(Allocator.Temp);
+                for (int i = 0; i < whs.Length; i++)
+                    if ((uint)whs[i].OwnerLocalId < 8) pWh[whs[i].OwnerLocalId]++;
+                whs.Dispose();
+            }
+
+            // 수요장 누적(플레이어별, NoCoverage): 욕구/commodity/창고 3분류 — 어디가 막혔는지의 지표.
+            var pDmdNeed = new NativeArray<int>(8, Allocator.Temp);
+            var pDmdCmdy = new NativeArray<int>(8, Allocator.Temp);
+            var pDmdWh   = new NativeArray<int>(8, Allocator.Temp);
+            if (_qDemand.CalculateEntityCount() == 1)
+            {
+                var df = _qDemand.GetSingleton<DemandField>();
+                if (df.Stats.IsCreated)
+                    foreach (var kv in df.Stats)
+                    {
+                        int o = kv.Key.x;
+                        if ((uint)o >= 8) continue;
+                        int res = kv.Key.w, nc = kv.Value.FailNoCoverage;
+                        if (DemandResource.IsWarehouse(res))       pDmdWh[o]   += nc;
+                        else if (DemandResource.IsCommodity(res))  pDmdCmdy[o] += nc;
+                        else                                       pDmdNeed[o] += nc;
+                    }
+            }
+
+            var sb = new System.Text.StringBuilder(1024);
+            sb.Append($"Citizens {total}  (unassigned {unassigned})\n")
+              .Append($"Idle {idle}  Home {home}  Work {work}\n")
+              .Append($"Travel {travel}  Eat {dest}  Stuck {stuck}\n")
+              .Append($"Hunger avg {hungerAvg:0.00}  hungry {hungry}  En {energyAvg:0.00}\n")
+              .Append($"pursuing {pursuing}  UNMET {unmet} (cov {unmetCov} / full {unmetFull})\n")
+              .Append($"Housing {cur}/{cap}\n")
+              .Append($"Meals {meals}/{mealCap}  Grain {grain}  Flour {flour}");
+
+            // ── 플레이어별(존재하는 owner만, 2줄씩): 시민 지표는 OwnerShared 청크 필터로 ──
+            for (int p = 0; p < 8; p++)
+            {
+                bool hasAny = pCap[p] > 0 || pWh[p] > 0 || pRest[p] > 0 || pFarm[p] > 0;
+                if (!hasAny) continue;
+
+                _qState.SetSharedComponentFilter(new OwnerShared(p));
+                _qHunger.SetSharedComponentFilter(new OwnerShared(p));
+                _qNeeds.SetSharedComponentFilter(new OwnerShared(p));
+
+                int pop = _qState.CalculateEntityCount();
+
+                var hs = _qHunger.ToComponentDataArray<Hunger>(Allocator.Temp);
+                float hSum = 0f;
+                for (int i = 0; i < hs.Length; i++) hSum += hs[i].Level;
+                float hAvg = hs.Length > 0 ? hSum / hs.Length : 0f;
+                hs.Dispose();
+
+                var pn = _qNeeds.ToComponentDataArray<CitizenNeeds>(Allocator.Temp);
+                var pt = _qNeeds.ToComponentDataArray<ServiceTarget>(Allocator.Temp);
+                var ps = _qNeeds.ToComponentDataArray<CitizenState>(Allocator.Temp);
+                int pPur = 0, pUnmet = 0, pUnCov = 0, pUnFull = 0;
+                for (int i = 0; i < pn.Length; i++)
+                {
+                    if (pn[i].Pursuing == NeedType.None) continue;
+                    pPur++;
+                    var a = ps[i].Activity;
+                    if (!pt[i].Has && (a == CitizenActivity.Idle || a == CitizenActivity.AtHome))
+                    {
+                        pUnmet++;
+                        if (pt[i].LastOutcome == ServiceOutcome.Reached)         pUnFull++;
+                        else if (pt[i].LastOutcome == ServiceOutcome.NoCoverage) pUnCov++;
+                    }
+                }
+                pn.Dispose(); pt.Dispose(); ps.Dispose();
+
+                sb.Append($"\n─ P{p}  pop {pop}  hun {hAvg:0.00}  pur {pPur}  UNMET {pUnmet}(c{pUnCov}/f{pUnFull})  hse {pCur[p]}/{pCap[p]}\n")
+                  .Append($"   R{pRest[p]} M{pMill[p]} F{pFarm[p]} W{pWh[p]}")
+                  .Append($"  G {K(pGrainS[p])}/{K(pGrainC[p])}  Fl {K(pFlourS[p])}/{K(pFlourC[p])}")
+                  .Append($"  Meal {K(pMeal[p])}/{K(pMealCap[p])}\n")
+                  .Append($"   dmd N{K(pDmdNeed[p])} C{K(pDmdCmdy[p])} W{K(pDmdWh[p])}")
+                  .Append($"  flow G {K(pGD[p])}→{K(pGI[p])}  Fl {K(pFD[p])}→{K(pFI[p])}");
+            }
+            _qState.ResetFilter();
+            _qHunger.ResetFilter();
+            _qNeeds.ResetFilter();
+
+            pCur.Dispose(); pCap.Dispose(); pMeal.Dispose(); pMealCap.Dispose();
+            pGrainS.Dispose(); pGrainC.Dispose(); pFlourS.Dispose(); pFlourC.Dispose();
+            pGD.Dispose(); pGI.Dispose(); pFD.Dispose(); pFI.Dispose();
+            pRest.Dispose(); pMill.Dispose(); pFarm.Dispose(); pWh.Dispose();
+            pDmdNeed.Dispose(); pDmdCmdy.Dispose(); pDmdWh.Dispose();
+
+            return sb.ToString();
         }
+
+        // 압축 표기(수요 누적 등 큰 수): 10,000 이상은 k 단위.
+        static string K(int v) => v >= 10000 ? $"{v / 1000}k" : v.ToString();
     }
 }

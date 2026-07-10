@@ -33,16 +33,29 @@ namespace CitySim
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct LogisticsPullSystem : ISystem
     {
+        double _nextGameSec;   // 게임초 게이트(P v2)
+
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<StampLayers>();
             state.RequireForUpdate<LogisticsPool>();
+            state.RequireForUpdate<LogisticsMissLog>();
         }
 
         public void OnUpdate(ref SystemState state)
         {
+            // 게이팅(P v2): 반 게임시간마다 — 흐름 계측(Out/In)·미스 창이 배속 불변이 되고
+            //   메인 비용도 절감(기존 "매 프레임, 게이팅 후속" TODO 해소). 소비·생산이 게임시간
+            //   기반이라 반 시간 배치 지연은 reorder 버퍼 안(결과 지연 허용 원칙).
+            if (SystemAPI.TryGetSingleton<GameClock>(out var clk))
+            {
+                if (clk.TotalSeconds < _nextGameSec) return;
+                _nextGameSec = clk.TotalSeconds + clk.SecondsPerDay / 48f;
+            }
+
             var stamp = SystemAPI.GetSingleton<StampLayers>();
             var pool  = SystemAPI.GetSingleton<LogisticsPool>();
+            var miss  = SystemAPI.GetSingleton<LogisticsMissLog>();
             var fpL   = SystemAPI.GetComponentLookup<BuildingFootprint>(true);
             var entL  = SystemAPI.GetComponentLookup<BuildingEntrance>(true);
             var ecb   = new EntityCommandBuffer(Allocator.Temp);
@@ -64,9 +77,23 @@ namespace CitySim
 
                 // ── 커버리지 + 운반자 출발 창고(최근접, 비주얼용) — stamp 1회 스캔 ──
                 Entity nearestW = FindNearestWarehouse(in map, roadCell);
-                if (nearestW == Entity.Null) continue;   // 풀 미접속(창고 stamp 안 닿음)
-
                 var input = SystemAPI.GetBuffer<StockEntry>(entity);
+                if (nearestW == Entity.Null)
+                {
+                    // 풀 미접속(창고 stamp 안 닿음): 보충이 필요한 입력이 있으면 커버 미스
+                    //   → 그 셀의 창고 수요(지역 채널, 계획 P).
+                    for (int i = 0; i < input.Length; i++)
+                    {
+                        var e = input[i];
+                        if (e.Role == StockRole.Input && e.Current < e.Reorder && e.Target > e.Current)
+                        {
+                            miss.Record(owner, footprint.ValueRO.Origin, DemandResource.WarehouseId);
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
                 for (int i = 0; i < input.Length; i++)
                 {
                     var e = input[i];
@@ -75,11 +102,18 @@ namespace CitySim
                     int want = e.Target - e.Current;
                     if (want <= 0) continue;
 
-                    // ── 공유 풀에서 draw ──
+                    // ── 공유 풀에서 draw — 장부 분리(2026-07-10 층 분리 합의) ──
+                    //   풀 장부(Flow) = 실제 꺼낸 양(물리 유출)만. 못 채운 요구(결핍)는 풀의 사실이
+                    //   아니라 소비자의 사실 → 수요층(miss → DemandField)으로. 풀은 알아도 모른척.
                     var key = LogisticsPool.Key(owner, e.Commodity);
-                    if (!pool.Cells.TryGetValue(key, out var cell) || cell.Stored <= 0) continue;
-
+                    pool.Cells.TryGetValue(key, out var cell);
                     int got = want < cell.Stored ? want : cell.Stored;
+                    if (got < 0) got = 0;
+                    if (got < want)   // 양적 미스(부트스트랩·절대 결핍) — 수요층 채널
+                        miss.Record(owner, footprint.ValueRO.Origin, DemandResource.ForCommodity(e.Commodity));
+                    if (got <= 0) continue;
+                    pool.RecordDraw(key, got);
+
                     cell.Stored   -= got;
                     pool.Cells[key] = cell;
                     e.Current += got;

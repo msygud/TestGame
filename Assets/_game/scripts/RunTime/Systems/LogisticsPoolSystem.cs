@@ -14,6 +14,13 @@ namespace CitySim
     //  게이트: 창고 add/remove는 저빈도(도시 건설 페이스)라 HourChanged(+최초 1회)에만
     //  재계산. 창고 배치~반영 지연 ≤ 1 게임시간(결과 지연 허용 원칙). Pull/Push보다 먼저
     //  실행(용량 선반영). 창고 수는 적어(수십) 메인 단일 패스로 충분.
+    //
+    //  ⚙ 용량 확장 2경로(2026-07-10 유저 결정 — 업그레이드 방식 열어둠):
+    //    ① 신축 — 커버(공간)도 함께 필요할 때(타일링 배치).
+    //    ② **업그레이드** — 용량만 필요할 때: 기존 창고의 Store 칸 StockEntry.Capacity를 상향
+    //       (값 쓰기, 구조 변경 0 — CLAUDE.md "머티리얼라이즈" 원칙). 이 시스템이 Store 합으로
+    //       Capacity를 재계산하므로 **추가 배선 없이 다음 HourChanged에 풀에 자동 반영**된다.
+    //       발동 정책(PushMiss 지속/ΣTarget 대비 부족 시 ①vs② 선택)은 용량 규칙 도입 때 결정.
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateBefore(typeof(LogisticsPushSystem))]
@@ -30,15 +37,32 @@ namespace CitySim
                 state.EntityManager.SetComponentData(e, new LogisticsPool
                 {
                     Cells = new NativeHashMap<int2, PoolCell>(64, Allocator.Persistent),
+                    Flow  = new NativeHashMap<int2, PoolFlow>(64, Allocator.Persistent),
+                });
+            }
+            if (!SystemAPI.HasSingleton<LogisticsMissLog>())
+            {
+                var e = state.EntityManager.CreateEntity(typeof(LogisticsMissLog));
+                state.EntityManager.SetComponentData(e, new LogisticsMissLog
+                {
+                    Window = new NativeHashMap<int4, byte>(128, Allocator.Persistent),
                 });
             }
         }
 
         public void OnDestroy(ref SystemState state)
         {
-            if (!SystemAPI.HasSingleton<LogisticsPool>()) return;
-            var pool = SystemAPI.GetSingleton<LogisticsPool>();
-            if (pool.Cells.IsCreated) pool.Cells.Dispose();
+            if (SystemAPI.HasSingleton<LogisticsPool>())
+            {
+                var pool = SystemAPI.GetSingleton<LogisticsPool>();
+                if (pool.Cells.IsCreated) pool.Cells.Dispose();
+                if (pool.Flow.IsCreated) pool.Flow.Dispose();
+            }
+            if (SystemAPI.HasSingleton<LogisticsMissLog>())
+            {
+                var miss = SystemAPI.GetSingleton<LogisticsMissLog>();
+                if (miss.Window.IsCreated) miss.Window.Dispose();
+            }
         }
 
         public void OnUpdate(ref SystemState state)
