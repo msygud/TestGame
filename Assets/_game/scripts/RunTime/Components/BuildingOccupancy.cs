@@ -1,4 +1,6 @@
+using Unity.Collections;
 using Unity.Entities;
+using Unity.Mathematics;
 
 namespace CitySim
 {
@@ -114,5 +116,46 @@ namespace CitySim
     {
         public int TodayServed;
         public int YesterdayServed;
+    }
+
+    /// <summary>
+    /// 건물 내구 능력(다지기 ①, 2026-07-11) — BuildingAuthoring이 굽는 per-MainKey 값.
+    /// 전투 컴포넌트 **부착 골격**(CombatTargetable/CombatHealth/CombatDestroyOnDeath)은
+    /// 건물 공통이라 SpawnSystem이 계속 담당하고, CombatHealth **값**만 이 컴포넌트에서
+    /// 읽는다(없으면 SpawnConfig.BuildingDefaultHealth 폴백). 전투 의미론(장갑·상성)은
+    /// 유닛 재작성 때 — 그쪽은 이 값을 읽기만 한다(읽기/쓰기 분리).
+    /// </summary>
+    public struct BuildingDurability : IComponentData
+    {
+        public float MaxHealth;
+    }
+
+    /// <summary>
+    /// 오라형 욕구 공급 능력(2026-07-11 합의 — 커버형 욕구: 경찰서·관공서·광장류).
+    /// 방문·좌석·재고·물류 없음: 반경 안 시민의 해당 욕구가 수동적으로 해소된다.
+    /// 판정 = footprint 최근접 유클리드 제곱(dx²+dz² ≤ Radius², 정수 — float/√ 없음).
+    /// 소비: AuraCoverageSystem(맵 재빌드) → SafetySystem 등 욕구별 시스템(해소) +
+    /// DemandAggregation(미커버 수요 수집) + AI 배치(지구 슬롯 선호).
+    /// </summary>
+    public struct AuraSupplier : IComponentData
+    {
+        /// <summary>오라가 해소하는 욕구 비트.</summary>
+        public NeedType Relief;
+
+        /// <summary>오라 반경(셀).</summary>
+        public int Radius;
+    }
+
+    /// <summary>
+    /// 오라 커버 맵 front 싱글톤(커버형 욕구 v1, 2026-07-12) — AuraCoverageSystem이
+    /// 게임 시간당 1회 백그라운드 잡으로 재구축(무효화 회피: Clear 후 전체 재그리기,
+    /// stamp 독트린과 동일) 후 발행. key = (owner, x, y) 실셀 — 소유자별 독립("공용
+    /// 공간 + owner별 상태" 관례). value = 그 셀에 닿는 오라 relief 비트합.
+    /// 독자(욕구 해소·수요 수집·배치 프리뷰)는 GetSingleton(RO)으로만 읽는다.
+    /// </summary>
+    public struct AuraCoverage : IComponentData
+    {
+        public NativeHashMap<int3, ulong> Map;
+        public uint Version;
     }
 }

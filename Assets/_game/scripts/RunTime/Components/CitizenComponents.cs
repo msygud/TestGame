@@ -118,6 +118,23 @@ namespace CitySim
         public readonly bool IsActive => Level > Threshold;
     }
 
+    /// <summary>
+    /// 치안 불안 욕구(NeedType.HighCrime) — **커버형 욕구의 첫 사례**(2026-07-12).
+    /// 방문·추구(Pursuing) 없음: 집이 오라(경찰서류 AuraSupplier) 커버 안이면 감소,
+    /// 밖이면 증가(SafetySystem). NeedDecision/ServiceSearch 파이프라인을 전혀 안 탄다 —
+    /// 수요는 "미커버 + 불안 시민"을 DemandAggregation이 직접 샘플(NoCoverage 채널).
+    /// v1 효과: 수요 신호 전용(AI가 경찰서류를 짓게 함). 사기·이민·생산성 연결은 후속.
+    /// 모양 규약(Level/Rate/Threshold + IsActive) 준수.
+    /// </summary>
+    public struct CitizenSafety : IComponentData
+    {
+        public float Level;       // 0(안심) ~ 1(최악).
+        public float Rate;        // 게임초당 증가 속도(미커버 시). 커버 시 4배속 회복.
+        public float Threshold;   // 초과 = 불안(수요 샘플 대상).
+
+        public readonly bool IsActive => Level > Threshold;
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     //  콜드: 직업 (Job)
     //  직업은 거의 안 바뀜. 숙련도 성장은 가끔(콜드 취급, 생산 시 결과만 핫쿼리).

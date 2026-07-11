@@ -124,6 +124,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 3ea8177313ce9c04da80ffe562982078, type: 3}
       insertIndex: -1
       addedObject: {fileID: 941630273644960968}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 3ea8177313ce9c04da80ffe562982078, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: -5337775143356275026}
   m_SourcePrefab: {fileID: 100100000, guid: 3ea8177313ce9c04da80ffe562982078, type: 3}
 --- !u!1 &7101352272596805819 stripped
 GameObject:
@@ -145,6 +148,40 @@ MonoBehaviour:
   FootprintSize: {x: 4, y: 4}
   FootprintRadius: 1
   ExtraPadding: 0.25
+--- !u!114 &-5337775143356275026
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7101352272596805819}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9fd4317e0230f934095b91167c97180f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.Authoring.BuildingAuthoring
+  Kind: 0
+  Capacity: 1
+  ProvidedJob: 5
+  WorkerSlots: 4
+  ReliefRaw: 1
+  SupplyMaxDist: 15
+  VisitorSlots: 30
+  AuraReliefRaw: 0
+  AuraRadius: 0
+  ProductionOutput: 3
+  Stocks:
+  - Commodity: 2
+    Role: 0
+    Capacity: 50
+    Initial: 0
+  - Commodity: 3
+    Role: 3
+    Capacity: 100
+    Initial: 0
+  IsWarehouse: 0
+  WarehouseStampMaxDist: 30
+  MaxHealth: 0
 --- !u!4 &7621993725014307329 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 3ea8177313ce9c04da80ffe562982078, type: 3}

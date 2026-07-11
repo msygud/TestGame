@@ -61,6 +61,29 @@ namespace CitySim
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    //  ProducerLookup — 생산/창고 파생 결정 테이블 (다지기 ③·④, 2026-07-11)
+    //
+    //  "무엇이 이 commodity를 만드나 / 창고는 어느 키인가"를 프리팹 **능력**
+    //  (ProductionJob.RecipeOutput / WarehouseTag — 다지기 ①이 베이크)에서 파생.
+    //  LookupBuildSystem이 1회 구성(싱글톤), AI 건설 결정(AiCityGrowth)이 소비.
+    //  구 HardcodedCommodityProducer / 창고 1005 하드코딩의 정식 대체 —
+    //  프리팹 미베이크 시 소비처가 하드코딩 폴백(전환기).
+    // ══════════════════════════════════════════════════════════════════════════
+    public struct ProducerLookup : IComponentData
+    {
+        /// <summary>(int)Commodity → 생산 건물 MainKey. 복수 생산자는 MainKey 오름차순 선승.</summary>
+        public NativeHashMap<int, int> Table;
+
+        /// <summary>창고 프리팹 MainKey(WarehouseTag 보유 최소 키). 0 = 파생 실패(폴백).</summary>
+        public int WarehouseMainKey;
+
+        /// <summary>오라형 공급자 MainKey → 오라 반경(셀) — AI 배치의 지구 슬롯 선호 +
+        /// **도달 가드**(앵커에서 반경 밖 배치 금지 — 못 덮는 오라 연쇄 차단)에 사용
+        /// (커버형 욕구 v1, 2026-07-12).</summary>
+        public NativeHashMap<int, int> AuraKeys;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
     //  플레이어 베리언트 선택 (싱글플레이 싱글톤)
     //
     //  유저가 베리언트 선택창에서 고른 값.

@@ -5,7 +5,31 @@
 
 ---
 
-## 🟢 현재 프론티어 (2026-07-11 세션 종료) — 창고 추격 인프라 완성 (계획 v2 전 슬라이스 + 회랑/레인 픽스)
+## 🟢 현재 프론티어 (2026-07-12 세션 종료) — 지구 그리드 + 다지기 ①~④ + 커버형 욕구 v1 전부 가동
+> **이번 세션(07-11 저녁~07-12) 요약**: 지구 그리드(피치 24·중앙 슬롯·지구 전략 목표 — **검증 ✅**
+> 목표 지구로 성장) → 창고 연접 픽스(예약 앵커 체인 + 지구당 1채 게이트 — **검증 ✅** 인구 2만에
+> 연접 1곳) → 입구 강탈 doom(영토 포켓 유령 건물 — 장기 관찰) → 커버 축소 진단 3색(F6 호버:
+> 빨강=비트단절/파랑=타owner경계/마젠타=낡은반경) → **다지기 ①~④**(BuildingAuthoring 능력 베이킹
+> + L2 자동 파생/Validate + ProducerLookup(생산자·창고·오라 파생) — **파이프라인 검증 ✅**, 레거시
+> 스텁은 미베이크 폴백으로 존치) → **커버형 욕구 v1**(치안 HighCrime, 오라 = 단순 반경 유클리드
+> 제곱 — **배치 간격 검증 ✅**, 공통 시스템 무수정 입증) → 오라 연접 3중 픽스(도달 가드 + 앵커 지구
+> 스냅 + **셀 선택 신규-미스화**(누적 더미 우세 독점 결함 — 욕구·창고 채널 공통 수정)) →
+> ③ 배치 프리뷰(능력 파생형 커버 리포트 — **⚠ 컴파일/동작 미검증**). 상세는 하단 각 섹션.
+>
+> **⚠ 다음 세션 우선순위:**
+> 1. **배치 프리뷰 검증**(컴파일부터): 주택 들면 [식당|치안] 배지가 위치 따라 토글 / 식당·창고·
+>    경찰서 들면 예상 커버 범위(주황/초록/보라) / F6 오라 필드(보라) + 오라 건물 호버 노랑.
+> 2. **장기 관찰 지속**: 창고 전량 소멸 재발 시 [Capture]/재개발 로그 / `[Capture] 입구 강탈` 로그 /
+>    CPU 재측정 / 식당·창고 분포(셀 선택 신규-미스화의 부수 효과 — 식당 과잉 완화 여부).
+> 3. **v1.5 과밀 신호**(커버 인구 > 정원 → 이웃 지구 증설 — 수용량을 해소가 아니라 수요로 쓰는 설계)
+>    또는 **밸런싱 #1**(수치 일괄 — 유저 보류 중, 지구·오라 상수 포함).
+> 4. 다지기 잔여: ⑤ NeedServiceHours→JobSchedule 파생(욕구 2종째 때) ⑥ SupplierHasGoods 품목 매핑
+>    (품목 2종째 때) / 레거시 스텁·하드코딩 폴백 3종 삭제(전 프리팹 베이크 + `[Spawn] 미베이크` 경고
+>    0 확인 후).
+> 5. 장기: 시민 데이터→직업별 유닛/건물 주입(유닛 재작성 세션과 묶음 — 골격은 CLAUDE.md 업그레이드
+>    절의 머티리얼라이즈 그대로), 풀 Target/MRP(전쟁물자), 고아 생산자 철거, 히트맵 감쇠.
+
+## 🟡 (역사, 2026-07-11 세션 종료) — 창고 추격 인프라 완성 (계획 v2 전 슬라이스 + 회랑/레인 픽스)
 > **이번 세션(07-10 오후~07-11) 요약**: 쿨다운 → C(생산자 커버 검증) → P v3(풀 물리 흐름/층 분리 —
 > 미스는 수요층) → B(창고 타일링+예약 건설) → F(창고 주변 주거 후순위) → E(주택 점유율 게이트) →
 > D(서비스 커버 선호+Meal 초기 10) → 확장 앵커(빈 땅, 적영토 제외) → 잔여깊이/도달가드 →
@@ -14,12 +38,279 @@
 > **유저 실측: 전 팀 허기 ~0.3, 물류 흐름·창고 재고 안정.** 미검증: 회랑 픽스, 파괴 로그, CPU 널뛰기 재측정.
 >
 > **⚠ 다음 세션 우선순위:**
-> 1. **관찰 확인**: ① 회랑 너머 신도시에 창고가 따라가는지 ② CPU 널뛰기 잔존 여부(잔존 시 프로파일러
->    스파이크 최상위 1개 확보 — 1순위 용의자 = 재개발 CompleteAllTrackedJobs, 철거 성능 #4와 병합)
->    ③ "창고 즉시 소멸" 재발 시 [Capture]/재개발 철거 로그로 원인 확정.
-> 2. **밸런싱 일괄(#1)** — 수치 튜닝(허기율·레시피·반경·임계 20·좌석 30·HousingGatePct 85·게이트들).
-> 3. **다지기 체크리스트 ①**(BuildingAuthoring 베이킹 — 새 서비스 건물 확장의 전제, 하단 체크리스트).
-> 4. 장기: 풀 컨트롤러 Target 갭/MRP 합성(전쟁물자 때), 고아 생산자 철거, 히트맵 감쇠, 유닛 롤업.
+> 1. **관찰 확인**: ① 회랑 너머 신도시에 창고가 따라가는지 ② "주택만 확장" 팀이 식당 채널 per-cell 픽스
+>    (2026-07-11 추가, 하단) 후 회복하는지 ③ "창고 즉시 소멸" 재발 시 **[Capture]/재개발 철거 로그 확인**
+>    (07-11 재관찰: 접경이나 비경합 — 로그가 원인 확정 수단. 둘 다 안 찍히면 제3 경로 → 보고).
+>    **⚠ 07-11 저녁 실측 재발(유저): 한 팀이 창고를 전량 제거** — 다음 플레이에서 위 로그 2종 캡처가
+>    원인 확정 수단(재개발은 주택 전용이라 정상 경로론 불가). 지구 그리드 구현과 독립.
+>    ④ ✅ **지구 그리드 실측 완료(07-11, 하단 섹션)**: 목표 지구로 성장 ✓, 연접 픽스 후 인구 2만에
+>    연접 1곳(게이트 면제 경로, 허용) ✓, 허기·물류·연결 양호 ✓. 잔여 = CPU 재측정만(비긴급).
+> 2. **밸런싱 일괄(#1)** — 수치 튜닝(허기율·레시피·반경·임계 20·좌석 30·HousingGatePct 85·게이트들
+>    + 지구 상수: TargetMinRoom 48 · 가중 Resource 2/Adjacency 16/Contest −64).
+> 3. ✅ **배치 그리드(지구 슬롯) + 지구 전략 평가 — 구현 완료(2026-07-11 저녁 세션, ⚠ 에디터 컴파일/
+>    동작 미검증, 하단 "지구 그리드" 섹션)**. 4개 결정은 유저 위임 → 추천안 채택: 피치 24(수요셀 3×3
+>    정렬) / 중앙 8×8 공유 슬롯(창고+서비스 동거 "중심지") / F(NearOwnWarehouse) 완전 교체 /
+>    전략 bias 시 Bal(축 균형) 끔. 원 합의(공용 공간 분할·(owner,지구) 상태·소프트 예약·지구=전략
+>    평가 단위 겸용·경쟁항 팩션 성향 확장점)는 하단 구현 섹션에 상세 기록.
+> 4. **다지기 체크리스트 ①**(BuildingAuthoring 베이킹 — 새 서비스 건물 확장의 전제, 하단 체크리스트).
+> 5. 장기: 풀 컨트롤러 Target 갭/MRP 합성(전쟁물자 때), 고아 생산자 철거, 히트맵 감쇠, 유닛 롤업.
+>
+> **CPU 스파이크 원인 확정(유저 프로파일, 2026-07-11)**: CitizenWalkerSpawnSystem + EndSimulationECB
+> (보행 비주얼 요청 대량 생성·재생 — 코스메틱 스텁). **유저 결정: 보행 비주얼 정식 승격 때 해소될
+> 문제라 방치.** (승격 설계 시 참고: 요청을 ECB 엔티티 대신 NativeQueue/링버퍼로, 스폰 예산·풀링.)
+>
+> **욕구 채널 per-cell 픽스(2026-07-11 막바지, ⚠ 미검증)**: "한 팀이 주택으로만 확장" 실측 → 원인 =
+> 욕구(식당) 채널도 우세 셀 블랙리스트로 **채널 전체 침묵**(창고·농장과 동형 결함 3번째) → 식당 0 →
+> 재고 건물 0 → 커버미스·풀 흐름 0 → 전 체인 사망, 주택 레인만 생존. **픽스: 욕구 채널도 비블랙리스트
+> 셀 중 최대 미스 선택**(창고와 동일 패턴) — 이로써 공간 수요 전 채널(욕구·창고)이 셀 단위 포기·이월.
+
+## 🟢 (구현 완료, 2026-07-11 저녁 세션, ⚠ 에디터 컴파일/동작 미검증) 지구 그리드 — 배치 슬롯 + 전략 평가
+> 우선순위 #3 실행. 설계 4결정 = 추천안(유저 위임): **피치 24 / 중앙 8×8 공유 슬롯 / F 완전 교체 /
+> 전략 bias 시 Bal 끔**. 수요 기계(WHAT/WHEN)는 무수정 — 그리드는 WHERE만 공급.
+
+- ✅ **[DistrictComponents.cs](Assets/_game/scripts/RunTime/Components/DistrictComponents.cs)**(신규):
+  - `DistrictGrid`(정적, DemandGrid 동형 월드 양자화 — 전 플레이어 공용·상태 0): `Pitch = 24`
+    (= 수요셀 8×3 정렬 — "창고 1채(BFS 30) = 지구 1개 온전 커버" 최대 피치), `SlotSize = 8`
+    (중앙 슬롯 = 지구 중앙 수요셀), `ToDistrict/Center/SlotOrigin/InSlot`.
+  - `DistrictStat{Room, Resource, RoadOwners, BldOwners, TerrTeams, FrontOwners}` — 지구 서베이 통계
+    (owner 상세는 비트마스크로 압축 — 중첩 컨테이너 회피, v1 점수식에 충분).
+  - `DistrictTable` 싱글톤(front): `Stats` + `Targets`(owner→목표 지구) + `Version`. AiCityGrowth가
+    생성/해제·발행, 독자 = 오버레이 + 다음 틱 창고 확장 앵커.
+- ✅ **DistrictSurveyJob** ([AiCityGrowthSystem.cs](Assets/_game/scripts/RunTime/Systems/AiCityGrowthSystem.cs)):
+  기존 체인에 1단 삽입 — `SnapshotJob → 서베이 → GrowthJob`(같은 틱 소비, 두 번째 스냅샷 복사 없음,
+  전부 워커+폴링). Room = CellBuildable & 비수(水) 셀 수 / Resource / owner 비트 / 영토 팀 비트 /
+  **FrontOwners = 전일 도로 owner 차분**(`_prevRoadOwners` 세션 지속 맵, 완료 후 갱신 — 상대 확장
+  프런트를 별도 계측 없이 얻음). 완료 폴링(ApplyResults)에서 front 발행 + Version++.
+- ✅ **슬롯 통합 3훅(수요 기계 무수정)**:
+  - **(a) 창고 앵커 = 슬롯 스냅**: 수요장 유래 창고(`whDomCell`)는 "그 지구에 내 창고 없음"이면 앵커를
+    지구 중심으로 스냅(있으면 미스 셀 유지 — 경계 미스는 이웃 지구 이월). 예약 창고의
+    `TryFindExpansionAnchor` v2 = **지구 테이블 순회**("내 도로 보유 + 창고 없음 + 적 없음 + Room≥48"
+    중 Room 최대 → 슬롯 중심) — **구 도로셀 전수×7×7 스캔 은퇴**(CPU 널뛰기 용의자 구조적 제거).
+  - **(b) 주거 유보 = F 일반화(교체)**: PackOnGrid 1차 패스 `NearOwnWarehouse`(기존 창고 체비쇼프 6)
+    → `InReservedSlot`("창고·공급자 미충족 지구의 중앙 슬롯") — *앞으로 올* 인프라 자리를 선제 보존
+    (주택 선점→생산자 밀림→연접 나선의 연료 차단). 소프트 2패스 유지. `_whOrigins`/`HousingWarehouseBuffer` 삭제.
+  - **(c) 배치 슬롯 선호(최상위 키)**: 인테리어 = cls에 +2(슬롯 안 0/1, 밖 2/3 — 기존 커버/타일링
+    선호는 하위 키로 존속) / 프런티어 = 슬롯 reservoir(슬롯 > 커버선호 > 전체, 전부 소프트 폴백).
+    판정 `InInfraSlot` = 창고→창고 없는 지구, 공급자→공급자 없는 지구의 슬롯. 지구 인프라 보유는
+    매 런 메인에서 파생(`_whDistricts`/`_supDistricts` — WarehouseTag/StampSupplier 쿼리, 부기 drift 없음).
+- ✅ **전략 확장 목표**: GrowthJob 팀 서두 `SelectTargetDistrict` — 후보 = 내 도로 지구 ∪ 8-이웃,
+  적 존재(도로·건물·영토) 제외, `Room < TargetMinRoom(48)` 제외(**회랑 지구 자연 탈락** = 거시 해법).
+  점수 = `Room + Resource×2 + 인접내지구×16 + 적프런트인접×(−64)`(기본 회피 — 선점형 팩션은 양수로,
+  FactionConfig 확장점). 목표 지구 중심 → 주택/폴백 확장 GrowOneBlock에 **소프트 bias**:
+  `hardBias` 파라미터 신설 — 하드(수요·창고 레인) = 기존 Dist 단독 / 소프트 = **품질 랭킹(Cat/Share/
+  Sides) 유지 + Dist 기준점만 목표로 + Bal(축 균형) 끔**(축 균형 = 거시 목표 부재 시의 근사였고 1차
+  키라 공존 시 목표 무시 — "매판 같은 모양"을 실제로 깨는 지점).
+- ✅ **관측**: `[CityAI] P{n} 확장목표 지구=(x,y) 점수` 로그(일 1회) +
+  **[DistrictOverlaySystem.cs](Assets/_game/scripts/RunTime/Systems/DistrictOverlaySystem.cs)**(신규, F5):
+  지구 경계선(회색) + 중앙 슬롯(흰색) + 팀별 목표 지구(팀 색). Version 변화 시에만 재구축.
+  F키 맵: **F5 지구** / F6 커버리지 / F7 영역 / F8 해치 / F9 자원 / F10 시민 / F11 건물 / F12 수요.
+- ✅ **1차 실측(유저, 2026-07-11)**: 흐름 양호, **확장이 목표 지구로 자람(전략층 동작 확인)**. 잔여:
+  창고가 지구 중심(슬롯)에 안 앉음 + **연접 재발** — 유저 가설 "용량확장".
+- ✅ **연접 원인 확정 + 픽스(같은 세션, ⚠ 컴파일/동작 미검증)**:
+  - **용량→창고 경로는 코드에 없음 확인**: LogisticsPushSystem — 커버+풀 만석 = 수요 발행 안 함(계획 P,
+    무한 버퍼 증식 차단). WarehouseId 수요는 오직 미커버 건물. 헤더 주석이 구버전(만석→창고 수요)이라
+    정정. 용량 확장은 "기존 창고 Capacity 업그레이드" 경로로 이미 확정(신축 아님).
+  - **진범 = 창고 예약 폴백 앵커**: 생산자 배치 실패(밀집 도시 — 풀 흐름층의 생산자 증설이 상류 동력,
+    유저 직감의 절반) → 창고 예약 → `TryFindExpansionAnchor` 실패 시(창고-없는 내 도로 지구 없음/
+    테이블 첫날 공백) **폴백 = pendAnchor = 실패한 생산자의 case-b 앵커 = 최근접 창고 셀** → 거리
+    랭킹이 기존 창고 옆에 착지 = 연접. 슬롯 선호는 소프트라 reach guard(20) 안 후보가 전부 포화
+    지구면 무력했음.
+  - **픽스 3종**: ① **예약 앵커 체인** — 확장 앵커 → 실패 지점 지구의 이웃 창고-없는 지구
+    (`TryNeighborWarehouselessDistrict`) → 전략 목표 지구(창고 없으면) → 최후에만 pendAnchor(로그로
+    "⚠ 연접 위험" 가시화). ② 수요장 창고도 미스 지구 포화 시 **이웃 지구 이월**(지구 단위 타일링).
+    ③ **지구당 1채 하드 게이트**(`BuildOption.SlotAnchored`) — 슬롯 모드 창고는 내 창고 보유 지구에
+    배치 후보 자체가 안 됨(인테리어+프런티어 공통, 연접 구조적 차단). 미스셀/최후 폴백만 게이트
+    면제(진짜 커버 구멍 수선 경로 보존). 앵커 모드가 로그에 표시됨(지구 슬롯/미스셀 폴백/연접 위험).
+  - "창고가 슬롯 정중앙에 안 앉음"은 소프트 설계상 정상(도로가 닿는 자리 우선) — 게이트로 "지구당
+    1채"만 보장하면 커버 목적은 달성. 중앙 정착은 도로가 지구 안으로 자란 뒤 자연 개선.
+- ✅ **2차 실측(유저, 2026-07-11): 인구 ~2만 — 연접 1곳뿐, 모든 연결 양호, 허기·물류 양호.**
+  연접 픽스(앵커 체인 + 지구당 1채 게이트) 동작 확인. 잔여 연접 1곳 = 게이트 면제 경로(미스셀 폴백
+  또는 "⚠ 연접 위험" 최후 폴백 — 건설 로그의 앵커 모드 태그로 식별 가능) 추정. **의도된 탈출구
+  (진짜 커버 구멍 수선)라 관찰만 — 늘어나면 재조사.**
+- ⬜ 잔여 확인(비긴급): CPU 재측정(앵커 스캔 은퇴 + 서베이 추가의 순효과) / "창고 전량 소멸" 재발
+  여부([Capture]/재개발 로그) / F5 목표 지구가 판·팀마다 달라지는지(전략층 다양성).
+
+## 🔧 (구현, 2026-07-11 저녁 — ⚠ 컴파일/동작 미검증) 다지기 ① — 건물 능력 BuildingAuthoring 베이킹
+> 방향 합의: ① 베이킹(이것) → ② 커버형 욕구(오라, 경찰서·관공서류 — 유클리드 제곱 원형·수용량은
+> 증설 신호로 분리·WHERE=지구 슬롯·WHEN=수요장) → ③ 배치 프리뷰(능력 파생형 커버 리포트 — 거주지는
+> 주변 식당/치안 커버 표시 등, 프리팹 엔티티의 능력 컴포넌트를 읽음) → 시민 데이터 주입은 유닛
+> 재작성 세션과 묶음. 전투는 "부착 골격=스폰 공통 / 값(MaxHealth)=능력 베이크" 분리 확정.
+
+- ✅ **[BuildingAuthoring.cs](Assets/_game/scripts/RunTime/Authoring/BuildingAuthoring.cs) 개편**: 배타적
+  Kind 스위치 → **직교 섹션**(거주 Kind=Residence 유지·직렬화 호환 / 고용 ProvidedJob+WorkerSlots /
+  방문형 공급 ReliefRaw+SupplyMaxDist+VisitorSlots→StampSupplier·VisitorOccupancy·ServiceStats /
+  오라형 공급 AuraReliefRaw+AuraRadius→**AuraSupplier(신규 능력, 커버형 욕구 자리)** / 생산
+  ProductionOutput→ProductionJob / 재고 StockSpec[]→StockEntry 버퍼 / 창고 IsWarehouse+반경→
+  WarehouseTag / 내구 MaxHealth→**BuildingDurability(신규)**). owner는 -1로 굽고 스폰이 주입.
+  ServiceBuilding 베이크 은퇴(소비자 없는 잔재). 새 컴포넌트 2종은 BuildingOccupancy.cs.
+- ✅ **[SpawnSystem.cs](Assets/_game/scripts/RunTime/Systems/SpawnSystem.cs) 이행**: 베이크 경로 =
+  Instantiate 복사 + StampSupplier/WarehouseTag **owner만 SetComponent**. CombatHealth 값 =
+  BuildingDurability(없으면 SpawnConfig 폴백), 부착 골격은 공통 유지. **레거시 스텁은 프리팹
+  미베이크 폴백으로 존치**(baked 플래그로 게이트, 키당 1회 `[Spawn] 미베이크` 경고) — 프리팹에
+  값 채우는 즉시 자동 은퇴, 무회귀 전환. 전 건물 베이크 확인 후 스텁 블록 삭제 예정.
+- ✅ **고스트 정리 확장([BuildingPlaceController.cs](Assets/_game/scripts/RunTime/Systems/BuildingPlaceController.cs))**:
+  베이크로 고스트에 딸려오는 능력(Visitor/ServiceStats/ProductionJob/StockEntry버퍼/Aura/내구) 제거
+  추가 — 누락 시 고스트가 생산·풀 용량에 유령 기여.
+- ⬜ **유저 작업(에디터) — 프리팹 BuildingAuthoring 값 입력** (입력 전까지 스텁이 대행, 경고 로그로 확인):
+  | 프리팹 | 값 |
+  |---|---|
+  | 주택 2종 | **무변경**(기존 Kind=Residence·Capacity 그대로 호환) |
+  | 식당 1002 | ProvidedJob=Merchant, WorkerSlots=4, ReliefRaw=1(Hunger), SupplyMaxDist=15, VisitorSlots=30, ProductionOutput=Meal, Stocks=[Meal/LocalFinal/100/초기10, Flour/Input/50/0] |
+  | 제분소 1003 | ProvidedJob=Engineer, WorkerSlots=4, ProductionOutput=Flour, Stocks=[Grain/Input/40/0, Flour/Output/40/0] |
+  | 농장 1004 | ProvidedJob=Farmer, WorkerSlots=4, ProductionOutput=Grain, Stocks=[Grain/Output/40/0] |
+  | 창고 1005 | IsWarehouse=✔, WarehouseStampMaxDist=30, ProvidedJob=Administrator, WorkerSlots=6, Stocks=[Grain/Store/200/0, Flour/Store/200/0] |
+  | (공통) | MaxHealth=0(=SpawnConfig 폴백) 또는 프리팹별 값 |
+  ⚠ SupplyMaxDist는 레지스트리 SO(Origin.asset 1002 = 15)와 일치시킬 것 — 이중 출처는 ②(NeedMaps
+  정식화)에서 단일화 예정(CLAUDE.md 오픈 이슈).
+- ✅ **② L2 자동 파생 + Validate([LookupBuildSystem.cs](Assets/_game/scripts/RunTime/Systems/LookupBuildSystem.cs)
+  개편, ①과 같은 세션 — ⚠ 컴파일/동작 미검증)**: L2를 프리팹 능력(StampSupplier/**AuraSupplier**의
+  Relief)에서 **자동 파생**(need비트→MainKey, MainKey 오름차순 선승 = 결정적) + SO NeedMaps 행은
+  **명시 오버라이드**(먼저 등록 = 우선, 팩션 비대칭용). BakedNeedMapping 필수 요구 제거(SO 없어도
+  L2 성립 — 이중 출처 해소, "자동생성+얇은 오버라이드" 원칙). **Validate**: 명시 행의 MainKey가
+  능력 ⊇ NeedMask인 프리팹을 갖는지 교차검증(실패 = 에러 로그, CLAUDE.md 오픈 이슈 해소).
+  `[LookupBuild]` 요약 로그(명시/자동/생산자/창고 키). HardcodedNeedMainKey는 미베이크 폴백으로 존치.
+- ✅ **③④ ProducerLookup 파생 결정 테이블(같은 세션 — ⚠ 미검증)**: 싱글톤
+  `ProducerLookup{ (int)Commodity→MainKey, WarehouseMainKey }` — 프리팹 능력(ProductionJob.RecipeOutput /
+  WarehouseTag)에서 LookupBuildSystem이 파생. AiCityGrowth 소비: commodity→생산자(구
+  HardcodedCommodityProducer는 미베이크 폴백) + **창고 1005 하드코딩 3곳 전부 whMainKey로 교체**
+  (wh 레인 ResolveOption / "창고 먼저" / IsWarehouse 판정). 식당의 ProductionJob(Meal)도 테이블에
+  들어가나 Meal은 LocalFinal이라 commodity 수요로 안 옴(무해).
+- ✅ **실행 모델 픽스(유저 실측 "[LookupBuild] 로그 부재")**: 구 LookupBuildSystem은 "1회 실행 후
+  비활성화" + 팩션 엔티티(FactionAuthoring 서브씬 배치) 필수 — 씬에 팩션 엔티티가 없으면 **영영
+  잠들어** ProducerLookup까지 죽음(그래서 지금까지도 하드코딩 폴백이 실전 경로였던 것). 픽스:
+  ProducerLookup은 PrefabLookup만 준비되면 즉시 구성 / L2는 **NeedLookupL2 없는 팩션 엔티티가
+  나타날 때마다** 부착(WithNone 쿼리, 상시 저렴 검사 — 비활성화 모델 은퇴). 팩션 0개면 로그에
+  "(팩션 엔티티 없음 — FactionAuthoring 배치 시 L2 부착)" 표시.
+  ⬜ **L2 정식 가동엔 서브씬에 FactionAuthoring 1개(FactionId=0 공통) 배치 필요**(유저 작업) —
+  없어도 하드코딩 폴백으로 동작 동일하나, 커버형 욕구(새 비트)는 폴백에 없으므로 그 전에 배치할 것.
+- ✅ **스트리밍 레이스 픽스(유저 실측 2차 "전부 0 + 팩션 1 부착")**: PrefabLookup 싱글톤은 프레임 0에
+  **빈 채로** 생성되고 서브씬 BakedPrefabEntry가 뒤에 채움 → 빈 테이블을 스캔한 결과가 동결(파생 0,
+  창고 키 0, L2도 빈 테이블로 부착됨). 픽스: ① 등록 0개면 빌드 안 함 ② **등록 수(Table.Count) 변화
+  감지 시 전체 재파생**(ProducerLookup 교체 + 기존 팩션 L2 테이블 재구성, 누수 없음) — 서브씬/DLC가
+  몇 배치로 와도 최종 상태로 수렴. 로그에 "프리팹 N개 스캔" 표시 — N>0인데 파생 0이면 프리팹
+  BuildingAuthoring 값 미입력(또는 서브씬 리베이크 필요)이 원인으로 확정됨.
+- ✅ **파생 파이프라인 검증 완료(유저 실측, 2026-07-12)**: 프리팹 4종 BuildingAuthoring 입력 +
+  FactionAuthoring 배치 후 — `프리팹 25개 스캔: 자동파생 1행(Hunger→1002) / L2 팩션 신규 1 /
+  생산자 파생 3종(Grain→1004·Flour→1003·Meal→1002) / 창고 키=1005`. 다지기 ①~④의 정식 경로 가동 —
+  하드코딩/스텁 폴백은 전부 침묵 상태. ⬜ 잔여 확인(다음 플레이): ① `[Spawn] 미베이크` 경고 부재
+  (베이크 능력으로 스폰) ② 허기·물류가 기존과 동일(베이크 값 = 스텁 값이라 동작 불변이어야 정상).
+- ⬜ 남은 체크리스트(연기 — 커버형 욕구/2번째 욕구 때 자연 처리): ⑤ NeedServiceHours→JobSchedule
+  파생(욕구 2종째 도입 시) ⑥ SupplierHasGoods "아무 LocalFinal>0"→욕구→품목 매핑(품목 2종째 때).
+  + 레거시 스텁/하드코딩 폴백 3종 삭제(전 프리팹 베이크 확인 후).
+
+## 🔧 (구현, 2026-07-12 — ⚠ 컴파일/동작 미검증) 커버형 욕구 v1 — 치안(HighCrime) + 오라 인프라
+> 합의 스펙 그대로: 단순 반경(도로 BFS 아님) / 판정 = footprint 최근접 유클리드 제곱(정수 원형) /
+> 수용량 없음(거리 단독 — 과밀 신호는 v1.5) / WHEN = 수요장, WHERE = 지구 슬롯 / 방문·추구 없음.
+> **공통 시스템(NeedDecision/ServiceSearch/Movement) 무수정** — "욕구 타입을 모른다" 설계의 실전 검증.
+
+- ✅ **오라 맵**: `AuraCoverage` 싱글톤((owner,실셀)→relief 비트합) +
+  [AuraCoverageSystem.cs](Assets/_game/scripts/RunTime/Systems/AuraCoverageSystem.cs)(신규) — 게임
+  시간당 1회 소스 값복사 → Burst 잡이 back 재그리기(Clear 후 전체, stamp 독트린) → 폴링 → front 발행.
+- ✅ **욕구**: `CitizenSafety{Level/Rate/Threshold}`(모양 규약 준수, CitizenComponents) +
+  [SafetySystem.cs](Assets/_game/scripts/RunTime/Systems/SafetySystem.cs)(신규) — 집(Home fp 원점)이
+  오라 커버 안이면 4배속 회복, 밖이면 증가(0.0005/게임초 → 미커버 ~1.2게임일에 임계 0.6).
+  CitizenSpawn에서 부착(needRng 순서 보존 — Hunger 뒤). 구세이브 시민은 미보유(쿼리서 자동 제외).
+  v1 효과 = 수요 신호 전용(사기·이민·생산성 연결은 후속).
+- ✅ **수요 수집**: DemandAggregation에 `CollectSafetyDemandJob` 추가 — "집 미커버 + 불안" 시민 →
+  NoCoverage 샘플(기존 임계 20/블랙리스트/재기준선 기계 재사용). 무주택 제외.
+- ✅ **AI 배선**: `ProducerLookup.AuraKeys`(오라 프리팹 키 파생) + `BuildOption.IsAura` →
+  지구 슬롯 선호(`InInfraSlot` 확장: 오라 = "오라 없는 지구" 슬롯 — 창고/공급자와 동형,
+  `_auraDistricts` 파생). 오라는 PrefersCovered 제외(재고 없음 — 창고 커버 무관).
+  L2는 자동 파생이라 무수정(경찰서 프리팹 등록 즉시 bit16→키 활성).
+- ✅ **가드(중요)**: 해소 건물이 해석 불가능한 욕구(프리팹 미등록 새 비트)는 수요 후보에서 제외 —
+  안 하면 mainKey=0 continue 전에 tier 경쟁을 이겨 **팀 수요 슬롯을 영구 점유**(식당·생산자 아사).
+  프리팹 등록 시 자동 활성.
+- ⬜ **유저 작업(에디터)**: 경찰서/관공서 프리팹 1종 — ① GamePrefabRegistry 등록(Building 범위
+  MainKey, 예: 1006, 입구 정의 포함) ② BuildingAuthoring: **AuraReliefRaw = 65536**(HighCrime,
+  1<<16), **AuraRadius = 20**(지구 중심에서 모서리 ~17 ≤ 20 = 지구 1개 커버), 선택: ProvidedJob=
+  Administrator + WorkerSlots(고용 흡수), MaxHealth=0(폴백).
+- ⬜ 검증: ① 컴파일 ② `[LookupBuild]` 자동파생 2행(Hunger+HighCrime)·AuraKeys 반영 ③ 새 플레이
+  ~1.5게임일 후 `[CityAI] 수요건설: Need#16` 로그 + 경찰서가 지구 슬롯(F5 흰 칸)에 서는지
+  ④ 지어진 뒤 그 지구 수요가 꺼지는지(오라 해소 동작) ⑤ 프리팹 없이도 기존 수요(식당 등)가
+  정상인지(가드 동작).
+- ✅ **컨테이너 레이스 픽스(유저 실측 InvalidOperationException, 2026-07-12)**: SafetyTickJob이
+  front 오라 맵을 **원시 컨테이너로 캡처** — 잡 쿼리에 AuraCoverage 타입이 없어 컴포넌트 의존성
+  추적을 벗어남 → 발행측 GetSingletonRW로도 완료 강제 안 됨([[layer-write-vs-polling-snapshot-jobs]]
+  함정의 front-싱글톤 변종, state.Dependency 등록만으론 불충분 — **잡 쿼리에 타입이 있어야** 추적됨).
+  픽스: 발행(1/게임시간) 직전 `CompleteAllTrackedJobs()`(재개발과 동일 확립 패턴).
+- 🔧 **1차 실측(유저): `수요 건물 key=1006 자리 없음` — 수요·해석은 정상, 배치(인테리어+프런티어)
+  전멸.** 전 후보 일괄 실패 = 데이터 문제 유력(입구 정의 Offset/Dir 불일치 → 전 회전 실패 /
+  BuildableOn=None / Size vs 프리팹 불일치). 진단 보조 추가: ResolveOption에 **BuildableOn=None
+  경고** + "입구 정의 없음" 안내 로그. 판별 대기: 같은 틱의 `[AiCityGrowth] 성장 자리 없음 K=?
+  (유효후보=N)` 로그 — N>0 = 스팬 내 배치 실패(입구/지형/BuildableOn), N=0 = 블록 검증 실패.
+  (이후 배치 자체는 성공하기 시작 — 하단 연접 건으로 이행. 원인 미보고: 등록 수정이 있었던 듯.)
+- ✅ **2차 실측(유저): "경찰서가 인접 3개까지" → 연접 픽스(2026-07-12, ⚠ 미검증)** — **3 =
+  DemandAttemptCap 지문**: 지었는데 수요가 안 꺼짐 → 재시도 → 3회 후 셀 블랙리스트. 원인 = 창고에
+  있던 안전장치가 오라에 없음: 밀집 도심에서 인테리어 실패 → 프런티어 폴백이 수요지에서 **먼 곳**
+  (도달 가드 없음)에 건설 → 오라(반경 20)가 수요 셀에 안 닿음 → 수요 지속 → 같은 앵커 최근접
+  프런티어에 반복 = 인접 3연쇄. **픽스(창고와 동형 3종)**: ① ProducerLookup.AuraKeys를
+  키→**반경** 맵으로(BuildOption.AuraRadius 전달) ② **오라 도달 가드** — 인테리어 guard =
+  AuraRadius / 프런티어 candDist > AuraRadius 제외(맨해튼 ≤ 반경 ⇒ 유클리드 ≤ 반경, 보수적 —
+  못 덮는 경찰서는 정직한 NoSpot → attempts→재개발 escalation이 도심에 자리를 냄) ③ **앵커 지구
+  스냅** — 수요 셀 지구에 내 오라 없으면 앵커 = 지구 중심(반경 20 ≥ 지구 스팬 → 1채가 지구 전체
+  커버, 인접 셀 수요 일괄 소화). 검증: 새 플레이에서 경찰서 연접 소멸 + 지구당 ~1채 분포.
+- ✅ **3차 실측(유저): "그래도 연접" + 가설 "테스트용 붐 성장(하루 주거 3채)이 원인?" →
+  진범 확정: 셀 선택의 누적 결함(2026-07-12, ⚠ 미검증)**. 수요 셀 선택이 **누적** FailNoCoverage
+  최대 셀을 고름 — 누적은 감쇠가 없어 **이미 해소(커버)된 셀의 역사적 더미가 우세를 영구 독점** →
+  신규 미스가 딴 데서 나도 건설은 계속 옛 자리 옆(→ attempts 3회 → 인접 셀 더미가 승계 → 또 그
+  동네). 주거 붐은 더미를 증폭한 악화 요인일 뿐 근본 원인 아님(점진 성장에서도 발동). PROGRESS
+  회랑 픽스 때 적어둔 "누적 nc가 아니라 최근 창 미스로 셀 선택 정밀화 여지"가 실증된 것.
+  **픽스: `_cellSeen`(owner,셀,res → 재기준선 시점 누적 스냅샷)** — 채널 재기준선(쿨다운 만료)에
+  셀별 기준선도 동시 스냅샷, 셀 선택 = **"재기준선 이후 신규 미스" 최대**(욕구·창고 채널 공통).
+  잔여 창: 남의 건설로 우연히 커버된 셀은 다음 재기준선까지 1회 오발 가능(도달가드+앵커스냅이
+  피해 상한) — 자가 치유.
+- ✅ **4차 실측(유저, 2026-07-12): "상당히 개선 — 범위 건물이 적당한 간격 유지."** 커버형 욕구 v1
+  루프(건설→커버→수요 소멸→다음 미커버 지역 이동) 검증 완료. 셀 선택 신규-미스화가 창고·식당
+  채널에도 적용된 상태 — 그쪽 분포 개선 여부는 장기 관찰.
+- ✅ **③ 배치 프리뷰 구현(2026-07-12, ⚠ 컴파일/동작 미검증)** — "능력 파생형 커버 리포트"(합의 4번):
+  - **브리지**: `PlacementPreviewState` 싱글톤 — BuildingPlaceController가 호버마다 발행
+    (key/원점/회전/owner), ExitMode·호버 상실 시 비활성(ECS↔UI 관례).
+  - **[PlacementCoverageOverlaySystem.cs](Assets/_game/scripts/RunTime/Systems/PlacementCoverageOverlaySystem.cs)**
+    (신규, Presentation): 표시 내용을 **프리팹 엔티티의 능력 컴포넌트에서 파생**(PrefabLookup →
+    같은 컴포넌트 읽기 — CLAUDE.md "인스턴스 전 접근" 원칙의 첫 UI 실사용, 건물별 하드코딩 0):
+    · **내보내는 커버**: AuraSupplier→오라 원(보라) / StampSupplier→가상 입구에서 도로 BFS(주황,
+      RoadCoverageOps 공용 fact — 실제 stamp와 같은 규칙) / WarehouseTag→BFS(초록). 입구가 자기
+      도로에 안 닿으면 빈 결과(정직).
+    · **받는 커버 배지**(footprint 윗변 위 사각 행, 켜짐=밝음/꺼짐=회색): 거주 능력→[식당|치안],
+      물류 재고(Input/Output)→[창고]. 프로브 = 입구 도로셀 stamp + footprint 원점 오라(치안 판정과
+      동일 해상도). 색 = F6 팔레트 동일.
+  - **F6 확장**: 전역 모드에 **오라 필드(보라, 도로 아래층)** — 비도로 셀(주거지)의 치안 커버가
+    보임 / 오라 건물 호버 시 오라 원 노랑 강조(stamp 소스가 아니라 기존 스캔에 안 잡히던 것).
+- ⬜ 다음: v1.5 과밀 신호(커버 인구 > 정원 → 이웃 지구 증설) / 밸런싱 #1 / 장기 관찰
+  (창고 전멸·입구 강탈 로그, CPU, 식당·창고 분포 개선 여부).
+
+## 🔧 (진단 도구 추가, 2026-07-11, ⚠ 미검증) "일부 창고 커버리지 확연 축소" — 원인 추적
+> 유저 실측(예전부터): 특정 창고의 F6 호버 커버가 눈에 띄게 작음. 코드 확인 결과 커버 =
+> **입구 도로셀에서 도로 BFS**(RoadCoverageOps.Flood) — 반경(WarehouseTag.MaxDist)은 **스폰 시점
+> 박제**(SpawnSystem, 현행 30), 확산은 **방향비트 양방향 일치 + owner 일치** 경로만. 축소 후보 3갈래:
+> ① 도로 방향비트 단절(겉보기 인접인데 못 건넘 → 그 너머 통째 소실 — 의심: 철거/janitor 후 비트
+> 갱신 누락, 멀티셀 도로 axis 재계산(RoadSystem이 축 모델에선 Directions를 SET 재계산) 등)
+> ② 낡은 MaxDist(구세이브 = 반경 20 시절 박제) ③ 순수 거리 한계(입구 위치·구불길 = 정상).
+- ✅ **F6 호버 진단 시각화(CoverageOverlaySystem)**: **빨강** = 단절 프런티어(dist<MaxDist 여유가
+  남았는데 인접 같은-owner 도로를 못 건넌 셀 = 비트 단절 지점 — 축소 원인이 여기면 빨강 라인이
+  잘린 자리에 보임) / **마젠타**(커버 전체) = MaxDist ≠ 현행 상수(낡은 반경) / 노랑+빨강 없음 =
+  순수 거리 한계(정상). → **다음 플레이에서 축소된 창고를 호버해 색으로 원인 판별**.
+- ✅ **1차 판별(유저): "노랑뿐" — 비트 단절·낡은 반경 아님.** + 추가 목격: **창고의 플레이어 영역과
+  도로의 플레이어 영역이 다름.** 코드 확인: 도로 소유권은 **절대 안 뒤집힘**(타-owner 도로 위 배치는
+  점유 게이트가 거부 / 영토 전환 시 도로는 소유 변경이 아니라 CaptureDoom→철거) → 유력 시나리오 =
+  **포켓 잔존**: 영토 전환으로 주변 자기 도로·건물은 doom 철거됐는데 창고 선 자리만 자기/중립 영토
+  포켓으로 남아 창고 생존 → 주변에 새 주인의 도로 → BFS가 포켓 안 자기 도로 조각에 갇힘(노랑만+좁음
+  정확 부합). "창고 전량 소멸"([Capture] doom)과 같은 기계의 반대면.
+- ✅ **호버 진단 3색째(같은 세션): 파랑 = 타-owner 도로 경계** — 인접 도로가 남의 것이라 못 건넌 셀.
+  좁은 창고 호버 시 **파랑 다수 = 포켓 잔존 확정** / 파랑 없음 = 진짜 거리 한계(입구 위치·구불길).
+- ✅ **원인 확정(유저 실험, 2026-07-11)**: 문제의 창고 = **본체는 타 팀 (영토) 쪽 + 입구는 타 팀 도로에
+  물림**. 유저가 인구당 셀 비율을 조정해 경합지로 만들었다 원상 복귀 → 영토 재계산이 돌자 doom이
+  "타 팀에 놓인 건물"로 정상 파괴. 즉 포켓은 **RequireFullFootprint(경계 보호)** 탓에 footprint 한
+  셀이라도 비적(非敵) 영토면 doom을 영원히 회피하는 상태였고, "입구가 적 도로"는 내 입구 도로가
+  doom 철거된 자리에 상대가 재건해서 발생(도로 소유권 자체는 불변 — remove+재건 경유).
+- ✅ **픽스: 입구 강탈 = 기능적 함락(TerritoryCaptureSystem, ⚠ 컴파일/동작 미검증)** — 건물 마킹
+  루프에 판정 추가: 입구 도로셀이 존재하고 **소유 팀 ≠ 건물 팀**이면 본체 캡처와 무관하게 CaptureDoom
+  (같은 dwell/사면 기계 — 핑퐁은 dwell이 흡수, 적 도로 소멸 시 자동 사면). 감지 시
+  `[Capture] 입구 강탈 감지` 로그. 입구 도로가 그냥 없어진 고아 건물은 대상 아님(장기 "고아 생산자
+  철거" 항목 소관). 잔여: 입구가 자기 도로 조각에 물린 순수 포켓 창고(커버만 좁음)는 존치 —
+  풀 Capacity 기여는 유효(owner 전역 풀), 필요 시 후속 결정.
+- ❓ 열린 값: 서비스 반경 15 < 지구 24라 지구당 식당 2~3채가 평형 — 슬롯은 "첫 인프라 기본 자리"만
+  담당하고 나머지는 수요장이 정함(의도된 분업). 반경-피치 정합은 밸런싱 #1에서.
 
 ## 🟡 (역사, 2026-07-10 세션 전반) — 창고 공유 풀 + 배치 시스템 일반화 (드라이버 앵커·인테리어·재개발)
 > 지난 세션 "공급망 자기조립"에 이어: ① **소유권 골격 통일**(OwnerShared) ② **창고 공유 풀**(플레이어별,

@@ -120,6 +120,7 @@ namespace CitySim
             {
                 SetPreviewActive(false);
                 ClearPreviewBuffer();
+                PublishPlacementPreview(false, default);
             }
             DestroyGhost();
         }
@@ -150,12 +151,21 @@ namespace CitySim
                 _ghost = _em.Instantiate(prefab);
                 _ghostKey = mainKey;
                 // 게임플레이 컴포넌트 제거 — 고스트는 시각 전용.
+                //   다지기 ①(2026-07-11) 이후 능력이 프리팹에 베이크되므로 여기 목록은
+                //   BuildingAuthoring이 굽는 전 항목과 일치해야 한다(누락 = 고스트가
+                //   생산/풀 용량/오라에 유령 기여).
                 RemoveIfHas<ResidenceBuilding>(_ghost);
                 RemoveIfHas<WorkplaceBuilding>(_ghost);
                 RemoveIfHas<ServiceBuilding>(_ghost);
                 RemoveIfHas<BuildingOccupancy>(_ghost);
                 RemoveIfHas<StampSupplier>(_ghost);
                 RemoveIfHas<WarehouseTag>(_ghost);
+                RemoveIfHas<VisitorOccupancy>(_ghost);
+                RemoveIfHas<ServiceStats>(_ghost);
+                RemoveIfHas<ProductionJob>(_ghost);
+                RemoveIfHas<AuraSupplier>(_ghost);
+                RemoveIfHas<BuildingDurability>(_ghost);
+                if (_em.HasBuffer<StockEntry>(_ghost)) _em.RemoveComponent<StockEntry>(_ghost);
             }
 
             float3 pos = default;
@@ -221,8 +231,8 @@ namespace CitySim
             _hasHover = false;
             _hoverStatus = PreviewStatus.Valid;
 
-            if (!TryGetMeta(_mainKey, out var meta)) { DestroyGhost(); return; }
-            if (!TryGetHoverCell(out int2 origin))   { DestroyGhost(); return; }
+            if (!TryGetMeta(_mainKey, out var meta)) { DestroyGhost(); PublishPlacementPreview(false, default); return; }
+            if (!TryGetHoverCell(out int2 origin))   { DestroyGhost(); PublishPlacementPreview(false, default); return; }
             _hasHover = true;
 
             // 그리드 중심 = 호버 origin
@@ -271,6 +281,29 @@ namespace CitySim
             byte gh = 0;
             if (hasLayers && layers.TerrainLayer.TryGetValue(origin, out var oc)) gh = oc.Height;
             UpdateGhost(_mainKey, in meta, origin, gh);
+
+            // 커버 프리뷰 발행(2026-07-12) — PlacementCoverageOverlaySystem이 소비:
+            //   내보내는 커버(오라/stamp 예상 범위) + 받는 커버 배지(창고·식당·치안).
+            PublishPlacementPreview(true, origin);
+        }
+
+        // 배치 커버 프리뷰 브리지 싱글톤 발행 — 없으면 생성(ECS↔UI 관례).
+        void PublishPlacementPreview(bool active, int2 origin)
+        {
+            if (!_ecsReady) return;
+            var q = _em.CreateEntityQuery(typeof(PlacementPreviewState));
+            Entity e = q.IsEmpty ? _em.CreateEntity(typeof(PlacementPreviewState))
+                                 : q.GetSingletonEntity();
+            q.Dispose();
+            int slot = active && ResolvePlayerFaction(out int s, out _) ? s : -1;
+            _em.SetComponentData(e, new PlacementPreviewState
+            {
+                Active    = active && slot >= 0,
+                MainKey   = _mainKey,
+                Origin    = origin,
+                RotSteps  = (byte)_rotSteps,
+                OwnerSlot = slot,
+            });
         }
 
         bool TryGetEntrance(int mainKey, out EntranceInfo ent)

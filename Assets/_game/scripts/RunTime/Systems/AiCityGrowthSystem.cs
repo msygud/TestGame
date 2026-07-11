@@ -49,7 +49,12 @@ namespace CitySim
                                                         //   셀별 최대) — 계획 C 배치 검증 + 신설 도로 커버 근사가
                                                         //   "잔여 ≥ 우회 거리"를 요구(경계 셀 옆 오통과 픽스,
                                                         //   2026-07-10 미커버 농장 실측). 런마다 메인에서 복사.
-        NativeArray<int3>                _whOrigins;    // (owner,x,y) 창고 footprint 원점 — 계획 F(주거 후순위)용
+        // 지구 그리드(2026-07-11 배치 그리드 + 전략 평가) — 런별 파생(지속 부기 없음 = drift 없음).
+        NativeHashMap<int2, DistrictStat> _districts;    // DistrictSurveyJob 산출(지구 테이블 back)
+        NativeHashSet<int3>               _whDistricts;  // (owner,dx,dy) 창고 보유 지구
+        NativeHashSet<int3>               _supDistricts; // (owner,dx,dy) 욕구 공급자(StampSupplier) 보유 지구
+        NativeHashSet<int3>               _auraDistricts;// (owner,dx,dy) 오라 공급자(AuraSupplier) 보유 지구
+        NativeArray<int3>                 _targetOut;    // 팀별 확장 목표 지구(x,y,score). x=int.MinValue=없음
 
         // owner → 예약된 창고 건설 앵커(계획 B 확장): 생산자가 "창고 커버 안 유효 후보 없음"으로 배치
         //   실패하면 다음 틱은 **반드시 창고 먼저**(커버 확장) — 유저 합의 "예약하고 다음 건설". 세션 지속.
@@ -70,6 +75,13 @@ namespace CitySim
         //   판단해 블랙리스트(무한 반복 건설 차단, 2026-07-09). 세션 지속.
         NativeHashMap<int4, int> _demandAttempts;
 
+        // (owner,수요셀,resId) → 채널 재기준선 시점의 셀별 누적 NoCoverage 스냅샷(2026-07-12).
+        //   셀 선택을 "누적 최대"가 아니라 **"재기준선 이후 신규 미스 최대"**로 — 누적은 감쇠가
+        //   없어서 이미 해소(커버)된 셀의 역사적 더미가 우세를 영구 독점, 커버된 자리 옆에
+        //   반복 건설(유저 실측: 경찰서 인접 3개 = attempts 지문, 주거 붐이 더미를 증폭).
+        //   갱신 시점 = 채널 재기준선(쿨다운 만료)과 동일 — 합계·셀 기준선의 의미 일치. 세션 지속.
+        NativeHashMap<int4, int> _cellSeen;
+
         // (owner,수요셀,resId) → 철거-후-건설(재개발) 횟수. 인테리어+프런티어가 여러 번 실패한 꽉 찬 도심에서
         //   주택을 철거해 구멍을 낸 횟수. (owner,셀,res)당 RedevelopCap 한도(thrash 방지). 세션 지속.
         NativeHashMap<int4, int> _redevelopAttempts;
@@ -77,6 +89,10 @@ namespace CitySim
         // (owner,resId) → 풀 경로(commodity) 증설 쿨다운 만료 게임시각(P v2). 새 생산자의 효과
         //   (고용→생산→풀 유입)가 흐름 창에 반영되기까지 재증설 금지 — 기준선 개념이 없는 풀 전용.
         NativeHashMap<int2, double> _poolCooldown;
+
+        // 지구(dx,dy) → 전일 도로 owner 비트마스크. 세션 지속 — 서베이가 차분으로
+        //   FrontOwners(확장 프런트 = 어제 없던 도로 owner)를 계산(전략 경쟁항 입력).
+        NativeHashMap<int2, byte> _prevRoadOwners;
 
         // (owner,resId) → 기준선 재설정 예정 게임시각(TotalSeconds). 배치 쿨다운(2026-07-10):
         //   건설 → stamp 재빌드(HourChanged 라운드로빈)·풀 용량 재계산(HourChanged) 반영까지의 공백 동안
@@ -95,10 +111,24 @@ namespace CitySim
             _emptyRes = new NativeHashMap<int2, ResourceCell>(1, Allocator.Persistent);
             _lastNoCoverage = new NativeHashMap<int2, int>(64, Allocator.Persistent);
             _demandAttempts = new NativeHashMap<int4, int>(64, Allocator.Persistent);
+            _cellSeen = new NativeHashMap<int4, int>(256, Allocator.Persistent);
             _redevelopAttempts = new NativeHashMap<int4, int>(64, Allocator.Persistent);
             _demandRebaselineAt = new NativeHashMap<int2, double>(64, Allocator.Persistent);
             _poolCooldown = new NativeHashMap<int2, double>(64, Allocator.Persistent);
             _pendingWarehouse = new NativeHashMap<int, int2>(8, Allocator.Persistent);
+            _prevRoadOwners = new NativeHashMap<int2, byte>(256, Allocator.Persistent);
+
+            // 지구 테이블 front 싱글톤(수명주기 패턴) — 서베이 잡 완료 후 발행, 오버레이/앵커가 읽음.
+            if (!SystemAPI.HasSingleton<DistrictTable>())
+            {
+                var e = state.EntityManager.CreateEntity(typeof(DistrictTable));
+                state.EntityManager.SetComponentData(e, new DistrictTable
+                {
+                    Stats   = new NativeHashMap<int2, DistrictStat>(256, Allocator.Persistent),
+                    Targets = new NativeHashMap<int, int2>(8, Allocator.Persistent),
+                    Version = 0,
+                });
+            }
         }
 
         public void OnDestroy(ref SystemState state)
@@ -112,10 +142,18 @@ namespace CitySim
             _emptyRes.Dispose();
             if (_lastNoCoverage.IsCreated) _lastNoCoverage.Dispose();
             if (_demandAttempts.IsCreated) _demandAttempts.Dispose();
+            if (_cellSeen.IsCreated) _cellSeen.Dispose();
             if (_redevelopAttempts.IsCreated) _redevelopAttempts.Dispose();
             if (_demandRebaselineAt.IsCreated) _demandRebaselineAt.Dispose();
             if (_poolCooldown.IsCreated) _poolCooldown.Dispose();
             if (_pendingWarehouse.IsCreated) _pendingWarehouse.Dispose();
+            if (_prevRoadOwners.IsCreated) _prevRoadOwners.Dispose();
+            if (SystemAPI.HasSingleton<DistrictTable>())
+            {
+                var dt = SystemAPI.GetSingleton<DistrictTable>();
+                if (dt.Stats.IsCreated) dt.Stats.Dispose();
+                if (dt.Targets.IsCreated) dt.Targets.Dispose();
+            }
         }
 
         public void OnUpdate(ref SystemState state)
@@ -229,13 +267,40 @@ namespace CitySim
                     kv.Dispose();
                 }
             }
-            // 창고 footprint 원점 수집(owner,x,y) — case-b 앵커(수요 해석) + 계획 F(주거 후순위, 잡 전달).
+            // 창고 footprint 원점 수집(owner,x,y) — case-b 앵커(수요 해석, 메인 전용).
             var warehouseCells = new NativeList<int3>(16, Allocator.Temp);
             foreach (var (wh, wfp) in
                      SystemAPI.Query<RefRO<WarehouseTag>, RefRO<BuildingFootprint>>())
                 warehouseCells.Add(new int3(wfp.ValueRO.OwnerLocalId,
                                             wfp.ValueRO.Origin.x, wfp.ValueRO.Origin.y));
-            _whOrigins = new NativeArray<int3>(warehouseCells.AsArray(), Allocator.Persistent);
+
+            // 지구 슬롯 상태(2026-07-11 배치 그리드): (owner, 지구)별 인프라 보유 — 매 런 파생
+            //   (지속 부기 없음 = drift 없음). 슬롯 유보(주택)·슬롯 선호(창고/서비스)·앵커 스냅 입력.
+            _whDistricts   = new NativeHashSet<int3>(64, Allocator.Persistent);
+            _supDistricts  = new NativeHashSet<int3>(64, Allocator.Persistent);
+            _auraDistricts = new NativeHashSet<int3>(64, Allocator.Persistent);
+            for (int wi = 0; wi < warehouseCells.Length; wi++)
+            {
+                var w = warehouseCells[wi];
+                int2 wd = DistrictGrid.ToDistrict(new int2(w.y, w.z));
+                _whDistricts.Add(new int3(w.x, wd.x, wd.y));
+            }
+            foreach (var (sup, sfp) in
+                     SystemAPI.Query<RefRO<StampSupplier>, RefRO<BuildingFootprint>>())
+            {
+                int2 sd = DistrictGrid.ToDistrict(sfp.ValueRO.Origin);
+                _supDistricts.Add(new int3(sfp.ValueRO.OwnerLocalId, sd.x, sd.y));
+            }
+            foreach (var (auraSup, afp) in
+                     SystemAPI.Query<RefRO<AuraSupplier>, RefRO<BuildingFootprint>>())
+            {
+                int2 ad = DistrictGrid.ToDistrict(afp.ValueRO.Origin);
+                _auraDistricts.Add(new int3(afp.ValueRO.OwnerLocalId, ad.x, ad.y));
+            }
+
+            // 지구 테이블 front(전일 발행분) — 창고 확장 앵커(슬롯 스냅)의 입력. 첫날은 비어 폴백.
+            bool haveDistricts = SystemAPI.TryGetSingleton<DistrictTable>(out var dtable)
+                                 && dtable.Stats.IsCreated;
 
             if (SystemAPI.TryGetSingleton<DemandField>(out var demandField) && demandField.Stats.IsCreated)
             {
@@ -246,9 +311,14 @@ namespace CitySim
                 // L2 없어도(재베이크 전) 하드코딩 폴백이 돌도록 항상 호출.
                 var redevelopReqs = new NativeList<int3>(8, Allocator.Temp);
                 bool havePool = SystemAPI.TryGetSingleton<LogisticsPool>(out var lpool);
+                // 생산/창고 파생 결정 테이블(다지기 ③·④) — 없으면(초기화 전) 하드코딩 폴백.
+                bool haveProducer = SystemAPI.TryGetSingleton<ProducerLookup>(out var prodLookup)
+                                    && prodLookup.Table.IsCreated;
                 ResolveDemandOptions(in demandField, l2, haveL2, in metaLookup, in entranceLookup,
                     in warehouseCells, ref redevelopReqs,
-                    clock.TotalSeconds, clock.SecondsPerDay / 24f, havePool, lpool, in layers, in teams);
+                    clock.TotalSeconds, clock.SecondsPerDay / 24f, havePool, lpool,
+                    haveProducer, prodLookup,
+                    in dtable, haveDistricts, in teams);
 
                 // 철거-후-건설 실행(메인, SnapshotJob 전 → 같은 틱 스냅샷에 구멍 반영):
                 //   요청 target 근처 최근접 **주택**을 철거(셀 즉시 해제 + destroy + StampDirty) → 스냅샷에
@@ -315,6 +385,9 @@ namespace CitySim
 
             warehouseCells.Dispose();
 
+            _districts = new NativeHashMap<int2, DistrictStat>(256, Allocator.Persistent);
+            _targetOut = new NativeArray<int3>(_teams.Length, Allocator.Persistent);
+
             var copyH = new SnapshotJob
             {
                 SrcTerrain   = layers.TerrainLayer,
@@ -326,26 +399,40 @@ namespace CitySim
                 Snap         = _snap,
             }.Schedule(state.Dependency);
 
+            // 지구 서베이(2026-07-11): 스냅샷만 읽어 지구 테이블을 채움 — 같은 틱 GrowthJob이
+            //   소비(전략 목표·슬롯). _prevRoadOwners는 이 시스템 전용 + 완료 폴링 후에만 메인이
+            //   만지므로 [ReadOnly] 캡처 안전(두 번째 스냅샷 복사 불필요).
+            var surveyH = new DistrictSurveyJob
+            {
+                Snap           = _snap,
+                PrevRoadOwners = _prevRoadOwners,
+                Out            = _districts,
+            }.Schedule(copyH);
+
             _growthHandle = new GrowthJob
             {
-                Snap        = _snap,
-                Teams       = _teams,
-                DemandOpts  = _demandOpts,
-                DemandCells = _demandCells,
-                WhOpts      = _whDemandOpts,
-                WhCells     = _whDemandCells,
-                WhCovered   = _whCovered,
-                WhOrigins   = _whOrigins,
-                OptA        = optA,
-                OptB        = optB,
-                Cfg         = cfg,
-                TeamsTable  = teams,
-                EnemyBuffer = enemyBuffer,
-                Day         = clock.Day,
-                RoadOut     = _roadOut,
-                BldOut      = _bldOut,
-                LogOut      = _logOut,
-            }.Schedule(copyH);
+                Snap         = _snap,
+                Teams        = _teams,
+                DemandOpts   = _demandOpts,
+                DemandCells  = _demandCells,
+                WhOpts       = _whDemandOpts,
+                WhCells      = _whDemandCells,
+                WhCovered    = _whCovered,
+                Districts    = _districts,
+                WhDistricts  = _whDistricts,
+                SupDistricts = _supDistricts,
+                AuraDistricts= _auraDistricts,
+                TargetOut    = _targetOut,
+                OptA         = optA,
+                OptB         = optB,
+                Cfg          = cfg,
+                TeamsTable   = teams,
+                EnemyBuffer  = enemyBuffer,
+                Day          = clock.Day,
+                RoadOut      = _roadOut,
+                BldOut       = _bldOut,
+                LogOut       = _logOut,
+            }.Schedule(surveyH);
 
             state.Dependency = copyH;   // 복사만 등록 — 느린 성장 잡은 의존성 체인 밖(폴링)
             _running = true;
@@ -368,6 +455,31 @@ namespace CitySim
             }
             ecb.Playback(state.EntityManager);
             ecb.Dispose();
+
+            // 지구 테이블 발행(back → front 복사 + Version) + 확장 프런트 기준선 갱신 + 목표 발행.
+            if (SystemAPI.HasSingleton<DistrictTable>())
+            {
+                ref var dt = ref SystemAPI.GetSingletonRW<DistrictTable>().ValueRW;
+                dt.Stats.Clear();
+                _prevRoadOwners.Clear();
+                foreach (var kv in _districts)
+                {
+                    dt.Stats[kv.Key] = kv.Value;
+                    if (kv.Value.RoadOwners != 0) _prevRoadOwners[kv.Key] = kv.Value.RoadOwners;
+                }
+                dt.Targets.Clear();
+                for (int i = 0; i < _targetOut.Length; i++)
+                    if (_targetOut[i].x != int.MinValue)
+                        dt.Targets[_teams[i].Owner] = new int2(_targetOut[i].x, _targetOut[i].y);
+                dt.Version++;
+            }
+            for (int i = 0; i < _targetOut.Length; i++)
+            {
+                var tg = _targetOut[i];
+                if (tg.x == int.MinValue) continue;
+                Debug.Log($"[CityAI] P{_teams[i].Owner} day{_scheduledDay}: "
+                        + $"확장목표 지구=({tg.x},{tg.y}) 점수={tg.z}");
+            }
 
             for (int i = 0; i < _logOut.Length; i++)
             {
@@ -406,7 +518,11 @@ namespace CitySim
             _whDemandOpts.Dispose();
             _whDemandCells.Dispose();
             _whCovered.Dispose();
-            _whOrigins.Dispose();
+            _districts.Dispose();
+            _whDistricts.Dispose();
+            _supDistricts.Dispose();
+            _auraDistricts.Dispose();
+            _targetOut.Dispose();
             _roadOut.Dispose();
             _bldOut.Dispose();
             _logOut.Dispose();
@@ -425,12 +541,21 @@ namespace CitySim
                 Debug.LogWarning($"[AiCityGrowth] 건물 key={key} size={meta.Size} 8셀 초과");
                 return default;
             }
+            // 데이터 오류 tripwire(2026-07-12): BuildableOn=None이면 FootprintBuildableFlat이
+            //   전 후보를 거부 → 증상이 "자리 없음"으로만 보임(레지스트리 항목 미설정 흔적).
+            if (meta.BuildableOn == TerrainMask.None)
+                Debug.LogWarning($"[AiCityGrowth] 건물 key={key} BuildableOn=None — 레지스트리 항목의 " +
+                                 "배치 가능 지형 미설정(모든 배치가 실패함). Land/Water/Any 지정 필요.");
             var opt = new BuildOption
             {
                 Key = key, Size = meta.Size, BuildableOn = meta.BuildableOn, BlockK = k,
             };
             if (meta.HasEntrance && entranceLookup.TryGet(key, out var ent))
             { opt.HasEnt = true; opt.Ent = ent; }
+            else if (meta.HasEntrance)
+                // 입구 미정의 폴백(FootprintTouchesTeamRoad)은 정상 경로지만, 새 건물 등록 시
+                //   입구를 깜빡한 경우를 가시화(배치 실패 진단 보조 — 경고 아님).
+                Debug.Log($"[AiCityGrowth] 건물 key={key}: 입구 정의 없음 — footprint 인접 도로 판정으로 배치");
             return opt;
         }
 
@@ -441,10 +566,16 @@ namespace CitySim
         void ResolveDemandOptions(in DemandField df, NeedLookupL2 l2, bool haveL2,
             in PrefabMetaLookup metaLookup, in EntranceLookup entranceLookup,
             in NativeList<int3> warehouseCells, ref NativeList<int3> redevelopReqs,
-            double now, float hourSeconds, bool havePool, LogisticsPool lpool, in GridLayers glayers,
-            in TeamTable teamTable)
+            double now, float hourSeconds, bool havePool, LogisticsPool lpool,
+            bool haveProducer, ProducerLookup prodLookup,
+            in DistrictTable dtable, bool haveDistricts, in TeamTable teamTable)
         {
             var stats = df.Stats;
+
+            // 창고 MainKey — 파생 테이블(WarehouseTag 보유 프리팹, 다지기 ④) 우선,
+            //   미파생(프리팹 미베이크)이면 구 하드코딩 폴백.
+            int whMainKey = haveProducer && prodLookup.WarehouseMainKey > 0
+                ? prodLookup.WarehouseMainKey : 1005;
 
             // (owner,resId) → 누적 NoCoverage 합 + 우세(최대) 수요 셀. 누적은 안 줄어드므로 판단은
             //   '지난 처리 대비 증가분(delta)'으로 — 총량 기준이면 커버 후에도 난사.
@@ -468,16 +599,30 @@ namespace CitySim
                 //   후보(아래 루프에서 분리 수집). 창고는 수요 슬롯과 경쟁하지 않는다 — 유저 실측 "창고
                 //   없이 넓은 확장": 팀당 하루 1건 슬롯을 식당·생산자와 나누면 확장기에 창고 추격이 밀림
                 //   (추격 사슬 자체도 시민→식당→기아→창고 2단계 지연). 주택(예산)/창고(전용)/수요(슬롯) 3레인.
-                bool whPending = false;
-                int2 whAnchor  = default;
+                bool whPending  = false;
+                bool whSlotMode = false;   // 앵커가 "창고 없는 지구" 중심인가 → 배치에 지구당 1채 게이트
+                int2 whAnchor   = default;
                 if (_pendingWarehouse.TryGetValue(owner, out int2 pendAnchor))
                 {
                     _pendingWarehouse.Remove(owner);
                     whPending = true;
-                    // 확장 앵커 정책: 실패한 생산자의 앵커(=case-b 최근접 창고) 대신 커버 밖 + 개발 여지
-                    //   최대 도로셀로 재앵커(새 생산 지구 자기조립 — "창고 옆 창고" 유도 차단).
-                    whAnchor = TryFindExpansionAnchor(in glayers, owner, pendAnchor, out int2 expAnchor, in teamTable)
-                        ? expAnchor : pendAnchor;
+                    // 앵커 체인(2026-07-11 연접 픽스): 구 폴백(pendAnchor = 실패한 생산자의 case-b 앵커
+                    //   = **최근접 창고 셀**)이 연접의 원흉 — 확장 앵커가 실패하면 기존 창고 옆에
+                    //   그대로 착지했다. ① 확장 앵커(내 도로 보유 + 창고 없는 지구) ② 실패 지점 지구의
+                    //   이웃 창고-없는 지구 ③ 전략 목표 지구(창고 없으면) ④ 최후에만 pendAnchor
+                    //   (게이트 없음 — 로그로 가시화).
+                    if (TryFindExpansionAnchor(in dtable, haveDistricts, owner, pendAnchor,
+                            out int2 expAnchor, in teamTable))
+                    { whAnchor = expAnchor; whSlotMode = true; }
+                    else if (TryNeighborWarehouselessDistrict(in dtable, haveDistricts, owner,
+                                 DistrictGrid.ToDistrict(pendAnchor), in teamTable, out int2 nbAnchor))
+                    { whAnchor = nbAnchor; whSlotMode = true; }
+                    else if (haveDistricts && dtable.Targets.IsCreated
+                             && dtable.Targets.TryGetValue(owner, out int2 tgtD)
+                             && !_whDistricts.Contains(new int3(owner, tgtD.x, tgtD.y)))
+                    { whAnchor = DistrictGrid.Center(tgtD); whSlotMode = true; }
+                    else
+                        whAnchor = pendAnchor;
                 }
                 bool whSpatial = false;
                 int2 whDomCell = default; int whSum = 0, whDelta = 0;
@@ -502,6 +647,12 @@ namespace CitySim
                         Debug.Log($"[CityAI] P{owner}: {ResName(res)} 쿨다운 만료 — 기준선 재설정"
                                   + $" (lag 샘플 {e.Value.Sum - stale}건 폐기)");
                         _lastNoCoverage[ckey] = e.Value.Sum;       // 재기준선 — lag 샘플 폐기
+                        // 셀별 기준선도 동시 스냅샷(2026-07-12): 셀 선택이 "재기준선 이후 신규
+                        //   미스"만 보게 — 해소된 셀의 역사적 누적 더미가 우세를 영구 독점해
+                        //   커버된 자리 옆에 반복 건설되는 결함(경찰서 인접 3개) 차단.
+                        foreach (var sc in stats)
+                            if (sc.Key.x == owner && sc.Key.w == res)
+                                _cellSeen[sc.Key] = sc.Value.FailNoCoverage;
                         _demandRebaselineAt.Remove(ckey);
                         continue;                                  // 다음 틱부터 '반영 후' 수요만 판단
                     }
@@ -529,7 +680,9 @@ namespace CitySim
                             foreach (var s in stats)
                             {
                                 if (s.Key.x != owner || s.Key.w != DemandResource.WarehouseId) continue;
-                                int nc = s.Value.FailNoCoverage;
+                                // 신규 미스(재기준선 이후)만 — 누적 더미의 우세 독점 차단(2026-07-12).
+                                _cellSeen.TryGetValue(s.Key, out int seenNc);
+                                int nc = s.Value.FailNoCoverage - seenNc;
                                 if (nc <= bestNc) continue;
                                 var k = new int4(owner, s.Key.y, s.Key.z, DemandResource.WarehouseId);
                                 _demandAttempts.TryGetValue(k, out int at);
@@ -544,24 +697,51 @@ namespace CitySim
                         continue;
                     }
 
-                    // 반복 무효 건설 차단 — **욕구(공간) 수요 전용**. "N채 지어도 수요가 안 꺼짐 = 도달
-                    //   불가"는 공간 추론이라 물량(안 꺼짐 = 더 필요)엔 오판 → commodity 면제(2026-07-10).
-                    //   창고는 위에서 셀 단위 처리.
-                    var bkey = new int4(owner, e.Value.DomCell.x, e.Value.DomCell.y, res);
+                    // 욕구 채널도 **셀 단위 선택**(2026-07-11 — 동형 결함 3번째: 우세 셀 블랙리스트가
+                    //   채널 전체를 침묵 → 식당이 영영 안 서고 그 팀은 주택만 확장, 유저 실측). 비블랙
+                    //   리스트 셀 중 최대 미스를 고름 — 실패 지역은 셀 단위로 포기되고 수요는 다음
+                    //   지역으로 이월. 물량(commodity)은 블랙리스트 자체 면제(안 꺼짐 = 더 필요, 2026-07-10).
+                    int2 domCell = e.Value.DomCell;
                     if (!DemandResource.IsCommodity(res))
                     {
-                        _demandAttempts.TryGetValue(bkey, out int attempts);
-                        if (attempts >= DemandAttemptCap) continue;
+                        // 해소 건물이 해석 불가능한 욕구는 후보 제외(2026-07-12): 새 비트(치안 등)의
+                        //   프리팹이 아직 미등록이면 mainKey=0 → 뒤에서 continue인데, 그 전에 tier
+                        //   경쟁에서 이겨 팀의 수요 슬롯을 영구 점유(식당·생산자 수요 아사)할 수
+                        //   있다. 프리팹 등록(L2 자동 파생) 즉시 자동 활성.
+                        uint nm = 1u << res;
+                        bool resolvable = (haveL2 && LookupHelper.TryGetMainKey(nm, l2, out int rk) && rk > 0)
+                                          || HardcodedNeedMainKey(res) > 0;
+                        if (!resolvable) continue;
+
+                        int bestNc2 = 0; int2 pick2 = default;
+                        foreach (var s in stats)
+                        {
+                            if (s.Key.x != owner || s.Key.w != res) continue;
+                            // 신규 미스(재기준선 이후)만 — 누적 더미의 우세 독점 차단(2026-07-12).
+                            _cellSeen.TryGetValue(s.Key, out int seen2);
+                            int nc2 = s.Value.FailNoCoverage - seen2;
+                            if (nc2 <= bestNc2) continue;
+                            var k2 = new int4(owner, s.Key.y, s.Key.z, res);
+                            _demandAttempts.TryGetValue(k2, out int at2);
+                            if (at2 >= DemandAttemptCap) continue;   // 이 셀만 제외 — 채널 유지
+                            bestNc2 = nc2; pick2 = new int2(s.Key.y, s.Key.z);
+                        }
+                        if (bestNc2 <= 0)
+                        {
+                            Debug.Log($"[CityAI] P{owner}: {ResName(res)} 수요 전 셀 블랙리스트 — 침묵 중(delta={delta})");
+                            continue;
+                        }
+                        domCell = pick2;
                     }
 
                     int tier = ResourceTier(res);
                     if (tier < bestTier || (tier == bestTier && delta > bestDelta))
-                    { bestTier = tier; bestDelta = delta; bestRes = res; bestCur = e.Value.Sum; bestCell = e.Value.DomCell; }
+                    { bestTier = tier; bestDelta = delta; bestRes = res; bestCur = e.Value.Sum; bestCell = domCell; }
                 }
                 // ── 창고 전용 레인 확정(수요 슬롯과 독립 — 이후 continue에 영향받지 않게 먼저) ──
                 if (whPending || whSpatial)
                 {
-                    var wopt = ResolveOption(1005, in metaLookup, in entranceLookup);   // ⚠ 임시 키(검증용)
+                    var wopt = ResolveOption(whMainKey, in metaLookup, in entranceLookup);
                     if (wopt.Key > 0)
                     {
                         wopt.IsWarehouse = true;
@@ -569,6 +749,16 @@ namespace CitySim
                         {
                             int2 wro = DemandGrid.ToRealOrigin(whDomCell);
                             whAnchor = new int2(wro.x + DemandGrid.CellSize / 2, wro.y + DemandGrid.CellSize / 2);
+                            // 지구 슬롯 스냅(2026-07-11): ① 미스 셀 지구에 내 창고 없음 → 앵커 = 지구 중심
+                            //   (피치=커버 반경 유도라 중심 창고 1채가 지구 전체 커버) ② 이미 있음(포화) →
+                            //   이웃 창고-없는 지구로 이월(지구 단위 타일링 — 기존 창고 옆 재착지 차단)
+                            //   ③ 이웃도 없으면 미스 셀 유지(진짜 커버 구멍 수선 — 게이트 없는 유일 경로).
+                            int2 whDd = DistrictGrid.ToDistrict(whAnchor);
+                            if (!_whDistricts.Contains(new int3(owner, whDd.x, whDd.y)))
+                            { whAnchor = DistrictGrid.Center(whDd); whSlotMode = true; }
+                            else if (TryNeighborWarehouselessDistrict(in dtable, haveDistricts, owner,
+                                         whDd, in teamTable, out int2 nbAnchor2))
+                            { whAnchor = nbAnchor2; whSlotMode = true; }
                             // 공간 창고 수요 부기(기존 수요 슬롯과 동일 규약): 기준선/재기준선 + attempts/재개발.
                             _lastNoCoverage[new int2(owner, DemandResource.WarehouseId)] = whSum;
                             _demandRebaselineAt[new int2(owner, DemandResource.WarehouseId)]
@@ -584,11 +774,14 @@ namespace CitySim
                                 _redevelopAttempts[wakey] = wredev + 1;
                                 _demandAttempts[wakey]    = 0;
                             }
-                            Debug.Log($"[CityAI] P{owner} 창고건설(전용 레인): delta={whDelta} 수요셀={whDomCell} 앵커={whAnchor}");
+                            Debug.Log($"[CityAI] P{owner} 창고건설(전용 레인): delta={whDelta} 수요셀={whDomCell}"
+                                + $" 앵커={whAnchor} {(whSlotMode ? "(지구 슬롯)" : "(미스셀 폴백 — 구멍 수선)")}");
                         }
                         else
-                            Debug.Log($"[CityAI] P{owner} 창고 예약 건설(확장 앵커) 앵커={whAnchor}");
+                            Debug.Log($"[CityAI] P{owner} 창고 예약 건설 앵커={whAnchor}"
+                                + $" {(whSlotMode ? "(지구 슬롯)" : "(⚠ 폴백: 실패지점=최근접창고 — 연접 위험)")}");
 
+                        wopt.SlotAnchored = whSlotMode;   // 배치 게이트: 슬롯 모드 = 창고 보유 지구 착지 금지
                         _whDemandOpts[t]  = wopt;
                         _whDemandCells[t] = whAnchor;
                     }
@@ -655,7 +848,10 @@ namespace CitySim
                     // case b (commodity 생산자=제분소·농장): 풀 공유라 소비자 옆이 아니라 가장 가까운
                     //   자기 창고 근처로(push/pull 커버 접속점) + 커버 검증 강제(계획 C — 근처 '편향'만으론
                     //   반경 밖에 떨어져 미커버 생산자→연결수요→창고 연접 나선의 연료가 됨).
-                    mainKey = HardcodedCommodityProducer(DemandResource.ToCommodity(bestRes));  // ⚠ 임시(검증용)
+                    //   commodity→생산자 = 파생 결정 테이블(능력 원천, 다지기 ③) 우선, 미파생 폴백.
+                    var pc = DemandResource.ToCommodity(bestRes);
+                    if (!haveProducer || !prodLookup.Table.TryGetValue((int)pc, out mainKey))
+                        mainKey = HardcodedCommodityProducer(pc);   // ⚠ 미베이크 폴백
                     whereCell = whCell;
                     needsWarehouse = true;
                 }
@@ -663,16 +859,32 @@ namespace CitySim
                 {
                     // 계획 C "창고 먼저": 창고 0채면 생산자는 어디에도 커버될 수 없음 → 이 틱은 창고를
                     //   짓고, 생산자는 수요 지속(쿨다운 미개시)으로 다음 틱 재선택된다.
-                    mainKey = 1005;
+                    mainKey = whMainKey;
                     warehouseFirst = true;
                 }
                 if (mainKey <= 0) continue;
                 var opt = ResolveOption(mainKey, in metaLookup, in entranceLookup);
                 if (opt.Key <= 0) continue;
                 opt.NeedsWarehouse = needsWarehouse;
-                opt.IsWarehouse    = mainKey == 1005;   // 창고 = 타일링 선호(계획 B) — 모든 창고 경로 공통
-                // 계획 D: 욕구 공급자(식당 등) = 커버 선호(태어날 때 풀 연결). 욕구 branch에서만 참.
-                opt.PrefersCovered = !DemandResource.IsWarehouse(bestRes) && !DemandResource.IsCommodity(bestRes);
+                opt.IsWarehouse    = mainKey == whMainKey;   // 창고 = 타일링 선호(계획 B) — 모든 창고 경로 공통
+                // 커버형 v1: 오라 공급자(경찰서류) — 지구 슬롯 선호(오라 없는 지구), 창고 커버 무관.
+                if (haveProducer && prodLookup.AuraKeys.IsCreated
+                    && prodLookup.AuraKeys.TryGetValue(mainKey, out int auraR))
+                { opt.IsAura = true; opt.AuraRadius = auraR; }
+                // 계획 D: 방문형 욕구 공급자(식당 등) = 창고 커버 선호(태어날 때 풀 연결 — 입력 pull).
+                //   오라형은 재고가 없으므로 제외.
+                opt.PrefersCovered = !DemandResource.IsWarehouse(bestRes) && !DemandResource.IsCommodity(bestRes)
+                                     && !opt.IsAura;
+
+                // 오라 앵커 지구 스냅(2026-07-12 연접 픽스 — 창고 앵커 스냅과 동형): 수요 셀 지구에
+                //   내 오라가 없으면 앵커 = 지구 중심(반경 20 ≥ 지구 스팬 → 중심 1채가 지구 전체
+                //   커버 = 인접 셀 수요까지 일괄 소화). 이미 있으면 미스 셀 유지(경계 구멍 수선).
+                if (opt.IsAura)
+                {
+                    int2 adx = DistrictGrid.ToDistrict(whereCell);
+                    if (!_auraDistricts.Contains(new int3(owner, adx.x, adx.y)))
+                        whereCell = DistrictGrid.Center(adx);
+                }
 
                 _demandOpts[t] = opt;
                 _demandCells[t] = whereCell;
@@ -749,47 +961,139 @@ namespace CitySim
         const int RedevelopEscalate = 2;
         const int RedevelopCap      = 2;
 
+        // 지구 전략 평가(2026-07-11) — 확장 목표 지구 점수 = Room(개발 여지) + 자원·인접 가중
+        //   ± 경쟁항(이웃 지구의 적 확장 프런트 × 가중). 가중 음수 = 회피(기본, 국경 churn 억제),
+        //   양수 = 선점 — 팩션 성향 도입 시 FactionConfig 오버라이드가 확장점. 전부 튜닝 대상.
+        const int TargetMinRoom         = 48;    // 지구(24²=576셀)의 ~8% 미만 = 목표 제외(회랑·포화 도심 탈락)
+        const int TargetResourceWeight  = 2;
+        const int TargetAdjacencyWeight = 16;    // 내 도로 보유 이웃 지구 수(0~8) — 연결 비용 근사
+        const int TargetContestWeight   = -64;   // 기본 회피: 적 확장 프런트 인접 지구 감점
+
+        // 확장 목표 지구 선정(Burst 잡 안, 팀당 1회/일): 후보 = 내 도로 보유 지구 ∪ 그 8-이웃
+        //   (테이블 존재분), 적(타 팀) 도로·건물·영토 지구와 Room 임계 미달 제외. 점수 최대 지구의
+        //   중심이 주택/폴백 확장(GrowOneBlock)의 소프트 bias가 된다. 동점 = (y,x) 사전순(결정적).
+        static bool SelectTargetDistrict(int owner, in NativeHashMap<int2, DistrictStat> districts,
+            in TeamTable teams, out int2 best, out int bestScore)
+        {
+            best = default; bestScore = int.MinValue;
+            int myTeam = teams.Get(owner);
+            int myBit  = 1 << owner;
+            foreach (var kv in districts)
+            {
+                var s = kv.Value;
+                if (s.Room < TargetMinRoom) continue;
+
+                // 내 도시 인접성: 자기 지구이거나 8-이웃에 내 도로 지구가 있어야 후보.
+                bool mine = (s.RoadOwners & myBit) != 0;
+                int adjMine = 0;
+                for (int dz = -1; dz <= 1; dz++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+                    if (districts.TryGetValue(kv.Key + new int2(dx, dz), out var nb)
+                        && (nb.RoadOwners & myBit) != 0) adjMine++;
+                }
+                if (!mine && adjMine == 0) continue;
+
+                // 적 존재 지구 제외(배치 게이트와 일관 — 목표로 삼아도 지을 수 없음).
+                if (HasEnemyPresence(in s, owner, myTeam, in teams)) continue;
+
+                // 경쟁항: 이웃 지구의 적 확장 프런트(전일 도로 차분) 수.
+                int enemyFront = 0;
+                for (int dz = -1; dz <= 1; dz++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+                    if (!districts.TryGetValue(kv.Key + new int2(dx, dz), out var nb)) continue;
+                    for (int o = 0; o < 8; o++)
+                        if (o != owner && (nb.FrontOwners & (1 << o)) != 0 && teams.Get(o) != myTeam)
+                        { enemyFront++; break; }
+                }
+
+                int score = s.Room + s.Resource * TargetResourceWeight
+                          + adjMine * TargetAdjacencyWeight
+                          + enemyFront * TargetContestWeight;
+                if (score > bestScore
+                    || (score == bestScore && (kv.Key.y < best.y || (kv.Key.y == best.y && kv.Key.x < best.x))))
+                { bestScore = score; best = kv.Key; }
+            }
+            return bestScore != int.MinValue;
+        }
+
+        // 지구에 적(타 팀)의 도로·건물·영토가 있는가 — 목표/앵커 공용 게이트.
+        static bool HasEnemyPresence(in DistrictStat s, int owner, int myTeam, in TeamTable teams)
+        {
+            int pres = s.RoadOwners | s.BldOwners;
+            for (int o = 0; o < 8; o++)
+                if (o != owner && (pres & (1 << o)) != 0 && teams.Get(o) != myTeam) return true;
+            if (s.TerrTeams != 0)
+            {
+                int myMask = (uint)myTeam < 8 ? 1 << myTeam : 0;
+                if ((s.TerrTeams & ~myMask) != 0) return true;
+            }
+            return false;
+        }
+
         // (owner,resId) 누적 집계 — 합 + 우세(최대) 수요 셀.
         struct CurAgg { public int Sum; public int DomVal; public int2 DomCell; }
 
-        // 확장 창고 앵커(2026-07-10 창고 정책): 자기 도로셀 중 **기존 창고 커버 밖** + **주변 빈 셀
-        //   (개발 여지) 최대**인 셀. 풀 공유라 기존 창고와의 거리는 무의미 — 개발 여지만 중요. 동점은
-        //   near(실패 지점) 근접 우선. 커버 밖 도로셀이 없으면 false(호출부 폴백).
-        //   메인 전용·저빈도(예약 이벤트당 1회): 레이어는 **읽기만**(라이브 쓰기 함정과 무관).
-        //   빈 셀 근사 = 맵 안(Terrain 존재) & 미점유 & 비도로 — 물/지형 부적합은 배치 검증이 거름.
-        bool TryFindExpansionAnchor(in GridLayers glayers, int owner, int2 near, out int2 anchor,
-            in TeamTable teamTable)
+        // 확장 창고 앵커 v2(지구 테이블, 2026-07-11): 구 "도로셀 전수 × 7×7 빈땅 스캔"(¼ 샘플링
+        //   후에도 CPU 스파이크 용의자) 은퇴 — 전일 발행 지구 테이블에서 **내 도로 보유 + 내 창고
+        //   없음 + 적 없음 + Room 임계 이상** 지구 중 Room 최대를 골라 그 **중심(슬롯)**을 앵커로.
+        //   피치=커버 반경 유도(24 ≤ BFS 30)라 슬롯 중심 창고 1채 = 지구 온전 커버. 동점은 near
+        //   (실패 지점) 근접. 테이블 없음(첫날)/후보 없음 → false(호출부가 pendAnchor 유지).
+        //   Room 임계가 회랑 지구를 걸러 "회랑 셀 우세 독점" 문제의 거시 해법을 겸한다.
+        bool TryFindExpansionAnchor(in DistrictTable table, bool haveTable, int owner, int2 near,
+            out int2 anchor, in TeamTable teamTable)
         {
             anchor = near;
-            int bestEmpty = -1; long bestD = long.MaxValue;
-            foreach (var kv in glayers.RoadLayer)
+            if (!haveTable) return false;
+            int myTeam = teamTable.Get(owner);
+            int myBit  = 1 << owner;
+            int bestRoom = 0; long bestD = long.MaxValue; bool found = false;
+            foreach (var kv in table.Stats)
             {
-                if (kv.Value.OwnerLocalId != owner) continue;
-                int2 c = kv.Key;
-                // ¼ 샘플링(2026-07-11 CPU): 도로셀 전수 × 49 박스는 대도시에서 메인 스파이크 —
-                //   앵커는 대략적이면 충분(배치가 재검증). 짝수 좌표만.
-                if ((c.x & 1) != 0 || (c.y & 1) != 0) continue;
-                if (_whCovered.ContainsKey(new int3(owner, c.x, c.y))) continue;   // 이미 커버 → 확장 아님
-                // 적영토·경합지 제외(2026-07-11): "빈 땅 최대"는 국경지대를 선호하기 쉬움 → 갓 지은
-                //   창고가 이웃 영토 확장에 즉시 함락(capture=파괴)되는 churn 방지.
-                if (TerritoryOps.InEnemyTerritory(in glayers.TerritoryLayer, c, owner, in teamTable)
-                    || TerritoryOps.IsContested(in glayers.TerritoryLayer, c)) continue;
+                var s = kv.Value;
+                if ((s.RoadOwners & myBit) == 0) continue;                    // 내 도로 없음 = 닿을 수 없음
+                if (s.Room < TargetMinRoom) continue;                         // 여지 없음(회랑·포화) 제외
+                if (_whDistricts.Contains(new int3(owner, kv.Key.x, kv.Key.y))) continue;   // 이미 창고
+                // 적 존재 지구 제외(국경 churn 방지 — 구 앵커의 적영토 제외 계승).
+                if (HasEnemyPresence(in s, owner, myTeam, in teamTable)) continue;
 
-                int empty = 0;
-                for (int dz = -3; dz <= 3; dz++)
-                for (int dx = -3; dx <= 3; dx++)
-                {
-                    int2 n = c + new int2(dx, dz);
-                    if (glayers.TerrainLayer.ContainsKey(n)
-                        && !glayers.OccupancyLayer.ContainsKey(n)
-                        && !glayers.RoadLayer.ContainsKey(n)) empty++;
-                }
+                int2 c = DistrictGrid.Center(kv.Key);
                 long ddx = c.x - near.x, ddz = c.y - near.y;
                 long d = ddx * ddx + ddz * ddz;
-                if (empty > bestEmpty || (empty == bestEmpty && d < bestD))
-                { bestEmpty = empty; bestD = d; anchor = c; }
+                if (s.Room > bestRoom || (s.Room == bestRoom && d < bestD))
+                { bestRoom = s.Room; bestD = d; anchor = c; found = true; }
             }
-            return bestEmpty > 0;
+            return found;
+        }
+
+        // 이웃 창고-없는 지구 리다이렉트(2026-07-11 연접 픽스): from 지구가 이미 내 창고를 보유하면
+        //   8-이웃 중 "창고 없음 + Room≥임계 + 적 없음" 지구의 중심으로 앵커 이월 — 창고 수요가
+        //   포화 지구 안(=기존 창고 옆)이 아니라 다음 지구로 확산(지구 단위 타일링). 이웃 중심은
+        //   from 지구 도로에서 최대 ~피치 1.5배라 reach guard(20) 안팎 — 안 닿으면 NoSpot으로
+        //   정직하게 실패하고, 도로가 그쪽으로 자란 뒤(전략 bias) 재시도된다. 이웃에 내 도로가
+        //   없어도 됨(경계 도로에서 candidates가 닿음).
+        bool TryNeighborWarehouselessDistrict(in DistrictTable table, bool haveTable, int owner,
+            int2 fromDistrict, in TeamTable teamTable, out int2 anchor)
+        {
+            anchor = default;
+            if (!haveTable) return false;
+            int myTeam = teamTable.Get(owner);
+            int bestRoom = 0; bool found = false;
+            for (int dz = -1; dz <= 1; dz++)
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                if (dx == 0 && dz == 0) continue;
+                int2 d = fromDistrict + new int2(dx, dz);
+                if (!table.Stats.TryGetValue(d, out var s)) continue;
+                if (s.Room < TargetMinRoom) continue;
+                if (_whDistricts.Contains(new int3(owner, d.x, d.y))) continue;
+                if (HasEnemyPresence(in s, owner, myTeam, in teamTable)) continue;
+                if (s.Room > bestRoom) { bestRoom = s.Room; anchor = DistrictGrid.Center(d); found = true; }
+            }
+            return found;
         }
 
         // 수요 resource id → 로그용 이름(메인 전용 — managed string).
@@ -798,11 +1102,13 @@ namespace CitySim
              : DemandResource.IsCommodity(resId) ? DemandResource.ToCommodity(resId).ToString()
              : $"Need#{resId}";
 
-        // ⚠ 임시 하드코딩(검증용) — NeedMaps 재베이크/등록창 없이 demand→건물 루프를 확인하는 폴백.
-        //   L2(정식 결정 테이블)가 비었을 때만 발동. "프리팹 접근 구도" 확정 시 제거.
+        // ⚠ 미베이크 폴백(다지기 ② 이후) — L2는 프리팹 능력에서 자동 파생(LookupBuildSystem).
+        //   프리팹에 BuildingAuthoring Relief가 채워지면 L2 행이 자동 생성돼 이 폴백은 침묵.
+        //   전 건물 베이크 확인 후 삭제 예정.
         static int HardcodedNeedMainKey(int needBit) => needBit == 0 ? 1002 : 0;   // Hunger → restarant_h_small(1002)
 
-        // ⚠ 임시 하드코딩(검증용) — commodity→producer. 능력(ProductionJob 출력)에서 파생표로 교체 예정.
+        // ⚠ 미베이크 폴백(다지기 ③ 이후) — 정식 경로 = ProducerLookup(능력 ProductionJob.RecipeOutput
+        //   파생). 프리팹 베이크 확인 후 삭제 예정.
         static int HardcodedCommodityProducer(Commodity c) => c switch
         {
             Commodity.Flour => 1003,   // 제분소 powder_h
@@ -864,6 +1170,16 @@ namespace CitySim
                                                   //   후보 선호(태어날 때 풀 연결 — Flour 등 입력 pull).
                                                   //   소프트: 커버 후보 없으면 미커버 폴백(시민 근접이 우선,
                                                   //   창고는 커버미스로 뒤따라옴)
+            public bool         SlotAnchored;     // 연접 픽스(2026-07-11): 앵커가 "창고 없는 지구" 중심 —
+                                                  //   배치 후보가 **내 창고 보유 지구에 못 앉음**(지구당 1채
+                                                  //   하드 게이트). false(미스셀/최후 폴백)만 게이트 면제
+                                                  //   (진짜 커버 구멍 수선 경로).
+            public bool         IsAura;           // 커버형 v1(2026-07-12): 오라 공급자(경찰서류) —
+                                                  //   "오라 없는 지구"의 중앙 슬롯 선호(창고/공급자와 동형).
+            public int          AuraRadius;       // 오라 반경(셀) — **도달 가드**: 앵커(수요/지구 중심)에서
+                                                  //   맨해튼 반경 밖 후보 제외(못 덮는 배치 = 수요 안 꺼짐 →
+                                                  //   attempts 3회 연접 루프의 원인, 2026-07-12 유저 실측
+                                                  //   "경찰서 인접 3개" = DemandAttemptCap 지문).
         }
 
         // Burst 잡 안에서 못 찍는 로그를 완료 후 메인에서 출력하기 위한 이벤트.
@@ -950,6 +1266,62 @@ namespace CitySim
         }
 
         // ══════════════════════════════════════════════════════════════════════
+        //  ①-b DistrictSurveyJob — 스냅샷 → 지구 테이블 (2026-07-11 지구 그리드)
+        //    잡 체인: SnapshotJob → 여기 → GrowthJob(같은 틱 소비). 완료 후 메인이
+        //    front(DistrictTable 싱글톤)로 복사 발행 — 오버레이/다음 틱 창고 앵커용.
+        // ══════════════════════════════════════════════════════════════════════
+        [BurstCompile]
+        struct DistrictSurveyJob : IJob
+        {
+            [ReadOnly] public GrowthSnap Snap;
+            [ReadOnly] public NativeHashMap<int2, byte> PrevRoadOwners;   // 전일 도로 owner 마스크
+            public NativeHashMap<int2, DistrictStat> Out;
+
+            public void Execute()
+            {
+                foreach (var kv in Snap.TerrainLayer)
+                {
+                    int2 d = DistrictGrid.ToDistrict(kv.Key);
+                    Out.TryGetValue(d, out var s);
+                    if (CellBuildable(kv.Key, in Snap) && !Snap.WaterCells.Contains(kv.Key)) s.Room++;
+                    if (Snap.ResourceBlocked.Contains(kv.Key)) s.Resource++;
+                    if (Snap.TerritoryLayer.TryGetValue(kv.Key, out int team) && (uint)team < 8)
+                        s.TerrTeams |= (byte)(1 << team);
+                    Out[d] = s;
+                }
+                foreach (var kv in Snap.RoadLayer)
+                {
+                    int o = kv.Value.OwnerLocalId;
+                    if ((uint)o >= 8) continue;
+                    int2 d = DistrictGrid.ToDistrict(kv.Key);
+                    Out.TryGetValue(d, out var s);
+                    s.RoadOwners |= (byte)(1 << o);
+                    Out[d] = s;
+                }
+                foreach (var kv in Snap.OccupancyLayer)
+                {
+                    if (kv.Value.Type != OccupantType.Building) continue;
+                    int o = kv.Value.OwnerLocalId;
+                    if ((uint)o >= 8) continue;
+                    int2 d = DistrictGrid.ToDistrict(kv.Key);
+                    Out.TryGetValue(d, out var s);
+                    s.BldOwners |= (byte)(1 << o);
+                    Out[d] = s;
+                }
+                // 확장 프런트 = 어제 없던 도로 owner 비트(경쟁항 입력).
+                var keys = Out.GetKeyArray(Allocator.Temp);
+                for (int i = 0; i < keys.Length; i++)
+                {
+                    var s = Out[keys[i]];
+                    PrevRoadOwners.TryGetValue(keys[i], out byte prev);
+                    s.FrontOwners = (byte)(s.RoadOwners & ~prev);
+                    Out[keys[i]] = s;
+                }
+                keys.Dispose();
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
         //  ② GrowthJob — 팀별 성장 계산 (느림, 스냅샷만 읽음 → 프레임에 걸쳐 실행)
         // ══════════════════════════════════════════════════════════════════════
         [BurstCompile]
@@ -962,7 +1334,11 @@ namespace CitySim
             [ReadOnly] public NativeArray<BuildOption> WhOpts;       // 플레이어별 창고 전용 레인(Key=0=없음)
             [ReadOnly] public NativeArray<int2>       WhCells;       // 창고 레인 앵커
             [ReadOnly] public NativeHashMap<int3, int> WhCovered;    // (owner,x,y)→잔여 깊이(계획 C·커버 근사)
-            [ReadOnly] public NativeArray<int3>       WhOrigins;     // (owner,x,y) 창고 원점(계획 F 주거 후순위)
+            [ReadOnly] public NativeHashMap<int2, DistrictStat> Districts;   // 지구 테이블(서베이, 같은 틱)
+            [ReadOnly] public NativeHashSet<int3>     WhDistricts;  // (owner,dx,dy) 창고 보유 지구(슬롯 판정)
+            [ReadOnly] public NativeHashSet<int3>     SupDistricts; // (owner,dx,dy) 공급자 보유 지구(슬롯 판정)
+            [ReadOnly] public NativeHashSet<int3>     AuraDistricts;// (owner,dx,dy) 오라 보유 지구(슬롯 판정)
+            public NativeArray<int3> TargetOut;                      // 팀별 확장 목표 지구(x,y,score) — 발행/로그용
             public BuildOption  OptA, OptB;
             public GrowthConfig Cfg;
             public TeamTable    TeamsTable;
@@ -1000,6 +1376,15 @@ namespace CitySim
                     ComputeBaseReached(in Snap, owner, grid.Anchor,
                         math.max(1, Cfg.BaseSeedRadius), ref baseReached);
 
+                    // 전략 확장 목표(2026-07-11 지구 평가): 지구 테이블에서 목표 지구 1개 선정 →
+                    //   주택/폴백 확장(아래 2)의 **소프트 bias**(품질 키 유지 + 거리 기준점만 교체,
+                    //   축 균형 Bal은 목표가 대신함). 수요·창고 레인(하드 bias)은 무관.
+                    bool hasTarget = SelectTargetDistrict(owner, in Districts, in TeamsTable,
+                        out int2 targetD, out int targetScore);
+                    int2 strategicCell = hasTarget ? DistrictGrid.Center(targetD) : default;
+                    TargetOut[t] = hasTarget ? new int3(targetD.x, targetD.y, targetScore)
+                                             : new int3(int.MinValue, 0, 0);
+
                     // 0) 욕구 주도 배치(budget A=틱당 수요 건물 1개): STEP 3 WHERE — 수요 셀(굶주린
                     //    소비자 위치) 최근접 프런티어에 배치 → producer를 소비자 근처로 co-locate(물류·노동
                     //    연결). 수요 없음(Key=0)이면 건너뜀 → 아래 기존 로직 그대로(폴백, 회귀 0).
@@ -1010,7 +1395,8 @@ namespace CitySim
                     {
                         bool builtWh = TryPlaceDemandInterior(in Snap, in grid, owner, in whOpt,
                             WhCells[t], in outside, encLo, encHi, in TeamsTable, EnemyBuffer,
-                            in baseReached, in WhCovered, ref claimed, ref BldOut);
+                            in baseReached, in WhCovered, in WhDistricts, in SupDistricts, in AuraDistricts,
+                            ref claimed, ref BldOut);
                         if (builtWh)
                             LogOut.Add(new GrowthLog
                             { Owner = owner, Kind = GrowthLog.DemandInterior, A = whOpt.Key });
@@ -1018,7 +1404,8 @@ namespace CitySim
                         {
                             builtWh = GrowOneBlock(in Snap, in grid, owner, in whOpt,
                                 in Cfg, in outside, encLo, encHi, in TeamsTable, EnemyBuffer, in baseReached,
-                                in WhCovered, WhCells[t], true, ref rng, ref RoadOut, ref BldOut, ref LogOut);
+                                in WhCovered, in WhDistricts, in SupDistricts, in AuraDistricts,
+                                WhCells[t], true, true, ref rng, ref RoadOut, ref BldOut, ref LogOut);
                             LogOut.Add(new GrowthLog
                             {
                                 Owner = owner,
@@ -1037,7 +1424,8 @@ namespace CitySim
                         //   전투로 뚫린 내부 구멍도 서비스로 복구). 빈 구획/유효 위치 없으면 프런티어 폴백(기존).
                         builtDemand = TryPlaceDemandInterior(in Snap, in grid, owner, in demandOpt,
                             DemandCells[t], in outside, encLo, encHi, in TeamsTable, EnemyBuffer,
-                            in baseReached, in WhCovered, ref claimed, ref BldOut);
+                            in baseReached, in WhCovered, in WhDistricts, in SupDistricts, in AuraDistricts,
+                            ref claimed, ref BldOut);
                         if (builtDemand)
                             LogOut.Add(new GrowthLog
                             { Owner = owner, Kind = GrowthLog.DemandInterior, A = demandOpt.Key });
@@ -1045,7 +1433,8 @@ namespace CitySim
                         {
                             builtDemand = GrowOneBlock(in Snap, in grid, owner, in demandOpt,
                                 in Cfg, in outside, encLo, encHi, in TeamsTable, EnemyBuffer, in baseReached,
-                                in WhCovered, DemandCells[t], true, ref rng, ref RoadOut, ref BldOut, ref LogOut);
+                                in WhCovered, in WhDistricts, in SupDistricts, in AuraDistricts,
+                                DemandCells[t], true, true, ref rng, ref RoadOut, ref BldOut, ref LogOut);
                             LogOut.Add(new GrowthLog
                             {
                                 Owner = owner,
@@ -1061,7 +1450,8 @@ namespace CitySim
                     //    통과 시에만(수요 주도). 게이트 닫힘 = 빈 슬롯이 서비스·생산자·창고의 경쟁장으로 보존.
                     bool wantHousing = Teams[t].WantHousing;
                     bool worked = wantHousing && DevelopParcels(in Snap, in grid, owner, in OptA, in OptB,
-                        in outside, encLo, encHi, in TeamsTable, EnemyBuffer, in baseReached, in WhOrigins,
+                        in outside, encLo, encHi, in TeamsTable, EnemyBuffer, in baseReached,
+                        in WhDistricts, in SupDistricts,
                         budget, ref claimed, ref BldOut, ref rng);
 
                     // 2) 갇힌 구획 없음 & 수요 건물도 안 지었으면 → 바깥 확장 1회(중복 프런티어 방지).
@@ -1078,13 +1468,17 @@ namespace CitySim
                         }
                         else { first = aOk ? OptA : OptB; second = default; }
 
+                        // 전략 목표가 있으면 소프트 bias(hardBias=false): 품질 랭킹 유지 + 거리
+                        //   기준점 = 목표 지구 중심, Bal(축 균형)은 끔(거시 자리를 목표가 대신).
                         bool grew = first.Key > 0 && GrowOneBlock(in Snap, in grid, owner, in first,
                             in Cfg, in outside, encLo, encHi, in TeamsTable, EnemyBuffer,
-                            in baseReached, in WhCovered, default, false, ref rng, ref RoadOut, ref BldOut, ref LogOut);
+                            in baseReached, in WhCovered, in WhDistricts, in SupDistricts, in AuraDistricts,
+                            strategicCell, hasTarget, false, ref rng, ref RoadOut, ref BldOut, ref LogOut);
                         if (!grew && second.Key > 0 && second.Key != first.Key)
                             GrowOneBlock(in Snap, in grid, owner, in second,
                                 in Cfg, in outside, encLo, encHi, in TeamsTable, EnemyBuffer,
-                                in baseReached, in WhCovered, default, false, ref rng, ref RoadOut, ref BldOut, ref LogOut);
+                                in baseReached, in WhCovered, in WhDistricts, in SupDistricts, in AuraDistricts,
+                                strategicCell, hasTarget, false, ref rng, ref RoadOut, ref BldOut, ref LogOut);
                     }
 
                     claimed.Dispose();
@@ -1112,7 +1506,9 @@ namespace CitySim
             in GrowthConfig cfg,
             in NativeHashSet<int2> outside, int2 encLo, int2 encHi, in TeamTable teams, int enemyBuffer,
             in NativeHashSet<int2> baseReached, in NativeHashMap<int3, int> whCov,
-            int2 biasCell, bool hasBias,
+            in NativeHashSet<int3> whDistricts, in NativeHashSet<int3> supDistricts,
+            in NativeHashSet<int3> auraDistricts,
+            int2 biasCell, bool hasBias, bool hardBias,
             ref Unity.Mathematics.Random rng,
             ref NativeList<PlaceRoadCommand> roadOut, ref NativeList<PlaceBuildingRequest> bldOut,
             ref NativeList<GrowthLog> logOut)
@@ -1131,7 +1527,9 @@ namespace CitySim
             int extX = rmax.x - grid.Anchor.x;
             int extZ = rmax.y - grid.Anchor.y;
             int diff = extX - extZ;
-            bool balanceActive = math.abs(diff) > cfg.BalanceDeadband;
+            // 소프트 bias(전략 목표, 2026-07-11)일 때 축 균형은 끔 — 균형은 "거시 목표 부재 시의
+            //   둥근 도시 근사"였고 목표가 그 자리를 대신한다(1차 키라 공존 시 목표를 사실상 무시).
+            bool balanceActive = math.abs(diff) > cfg.BalanceDeadband && !(hasBias && !hardBias);
             bool lagIsX  = diff < 0;              // extX < extZ → X가 덜 자람(키워야 함)
             int  leadExt = lagIsX ? extZ : extX;  // 앞선 축 확장량(여기까지 따라잡으면 균형)
 
@@ -1184,6 +1582,9 @@ namespace CitySim
                     // 창고 도달 가드(2026-07-10): 앵커(요청 셀)에 실제로 닿을 수 없는 먼 블록은 후보 제외 —
                     //   못 닿는 창고를 지으면 요청이 안 꺼져 "창고 옆 창고" 연쇄가 됨. 후보 0 = 정직한 NoSpot.
                     if (hasBias && opt.IsWarehouse && candDist > WarehouseReachGuard) continue;
+                    // 오라 도달 가드(2026-07-12, 동형): 앵커에서 오라 반경(맨해튼 ≤ 반경 ⇒ 유클리드 ≤ 반경,
+                    //   보수적) 밖 블록 제외 — 못 덮는 경찰서는 수요가 안 꺼져 attempts 연접 루프가 됨.
+                    if (hasBias && opt.IsAura && opt.AuraRadius > 0 && candDist > opt.AuraRadius) continue;
 
                     nValid++;
                     int reach = lagIsX ? (O.x + K - grid.Anchor.x) : (O.y + K - grid.Anchor.y);
@@ -1208,14 +1609,17 @@ namespace CitySim
                 int bi = 0;
                 for (int i = 1; i < cands.Length; i++)
                 {
-                    bool better = hasBias
-                        ? cands[i].Dist < cands[bi].Dist    // WHERE 바이어스: 수요셀 최근접 우선
+                    // 하드 bias(수요·창고 레인) = 앵커 최근접 단독. 소프트 bias(전략 목표) =
+                    //   품질 랭킹 유지(Bal=0, Dist 기준점만 목표 지구 중심 — 마지막 키).
+                    bool better = hasBias && hardBias
+                        ? cands[i].Dist < cands[bi].Dist
                         : Better(cands[i], cands[bi]);
                     if (better) bi = i;
                 }
                 int2 pick = cands[bi].O;
                 cands.RemoveAtSwapBack(bi);
                 if (DevelopBlock(in layers, in grid, pick, K, Road, owner, in opt, in whCov,
+                        in whDistricts, in supDistricts, in auraDistricts,
                         ref roadOut, ref bldOut, ref rng))
                 { grew = true; break; }
             }
@@ -1312,6 +1716,8 @@ namespace CitySim
         static bool DevelopBlock(
             in GrowthSnap layers, in CityGrid grid, int2 O, int K, int Road,
             int owner, in BuildOption opt, in NativeHashMap<int3, int> whCov,
+            in NativeHashSet<int3> whDistricts, in NativeHashSet<int3> supDistricts,
+            in NativeHashSet<int3> auraDistricts,
             ref NativeList<PlaceRoadCommand> roadOut, ref NativeList<PlaceBuildingRequest> bldOut,
             ref Unity.Mathematics.Random rng)
         {
@@ -1331,7 +1737,8 @@ namespace CitySim
                 CollectRingRoads(in layers, O, K, Road, ref roadOrigins, ref roadAxis, ref plannedRoad);
 
             bool placed = TryPlaceBuildingInSpan(in layers, O, K,
-                in opt, owner, in whCov, in plannedRoad, out int2 bOrigin, out float bRot, ref rng);
+                in opt, owner, in whCov, in whDistricts, in supDistricts, in auraDistricts,
+                in plannedRoad, out int2 bOrigin, out float bRot, ref rng);
 
             if (placed)
             {
@@ -1438,6 +1845,8 @@ namespace CitySim
         static bool TryPlaceBuildingInSpan(
             in GrowthSnap layers, int2 spanOrigin, int spanSize,
             in BuildOption opt, int owner, in NativeHashMap<int3, int> whCov,
+            in NativeHashSet<int3> whDistricts, in NativeHashSet<int3> supDistricts,
+            in NativeHashSet<int3> auraDistricts,
             in NativeHashSet<int2> plannedRoad, out int2 bestOrigin, out float bestRot,
             ref Unity.Mathematics.Random rng)
         {
@@ -1448,12 +1857,21 @@ namespace CitySim
             //   유효성 검사는 기존 그대로(입구 도로닿음·평탄·맵안), 선택만 무작위. 시드 결정적.
             //   계획 B(창고 타일링): "입구 미커버" 후보용 선호 reservoir를 따로 유지 — 있으면 그쪽 사용,
             //   없으면 전체 reservoir 폴백(약간 중첩 허용). 비창고는 추가 rng 소비 없음(결정성 보존).
-            int cnt = 0, cntPref = 0;
+            //   지구 슬롯(2026-07-11): 인프라(창고/공급자)는 "자기 인프라 없는 지구의 중앙 슬롯" 후보를
+            //   최상위 reservoir로 — 슬롯 > 커버/타일링 선호 > 전체(전부 소프트 폴백).
+            int cnt = 0, cntPref = 0, cntSlot = 0;
             int2 prefOrigin = default; float prefRot = 0f;
+            int2 slotOrigin = default; float slotRot = 0f;
             for (int cz = 0; cz < spanSize; cz++)
             for (int cx = 0; cx < spanSize; cx++)
             {
                 int2 origin = spanOrigin + new int2(cx, cz);
+                // 지구당 창고 1채 게이트(슬롯 앵커 전용, 2026-07-11 연접 픽스) — 인테리어와 동일.
+                if (opt.IsWarehouse && opt.SlotAnchored)
+                {
+                    int2 od = DistrictGrid.ToDistrict(origin);
+                    if (whDistricts.Contains(new int3(owner, od.x, od.y))) continue;
+                }
                 for (int steps = 0; steps < stepCount; steps++)
                 {
                     int2 eff = EntranceOps.RotateSize(sz, steps);
@@ -1485,10 +1903,38 @@ namespace CitySim
                             prefRot    = EntranceOps.StepsToRotationY(steps);
                         }
                     }
+                    // 슬롯 reservoir(최상위): 인프라 미충족 지구의 중앙 슬롯 후보.
+                    if (InInfraSlot(origin, owner, in opt, in whDistricts, in supDistricts, in auraDistricts))
+                    {
+                        cntSlot++;
+                        if (rng.NextInt(cntSlot) == 0)
+                        {
+                            slotOrigin = origin;
+                            slotRot    = EntranceOps.StepsToRotationY(steps);
+                        }
+                    }
                 }
             }
-            if (cntPref > 0) { bestOrigin = prefOrigin; bestRot = prefRot; }
+            if      (cntSlot > 0) { bestOrigin = slotOrigin; bestRot = slotRot; }
+            else if (cntPref > 0) { bestOrigin = prefOrigin; bestRot = prefRot; }
             return cnt > 0;
+        }
+
+        // 지구 슬롯 판정(2026-07-11): 이 origin이 "그 인프라가 없는 지구"의 중앙 슬롯 안인가.
+        //   창고 = 창고 없는 지구 / 방문형 공급자 = 공급자 없는 지구 / 오라형 = 오라 없는 지구.
+        //   그 외 건물은 항상 false(rng 소비 없음 = 결정성 보존). origin 셀 기준 —
+        //   주거 유보(InReservedSlot)와 동일 해상도.
+        static bool InInfraSlot(int2 origin, int owner, in BuildOption opt,
+            in NativeHashSet<int3> whDistricts, in NativeHashSet<int3> supDistricts,
+            in NativeHashSet<int3> auraDistricts)
+        {
+            if (!opt.IsWarehouse && !opt.PrefersCovered && !opt.IsAura) return false;
+            if (!DistrictGrid.InSlot(origin)) return false;
+            int2 d = DistrictGrid.ToDistrict(origin);
+            var k = new int3(owner, d.x, d.y);
+            return opt.IsWarehouse ? !whDistricts.Contains(k)
+                 : opt.IsAura      ? !auraDistricts.Contains(k)
+                 : !supDistricts.Contains(k);
         }
 
         // 창고 도달 가드(맨해튼) — 창고 배치 후보는 앵커(요청 셀)에서 이 거리 안이어야 함. 반경(30,
@@ -1499,18 +1945,17 @@ namespace CitySim
         //   과잉 주택(구 "무조건 다채움" 왜곡), 높으면 이민 유입이 병목. 튜닝 대상.
         const int HousingGatePct = 85;
 
-        // 계획 F: 셀이 자기 창고 원점에서 체비쇼프 buffer 안인가 — 주거 채움 후순위(소프트 예약).
-        const int HousingWarehouseBuffer = 6;
-        static bool NearOwnWarehouse(int2 c, int owner, in NativeArray<int3> whOrigins)
+        // 지구 슬롯 유보(구 계획 F의 일반화, 2026-07-11): 셀이 "인프라(창고·공급자) 미충족 지구"의
+        //   중앙 슬롯 안인가 — 주거 채움 후순위(소프트 예약). 구 F는 *기존* 창고 주변만 지켰지만
+        //   슬롯 유보는 *앞으로 올* 인프라 자리를 지킨다(주택 선점 → 생산자 밀림 → 연접 나선의
+        //   선제 차단). 창고·공급자 둘 다 있는 지구의 슬롯만 해제.
+        static bool InReservedSlot(int2 c, int owner,
+            in NativeHashSet<int3> whDistricts, in NativeHashSet<int3> supDistricts)
         {
-            for (int i = 0; i < whOrigins.Length; i++)
-            {
-                var w = whOrigins[i];
-                if (w.x != owner) continue;
-                if (math.max(math.abs(c.x - w.y), math.abs(c.y - w.z)) <= HousingWarehouseBuffer)
-                    return true;
-            }
-            return false;
+            if (!DistrictGrid.InSlot(c)) return false;
+            int2 d = DistrictGrid.ToDistrict(c);
+            var k = new int3(owner, d.x, d.y);
+            return !whDistricts.Contains(k) || !supDistricts.Contains(k);
         }
 
         // ── 계획 C: 창고 커버 판정 ──────────────────────────────────────────
@@ -1574,6 +2019,8 @@ namespace CitySim
             in GrowthSnap layers, in CityGrid grid, int owner, in BuildOption opt, int2 target,
             in NativeHashSet<int2> outside, int2 encLo, int2 encHi, in TeamTable teams, int enemyBuffer,
             in NativeHashSet<int2> baseReached, in NativeHashMap<int3, int> whCov,
+            in NativeHashSet<int3> whDistricts, in NativeHashSet<int3> supDistricts,
+            in NativeHashSet<int3> auraDistricts,
             ref NativeHashSet<int2> claimed, ref NativeList<PlaceBuildingRequest> bldOut)
         {
             if (opt.Key <= 0) return false;
@@ -1603,6 +2050,15 @@ namespace CitySim
 
             foreach (var origin in enc)
             {
+                // 지구당 창고 1채 게이트(슬롯 앵커 전용, 2026-07-11 연접 픽스): 슬롯 모드 창고는
+                //   이미 내 창고가 있는 지구에 못 앉는다 — 연접의 구조적 차단. 미스셀 폴백
+                //   (SlotAnchored=false)만 면제(진짜 커버 구멍 수선).
+                if (opt.IsWarehouse && opt.SlotAnchored)
+                {
+                    int2 od = DistrictGrid.ToDistrict(origin);
+                    if (whDistricts.Contains(new int3(owner, od.x, od.y))) continue;
+                }
+
                 for (int steps = 0; steps < stepCount; steps++)
                 {
                     int2 eff = EntranceOps.RotateSize(sz, steps);
@@ -1632,12 +2088,17 @@ namespace CitySim
                     }
                     else if (!FootprintTouchesTeamRoad(origin, eff, owner, in layers)) continue;
 
-                    // target(소비자/창고) 최근접 우선. 클래스(0=선호/1=폴백)가 거리보다 우선:
+                    // target(소비자/창고) 최근접 우선. 클래스가 거리보다 우선:
                     //   · 창고(계획 B): "입구 미커버" 선호(커버 경계 밖으로 확장 = 타일링).
                     //   · 시민 공급자(계획 D): "입구 커버" 선호(태어날 때 풀 연결). 둘 다 소프트 폴백.
+                    //   · 지구 슬롯(2026-07-11, 상위 키 +2): 인프라 미충족 지구의 중앙 슬롯 = 0/1,
+                    //     그 외 = 2/3 — 슬롯 후보 없으면 기존 커버 클래스→거리 비교로 자연 폴백.
                     float cx = origin.x + eff.x * 0.5f, cz = origin.y + eff.y * 0.5f;
                     float d = math.abs(cx - target.x) + math.abs(cz - target.y);
                     int cls = (opt.IsWarehouse && ercCovered) || (opt.PrefersCovered && !ercCovered) ? 1 : 0;
+                    if ((opt.IsWarehouse || opt.PrefersCovered || opt.IsAura)
+                        && !InInfraSlot(origin, owner, in opt, in whDistricts, in supDistricts, in auraDistricts))
+                        cls += 2;
                     if (cls < bestCls || (cls == bestCls && d < bestDist))
                     { bestCls = cls; bestDist = d; bestOrigin = origin; bestSteps = steps; bestEff = eff; found = true; }
                 }
@@ -1647,8 +2108,11 @@ namespace CitySim
             // 너무 먼 구멍은 target(소비자/창고)을 커버 못 함 → 프런티어 폴백이 나음(튜닝 상수).
             //   창고는 더 엄격(WarehouseReachGuard): 반경(30)보다 확실히 안쪽이어야 요청 셀에 실제로
             //   닿음 — 못 닿는 창고는 짓지 않는다(미커버 요청자 → 못 닿는 창고 연쇄 차단, 2026-07-10).
+            //   오라(경찰서류)도 동형(2026-07-12): 자기 반경 안이어야 앵커(수요지)를 실제로 덮음.
             const float InteriorMaxDist = 32f;
-            float guard = opt.IsWarehouse ? WarehouseReachGuard : InteriorMaxDist;
+            float guard = opt.IsWarehouse                  ? WarehouseReachGuard
+                        : opt.IsAura && opt.AuraRadius > 0 ? opt.AuraRadius
+                        : InteriorMaxDist;
             if (!found || bestDist > guard) return false;
 
             bldOut.Add(new PlaceBuildingRequest
@@ -1673,7 +2137,8 @@ namespace CitySim
             in GrowthSnap layers, in CityGrid grid, int owner,
             in BuildOption optA, in BuildOption optB,
             in NativeHashSet<int2> outside, int2 encLo, int2 encHi, in TeamTable teams, int enemyBuffer,
-            in NativeHashSet<int2> baseReached, in NativeArray<int3> whOrigins,
+            in NativeHashSet<int2> baseReached,
+            in NativeHashSet<int3> whDistricts, in NativeHashSet<int3> supDistricts,
             int budget, ref NativeHashSet<int2> claimed, ref NativeList<PlaceBuildingRequest> bldOut,
             ref Unity.Mathematics.Random rng)
         {
@@ -1725,10 +2190,12 @@ namespace CitySim
                 // B: 격자 패킹 (큰 plot 먼저, 작은 나중)
                 if (placed < budget)
                     placed += PackOnGrid(in optBig, mn, mx, in enc, in layers,
-                        in grid, owner, in baseReached, in whOrigins, budget - placed, ref claimed, ref bldOut, ref rng);
+                        in grid, owner, in baseReached, in whDistricts, in supDistricts,
+                        budget - placed, ref claimed, ref bldOut, ref rng);
                 if (placed < budget)
                     placed += PackOnGrid(in optSmall, mn, mx, in enc, in layers,
-                        in grid, owner, in baseReached, in whOrigins, budget - placed, ref claimed, ref bldOut, ref rng);
+                        in grid, owner, in baseReached, in whDistricts, in supDistricts,
+                        budget - placed, ref claimed, ref bldOut, ref rng);
                 if (placed > 0) didAny = true;
 
                 if (placed >= budget) break;
@@ -1742,7 +2209,8 @@ namespace CitySim
         static int PackOnGrid(
             in BuildOption opt, int2 mn, int2 mx, in NativeHashSet<int2> enc,
             in GrowthSnap layers, in CityGrid grid, int owner,
-            in NativeHashSet<int2> baseReached, in NativeArray<int3> whOrigins, int budget,
+            in NativeHashSet<int2> baseReached,
+            in NativeHashSet<int3> whDistricts, in NativeHashSet<int3> supDistricts, int budget,
             ref NativeHashSet<int2> claimed, ref NativeList<PlaceBuildingRequest> bldOut,
             ref Unity.Mathematics.Random rng)
         {
@@ -1752,16 +2220,16 @@ namespace CitySim
             int stepCount = opt.HasEnt ? 4 : 1;
 
             int count = 0;
-            // 계획 F(주거 후순위, 소프트): 1차 패스는 자기 창고 근처 슬롯을 유보(생산자용 커버 슬롯
-            //   보존) — 먼 슬롯이 소진되고 예산이 남을 때만 2차 패스가 채움. 하드 마스크 아님
-            //   ("강압적이지 않게" 합의): 주거 수요가 압박하면 결국 채워진다.
+            // 지구 슬롯 유보(구 계획 F 일반화, 소프트): 1차 패스는 인프라 미충족 지구의 중앙 슬롯을
+            //   유보(창고·서비스 자리 보존) — 다른 슬롯이 소진되고 예산이 남을 때만 2차 패스가 채움.
+            //   하드 마스크 아님("강압적이지 않게" 합의): 주거 수요가 압박하면 결국 채워진다.
             for (int pass = 0; pass < 2; pass++)
             for (int gz = mn.y; gz + P - 1 <= mx.y; gz += P)
             for (int gx = mn.x; gx + P - 1 <= mx.x; gx += P)
             {
                 if (count >= budget) return count;
                 int2 origin = new int2(gx, gz);
-                if ((pass == 0) == NearOwnWarehouse(origin, owner, in whOrigins)) continue;
+                if ((pass == 0) == InReservedSlot(origin, owner, in whDistricts, in supDistricts)) continue;
 
                 // 격자 위치는 무겹침 위해 고정, 회전만 유효 후보 중 균등 랜덤(reservoir) — 방향 획일성 탈피.
                 int chosenSteps = -1; int2 chosenEff = default; int cnt = 0;

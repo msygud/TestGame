@@ -113,6 +113,19 @@ namespace CitySim
                 Samples  = _keys.AsParallelWriter(),
             }.ScheduleParallel(state.Dependency);
 
+            // 커버형 욕구 채널(치안 v1, 2026-07-12): 추구/방문 파이프라인을 안 타므로 위
+            //   CollectDemandJob(미충족=Pursuing 기반)이 못 본다 — "집 미커버 + 불안" 시민을
+            //   직접 샘플(NoCoverage). 오라 front 맵 [ReadOnly] — 발행측과 프레임워크 의존성 안전.
+            if (SystemAPI.TryGetSingleton<AuraCoverage>(out var aura) && aura.Map.IsCreated)
+            {
+                collectH = new CollectSafetyDemandJob
+                {
+                    FpLookup = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
+                    Aura     = aura.Map,
+                    Samples  = _keys.AsParallelWriter(),
+                }.ScheduleParallel(collectH);
+            }
+
             _handle = new TallyDemandJob { Samples = _keys, Back = _back }.Schedule(collectH);
             state.Dependency = _handle;   // 라이브 시민 컴포넌트 읽기 안전(프레임워크 추적)
             _running = true;
@@ -169,6 +182,36 @@ namespace CitySim
 
     // (구 CollectSupplyDemandJob은 2b에서 메인스레드 수집으로 이관 — OnUpdate 인라인 + SupplyHasWarehouseCoverage.
     //  이유: 연결 수요가 stamp를 읽는데 백그라운드 폴링 잡이 라이브 stamp를 들면 StampRebuild 쓰기와 충돌.)
+
+    // ── ①-b 커버형 욕구(치안) 수집 — "집 미커버 + 불안" 시민 → NoCoverage 샘플(병렬) ──
+    //   커버면 샘플 없음(SafetySystem이 해소 중). 무주택은 위치를 특정할 수 없어 제외.
+    //   셀당 1샘플/초 가중 = 시민·물류 채널과 동등. 임계/블랙리스트/재기준선 기계는 그대로 재사용.
+    [BurstCompile]
+    [WithAll(typeof(CitizenTag))]
+    public partial struct CollectSafetyDemandJob : IJobEntity
+    {
+        [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
+        [ReadOnly] public NativeHashMap<int3, ulong> Aura;
+        public NativeQueue<DemandSample>.ParallelWriter Samples;
+
+        void Execute(in CitizenSafety safety, in CitizenResidence res)
+        {
+            if (!safety.IsActive) return;
+            if (res.Home == Entity.Null || !FpLookup.HasComponent(res.Home)) return;
+            var fp = FpLookup[res.Home];
+
+            if (Aura.TryGetValue(new int3(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y), out ulong bits)
+                && (bits & (ulong)NeedType.HighCrime) != 0) return;   // 커버 → 해소 진행 중
+
+            int2 dcell = DemandGrid.ToCell(fp.Origin);
+            int  bit   = math.tzcnt((ulong)NeedType.HighCrime);
+            Samples.Enqueue(new DemandSample
+            {
+                Key   = new int4(fp.OwnerLocalId, dcell.x, dcell.y, bit),
+                Cause = 0,   // NoCoverage — 신설 수요(WHERE = 시민 집 위치)
+            });
+        }
+    }
 
     // 욕구별 공급자 영업시간(needBit 정적 스위치) — 영업시간 외 미충족은 집계 제외.
     //   ⚠ 값은 실제 공급자 staffing(JobSchedule.Profile)과 일치해야 함(불일치 시 드리프트).

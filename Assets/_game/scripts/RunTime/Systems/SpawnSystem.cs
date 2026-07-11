@@ -15,6 +15,12 @@ namespace CitySim
     //    - 인스턴싱 + LocalTransform 적용
     //    - MapLoaded 태그 부여 (맵 정리 시 사용)
     //    - SpawnRequest 엔티티 파괴
+    //
+    //  능력 부착(다지기 ①, 2026-07-11): 능력(재고·생산·정원·공급·창고·내구)은
+    //  **BuildingAuthoring이 프리팹에 베이크** → Instantiate가 복사. 여기서는
+    //  per-instance 사실(footprint·owner·입구·팀)만 주입한다.
+    //  프리팹이 미베이크면 구 MainKey 스텁으로 폴백(무회귀 전환) + 키당 1회 경고 —
+    //  프리팹에 BuildingAuthoring 값을 채우는 즉시 스텁이 자동 은퇴한다.
     // ══════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(MapLoaderSystem))]
@@ -24,6 +30,8 @@ namespace CitySim
     [UpdateBefore(typeof(Unity.Transforms.TransformSystemGroup))]
     public partial struct SpawnSystem : ISystem
     {
+        // 레거시 스텁 상수(다지기 ①, 2026-07-11 이후) — 프리팹 BuildingAuthoring 미입력
+        //   폴백 전용. 전 건물 프리팹에 값 입력이 확인되면(경고 로그 0) 스텁 블록째 삭제 예정.
         // 식당(stub) 재고 상수 — BuildingAuthoring 베이킹 이관 전까지의 임시값.
         const int MealInitialStock   = 10;    // 개점 완충 소량(계획 D, 2026-07-11: 100은 생산 체인을 장기간
                                               //   가려 수요 신호를 왜곡 — 곧 소진돼 Flour pull부터 경제 가동)
@@ -123,7 +131,30 @@ namespace CitySim
                             Entrance = req.ValueRO.Entrance,
                         });
 
-                    if (req.ValueRO.IsSupplier)
+                    // ── 베이크 경로(다지기 ①): 능력은 Instantiate가 복사 — owner만 주입 ──
+                    //   StampSupplier/WarehouseTag는 per-instance 사실(OwnerLocalId)을 품으므로
+                    //   프리팹의 -1 표식을 요청 owner로 고정(SetComponent). 나머지 능력
+                    //   (재고·생산·정원·좌석)은 값 그대로 복사돼 손댈 것 없음.
+                    var em = state.EntityManager;
+                    bool bakedSupplier  = em.HasComponent<StampSupplier>(prefab);
+                    bool bakedWarehouse = em.HasComponent<WarehouseTag>(prefab);
+                    bool bakedEconomy   = em.HasBuffer<StockEntry>(prefab);
+                    if (bakedSupplier)
+                    {
+                        var sup = em.GetComponentData<StampSupplier>(prefab);
+                        sup.OwnerLocalId = req.ValueRO.OwnerLocalId;
+                        ecb.SetComponent(instance, sup);
+                    }
+                    if (bakedWarehouse)
+                    {
+                        var wt = em.GetComponentData<WarehouseTag>(prefab);
+                        wt.OwnerLocalId = req.ValueRO.OwnerLocalId;
+                        ecb.SetComponent(instance, wt);
+                    }
+
+                    // ── 레거시 스텁(프리팹 미베이크 폴백) — BuildingAuthoring 값을 채우면
+                    //   위 baked 플래그가 서고 이 블록은 자동 은퇴. 키당 1회 경고로 가시화.
+                    if (!bakedSupplier && req.ValueRO.IsSupplier)
                     {
                         ecb.AddComponent(instance, new StampSupplier
                         {
@@ -131,15 +162,13 @@ namespace CitySim
                             Relief       = req.ValueRO.Relief,
                             MaxDist      = req.ValueRO.SupplyMaxDist,
                         });
-
-                        // ── 물류/생산 배선(stub, 2026-07-06): Hunger 공급자 = 식사 소비점 ──
-                        //   Meal(완성품)은 LocalFinal — 창고 경유 없이 만든 자리서 소비.
-                        //   Flour(중간재)는 Input — 창고에서 pull(LogisticsPullSystem).
-                        //   ProductionJob(Meal)이 Flour→Meal 생산(ProductionSystem, 재료 있을 때).
-                        //   시민 식사가 이 Meal 재고를 차감(ServeMealsJob) — 경제 실수요의 시작점.
-                        //   TODO: 품목/용량/초기재고는 BuildingAuthoring 베이킹(능력=컴포넌트)으로
-                        //   이관 — 지금은 "Hunger 공급자 = 식당" stub 상수.
-                        if ((req.ValueRO.Relief & NeedType.Hunger) != NeedType.None)
+                        SpawnLegacyWarn.Once(mk);
+                    }
+                    if (!bakedEconomy)
+                    {
+                        // 구 MainKey 스텁(2026-07-06 물류/생산 배선) — 상수 정의부 주석 참조.
+                        if (req.ValueRO.IsSupplier
+                            && (req.ValueRO.Relief & NeedType.Hunger) != NeedType.None)
                         {
                             var stock = ecb.AddBuffer<StockEntry>(instance);
                             stock.Add(new StockEntry
@@ -157,81 +186,83 @@ namespace CitySim
                                 Role      = StockRole.Input,
                             });
                             ecb.AddComponent(instance, ProductionJob.Make(Commodity.Meal));
-                            // 일자리(고용 1차, 2026-07-06) — 직종/정원은 stub 상수.
                             ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Merchant });
                             ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WorkerSlots });
-                            // 방문 좌석(예약 기반, 2026-07-07) — 고용 정원과 분리.
                             ecb.AddComponent(instance, new VisitorOccupancy { Current = 0, Capacity = VisitorSlots });
                             ecb.AddComponent(instance, new ServiceStats { TodayServed = 0, YesterdayServed = 0 });
+                            SpawnLegacyWarn.Once(mk);
                         }
-                    }
-                    // ── 생산 체인 stub — MainKey 기반 임시 역할(상수 정의부 주석 참조) ──
-                    //   식당(IsSupplier+Hunger)과 상호배타 전제(현 레지스트리에서 키가 다름).
-                    else if (mk == FarmMainKey)
-                    {
-                        var stock = ecb.AddBuffer<StockEntry>(instance);
-                        stock.Add(new StockEntry
+                        else if (mk == FarmMainKey)
                         {
-                            Commodity = Commodity.Grain, Current = 0,
-                            Capacity  = ProducerStockCap, Role = StockRole.Output,
-                        });
-                        ecb.AddComponent(instance, ProductionJob.Make(Commodity.Grain));
-                        ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Farmer });
-                        ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WorkerSlots });
-                    }
-                    else if (mk == MillMainKey)
-                    {
-                        var stock = ecb.AddBuffer<StockEntry>(instance);
-                        stock.Add(new StockEntry
+                            var stock = ecb.AddBuffer<StockEntry>(instance);
+                            stock.Add(new StockEntry
+                            {
+                                Commodity = Commodity.Grain, Current = 0,
+                                Capacity  = ProducerStockCap, Role = StockRole.Output,
+                            });
+                            ecb.AddComponent(instance, ProductionJob.Make(Commodity.Grain));
+                            ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Farmer });
+                            ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WorkerSlots });
+                            SpawnLegacyWarn.Once(mk);
+                        }
+                        else if (mk == MillMainKey)
                         {
-                            Commodity = Commodity.Grain, Current = 0,
-                            Capacity  = ProducerStockCap, Role = StockRole.Input,
-                        });
-                        stock.Add(new StockEntry
+                            var stock = ecb.AddBuffer<StockEntry>(instance);
+                            stock.Add(new StockEntry
+                            {
+                                Commodity = Commodity.Grain, Current = 0,
+                                Capacity  = ProducerStockCap, Role = StockRole.Input,
+                            });
+                            stock.Add(new StockEntry
+                            {
+                                Commodity = Commodity.Flour, Current = 0,
+                                Capacity  = ProducerStockCap, Role = StockRole.Output,
+                            });
+                            ecb.AddComponent(instance, ProductionJob.Make(Commodity.Flour));
+                            ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Engineer });
+                            ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WorkerSlots });
+                            SpawnLegacyWarn.Once(mk);
+                        }
+                        else if (mk == WarehouseMainKey)
                         {
-                            Commodity = Commodity.Flour, Current = 0,
-                            Capacity  = ProducerStockCap, Role = StockRole.Output,
-                        });
-                        ecb.AddComponent(instance, ProductionJob.Make(Commodity.Flour));
-                        ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Engineer });
-                        ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WorkerSlots });
-                    }
-                    else if (mk == WarehouseMainKey)
-                    {
-                        var stock = ecb.AddBuffer<StockEntry>(instance);
-                        stock.Add(new StockEntry
-                        {
-                            Commodity = Commodity.Grain, Current = 0,
-                            Capacity  = WarehouseStoreCap, Role = StockRole.Store,
-                        });
-                        stock.Add(new StockEntry
-                        {
-                            Commodity = Commodity.Flour, Current = 0,
-                            Capacity  = WarehouseStoreCap, Role = StockRole.Store,
-                        });
-                        ecb.AddComponent(instance, new WarehouseTag
-                        {
-                            OwnerLocalId = req.ValueRO.OwnerLocalId,
-                            MaxDist      = WarehouseStampMaxDist,
-                        });
-                        // 창고 고용(2026-07-07) — Administrator 직종, 24h 3교대(JobSchedule).
-                        //   잉여 노동력 흡수(직업군 부족으로 식당 과잉 왜곡 완화) + 미래 24h 서비스 기반.
-                        //   물류 게이트는 v1 미적용(decision 2b) — 고용만, Pull/Push는 무조건 작동.
-                        ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Administrator });
-                        ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WarehouseWorkerSlots });
+                            var stock = ecb.AddBuffer<StockEntry>(instance);
+                            stock.Add(new StockEntry
+                            {
+                                Commodity = Commodity.Grain, Current = 0,
+                                Capacity  = WarehouseStoreCap, Role = StockRole.Store,
+                            });
+                            stock.Add(new StockEntry
+                            {
+                                Commodity = Commodity.Flour, Current = 0,
+                                Capacity  = WarehouseStoreCap, Role = StockRole.Store,
+                            });
+                            if (!bakedWarehouse)
+                                ecb.AddComponent(instance, new WarehouseTag
+                                {
+                                    OwnerLocalId = req.ValueRO.OwnerLocalId,
+                                    MaxDist      = WarehouseStampMaxDist,
+                                });
+                            // 창고 고용(2026-07-07) — Administrator 직종, 24h 3교대(JobSchedule).
+                            ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Administrator });
+                            ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WarehouseWorkerSlots });
+                            SpawnLegacyWarn.Once(mk);
+                        }
                     }
 
                     // ── 건물 전투 타겟화: 공격으로 파괴 가능(캡처 후 적 건물 제거의 토대) ──
                     //   타겟 쿼리 요건: CombatTargetable + CombatHealth + TeamInfoData + LocalTransform(스폰 시 부여).
                     //   CombatDestroyOnDeath → 사망 시 CombatDeathSystem이 destroy.
-                    //   CombatTargetBounds는 선택(없으면 ResolveAimPosition이 transform 위치로 폴백) → 1차 생략.
+                    //   부착 골격 = 건물 공통(여기), 값 = 능력(BuildingDurability 베이크, 없으면 config 폴백).
                     // 영토 전환 파괴 면제(베이스/HQ) — TerritoryCaptureSystem이 건너뜀.
                     if (req.ValueRO.CaptureExempt)
                         ecb.AddComponent<CaptureExempt>(instance);
 
                     int ownerLid = math.clamp(req.ValueRO.OwnerLocalId, 0, 7);
+                    float hp = em.HasComponent<BuildingDurability>(prefab)
+                        ? em.GetComponentData<BuildingDurability>(prefab).MaxHealth
+                        : buildingDefaultHealth;
                     ecb.AddComponent(instance, new CombatTargetable { TargetType = CombatTargetMask.Building });
-                    ecb.AddComponent(instance, new CombatHealth { Health = buildingDefaultHealth, MaxHealth = buildingDefaultHealth });
+                    ecb.AddComponent(instance, new CombatHealth { Health = hp, MaxHealth = hp });
                     ecb.AddComponent<CombatDestroyOnDeath>(instance);
                     // friend/foe 판정용 팀 — 프리팹에 TeamInfoData 없을 때만 owner 팀으로 부여
                     //   (있으면 위 ApplySpawnTeam이 이미 set).
@@ -246,6 +277,18 @@ namespace CitySim
             ecb.Dispose();
             hasTeamByLocalId.Dispose();
             teamsByLocalId.Dispose();
+        }
+
+        // 미베이크 프리팹 경고(키당 1회) — 어느 프리팹에 BuildingAuthoring 값을 채워야 하는지 가시화.
+        static class SpawnLegacyWarn
+        {
+            static readonly System.Collections.Generic.HashSet<int> _warned = new();
+            public static void Once(int mainKey)
+            {
+                if (!_warned.Add(mainKey)) return;
+                Debug.LogWarning($"[Spawn] key={mainKey} 프리팹 미베이크 — 레거시 스텁으로 능력 부착 중. " +
+                                 "프리팹 BuildingAuthoring에 값을 채우면 자동 은퇴(다지기 ①).");
+            }
         }
 
         static void ApplySpawnTeam(

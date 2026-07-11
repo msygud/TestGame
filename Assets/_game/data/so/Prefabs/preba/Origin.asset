@@ -629,6 +629,23 @@ MonoBehaviour:
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 0
+  - MainKey: 1006
+    VariantKey: 0
+    Name: police_h
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 6814581231218064991, guid: 286b9e3969ef3f84cab5895a0af1f2af, type: 3}
+    Size: {x: 4, y: 3}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
   NeedMaps:
   - MainKey: 1002
     NeedMask: 1
@@ -652,3 +669,6 @@ MonoBehaviour:
   - MainKey: 1005
     Offset: {x: 2, y: 0}
     Dir: 4
+  - MainKey: 1006
+    Offset: {x: 2, y: 2}
+    Dir: 1

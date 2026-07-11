@@ -92,6 +92,16 @@ namespace CitySim
                 Threshold = 0.6f,
             });
 
+            // 치안(커버형 욕구 v1, 2026-07-12) — 방문 없음: 집이 오라(경찰서류) 커버 밖이면
+            //   서서히 증가(SafetySystem). 기본 Rate 0.0005/게임초 = 미커버 방치 시 ~1.2 게임일에
+            //   임계(0.6) 도달 → 수요 샘플 시작. Hunger 뒤에 추가(needRng 소비 순서 보존).
+            ecb.AddComponent(e, new CitizenSafety
+            {
+                Level     = needRng.NextFloat(0f, 0.3f),
+                Rate      = 0.0005f * needRng.NextFloat(0.85f, 1.15f),
+                Threshold = 0.6f,
+            });
+
             // 콜드: 직업 + 직업별 숙련(고용 2차 — 직업이 바뀌어도 각 숙련 보존)
             ecb.AddComponent(e, new JobData { Job = req.InitialJob });
             ecb.AddComponent(e, CitizenSkills.Empty);

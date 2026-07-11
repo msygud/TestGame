@@ -61,7 +61,7 @@ PrefabInstance:
       addedObject: {fileID: 6973764600179385188}
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: e9751adf4d843c342ae9d06d339ce3a0, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 8719233493327796429}
+      addedObject: {fileID: 8329225050091867913}
   m_SourcePrefab: {fileID: 100100000, guid: e9751adf4d843c342ae9d06d339ce3a0, type: 3}
 --- !u!1 &6239777722775948369 stripped
 GameObject:
@@ -90,7 +90,7 @@ MeshCollider:
   m_Convex: 0
   m_CookingOptions: 30
   m_Mesh: {fileID: 8699589016552779720, guid: e9751adf4d843c342ae9d06d339ce3a0, type: 3}
---- !u!114 &8719233493327796429
+--- !u!114 &8329225050091867913
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -99,9 +99,28 @@ MonoBehaviour:
   m_GameObject: {fileID: 6239777722775948369}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 1638d91c787904d498924eca75a1e671, type: 3}
+  m_Script: {fileID: 11500000, guid: 9fd4317e0230f934095b91167c97180f, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Game.Unit.ObstacleFootprintAuthoring
-  FootprintSize: {x: 6, y: 5}
-  FootprintRadius: 1
-  ExtraPadding: 0.25
+  m_EditorClassIdentifier: Assembly-CSharp::CitySim.Authoring.BuildingAuthoring
+  Kind: 0
+  Capacity: 1
+  ProvidedJob: 10
+  WorkerSlots: 6
+  ReliefRaw: 0
+  SupplyMaxDist: 15
+  VisitorSlots: 0
+  AuraReliefRaw: 0
+  AuraRadius: 0
+  ProductionOutput: 0
+  Stocks:
+  - Commodity: 1
+    Role: 2
+    Capacity: 200
+    Initial: 0
+  - Commodity: 2
+    Role: 2
+    Capacity: 200
+    Initial: 0
+  IsWarehouse: 1
+  WarehouseStampMaxDist: 30
+  MaxHealth: 0

@@ -21,11 +21,20 @@ namespace CitySim
     //         → 회색 도로 = 풀·서비스 접속 끊긴 구역(굶는 생산자·소비자의 원인).
     //    ② 호버 커버 (상시): 커서 아래 건물이 공급자/창고면 그 건물이 stamp로 커버하는
     //         셀 전부를 노랑으로 강조. "이 창고/식당이 정확히 어디를 커버하나".
+    //         + 커버 축소 진단(2026-07-11, "일부 창고 커버 확연 축소" 실측 추적):
+    //           · 빨강 = 단절 프런티어 — 거리 여유가 남았는데(dist<MaxDist) 물리 인접 + 같은
+    //             owner 도로인데 stamp가 못 건넌 셀(방향비트 불일치/일방 연결). 빨강 라인이
+    //             보이면 축소 원인 = 도로 비트 단절(그 너머가 통째로 잘림).
+    //           · 파랑 = 타-owner 도로 경계 — 인접 도로가 남의 것이라 BFS가 못 건넘(소유권은
+    //             안 뒤집히므로(배치 거부·capture=철거) 파랑 다수 = 영토 전환 후 포켓 잔존 창고
+    //             또는 국경 밀착 — 커버가 자기 도로 조각에 갇힌 상태).
+    //           · 마젠타(전체) = 창고 MaxDist가 현행 상수(SpawnSystem.WarehouseStampMaxDist)와
+    //             다름 — 스폰 시점 박제 반경이 낡음(구세이브 등). 노랑만+빨강/파랑 없음 = 순수 거리 한계.
     //
     //  렌더: 동적 Mesh + Graphics.DrawMesh(Transparent) — DemandHeatmap과 동일 패턴.
     //  스로틀: 전역 1초(토글 시), 호버 0.15초(피킹). 대량 셀 → indexFormat UInt32.
     //
-    //  F키 맵: F6 커버리지 / F7 영역 / F8 해치 / F9 자원 / F10 시민 / F11 건물 / F12 수요.
+    //  F키 맵: F5 지구 / F6 커버리지 / F7 영역 / F8 해치 / F9 자원 / F10 시민 / F11 건물 / F12 수요.
     //
     //  ※ 컨테이너 안전: stamp/RoadLayer를 메인스레드 RO로 읽음. 쓰기자(StampRebuild·
     //    RoadSystem)는 메인스레드라 Presentation 시점엔 완료. 병행 RO 잡(ServiceSearch 등)과는
@@ -50,6 +59,10 @@ namespace CitySim
         static readonly Color CBoth      = new(0.25f, 0.80f, 0.85f, 1f);  // 청록 — 둘 다
         static readonly Color CNone      = new(0.55f, 0.55f, 0.55f, 1f);  // 회색 — 커버 없음
         static readonly Color CHover     = new(1.00f, 0.95f, 0.25f, 1f);  // 노랑 — 호버 건물 커버
+        static readonly Color CHoverStale = new(1.00f, 0.35f, 0.90f, 1f); // 마젠타 — MaxDist가 현행 상수와 다름(낡은 반경)
+        static readonly Color CHoverBreak = new(1.00f, 0.20f, 0.15f, 1f); // 빨강 — 단절 프런티어(비트 불일치로 못 건넌 인접 도로)
+        static readonly Color CHoverForeign = new(0.25f, 0.50f, 1.00f, 1f); // 파랑 — 타-owner 도로 경계(포켓/국경 잘림)
+        static readonly Color CAura      = new(0.62f, 0.36f, 0.95f, 1f);  // 보라 — 오라(치안 등) 커버 필드
 
         const float GlobalAlpha = 0.35f;
         const float HoverAlpha  = 0.70f;
@@ -118,17 +131,26 @@ namespace CitySim
             {
                 _nextHoverRT = UnityEngine.Time.unscaledTime + 0.15f;
                 _hovered = PickBuilding(cs);
-                BuildHover(in stamp, cs);
+                BuildHover(in stamp, in road, cs);
             }
             if (_hover.vertexCount > 0)
                 Graphics.DrawMesh(_hover, Matrix4x4.identity, _mat, 0);
         }
 
-        // 모든 도로셀 → 그 셀 owner의 stamp 커버 종류로 색칠.
+        // 모든 도로셀 → 그 셀 owner의 stamp 커버 종류로 색칠. + 오라 필드(보라, 도로 아래층).
         void BuildGlobal(in StampLayers stamp, in NativeHashMap<int2, RoadCell> road, float cs)
         {
             _v.Clear(); _c.Clear(); _i.Clear();
             const float h = 0.05f;
+
+            // 오라 커버 필드(커버형 욕구, 2026-07-12) — 도로 셀 색칠보다 낮은 층(0.042)에 전면 채움.
+            //   도로가 아닌 셀(주거지 등)의 오라 커버가 그대로 보인다(치안 판정 = 집 원점 셀).
+            if (SystemAPI.TryGetSingleton<AuraCoverage>(out var auraCov) && auraCov.Map.IsCreated)
+            {
+                var colA = CAura; colA.a = 0.22f;
+                foreach (var kv in auraCov.Map)
+                    AddCell(new int2(kv.Key.y, kv.Key.z), cs, 0.042f, colA);
+            }
 
             foreach (var kv in road)
             {
@@ -158,7 +180,8 @@ namespace CitySim
 
         // 호버한 건물이 stamp로 커버하는 셀 전부 강조(공급자/창고 = stamp 소스).
         //   소비자(집·제분소 등, stamp 소스 아님)면 결과 없음 — 전역 오버레이가 그 셀 커버를 보여줌.
-        void BuildHover(in StampLayers stamp, float cs)
+        //   + 커버 축소 진단(2026-07-11): 헤더 주석 ② 참조 — 빨강=비트 단절 / 마젠타=낡은 반경.
+        void BuildHover(in StampLayers stamp, in NativeHashMap<int2, RoadCell> road, float cs)
         {
             _v.Clear(); _c.Clear(); _i.Clear();
 
@@ -171,19 +194,94 @@ namespace CitySim
                     if (map.IsCreated)
                     {
                         const float h = 0.09f;
-                        var col = CHover; col.a = HoverAlpha;
 
+                        // 시설의 stamp 반경 — 창고는 현행 상수와 비교(낡은 박제 반경 = 마젠타).
+                        int maxDist = 0; bool stale = false;
+                        if (EntityManager.HasComponent<WarehouseTag>(_hovered))
+                        {
+                            maxDist = EntityManager.GetComponentData<WarehouseTag>(_hovered).MaxDist;
+                            stale   = maxDist != SpawnSystem.WarehouseStampMaxDist;
+                        }
+                        else if (EntityManager.HasComponent<StampSupplier>(_hovered))
+                            maxDist = EntityManager.GetComponentData<StampSupplier>(_hovered).MaxDist;
+
+                        var col = stale ? CHoverStale : CHover; col.a = HoverAlpha;
+
+                        // 이 시설의 커버 셀(→BFS 거리) 수집 + 노랑/마젠타 채움.
+                        var covered = new NativeHashMap<int2, int>(1024, Allocator.Temp);
                         var kva = map.GetKeyValueArrays(Allocator.Temp);
                         for (int i = 0; i < kva.Keys.Length; i++)
                             if (kva.Values[i].Supplier == _hovered)
+                            {
+                                covered.TryAdd(kva.Keys[i], kva.Values[i].Dist);
                                 AddCell(kva.Keys[i], cs, h, col);
+                            }
                         kva.Dispose();
+
+                        // 단절 프런티어: 거리 여유가 남았는데(dist<maxDist) 물리 인접인데 stamp가
+                        //   못 건넌 이웃 도로 — 같은 owner = 빨강(방향비트 불일치/일방 연결) /
+                        //   타 owner = 파랑(소유 경계 — 포켓 잔존·국경 잘림). 빨강·파랑 없음 =
+                        //   순수 거리 한계(정상 축소). maxDist<=0(무제한)은 전부 검사.
+                        var breaks  = new NativeHashSet<int2>(64, Allocator.Temp);
+                        var foreign = new NativeHashSet<int2>(64, Allocator.Temp);
+                        foreach (var kv in covered)
+                        {
+                            if (maxDist > 0 && kv.Value >= maxDist) continue;   // 거리 한계 도달 셀은 정상
+                            for (int d = 0; d < 4; d++)
+                            {
+                                int2 nb = kv.Key + Dir4(d);
+                                if (covered.ContainsKey(nb)) continue;
+                                if (!road.TryGetValue(nb, out var rc)) continue;
+                                if (rc.OwnerLocalId == owner) breaks.Add(nb);
+                                else                          foreign.Add(nb);
+                            }
+                        }
+                        var colBreak = CHoverBreak; colBreak.a = HoverAlpha;
+                        foreach (var b in breaks)
+                            AddCell(b, cs, h + 0.01f, colBreak);
+                        var colForeign = CHoverForeign; colForeign.a = HoverAlpha;
+                        foreach (var f in foreign)
+                            AddCell(f, cs, h + 0.01f, colForeign);
+                        foreign.Dispose();
+                        breaks.Dispose();
+                        covered.Dispose();
+                    }
+                }
+
+                // 오라 공급자 호버(2026-07-12): stamp 소스가 아니라 위 스캔에 안 잡힘 —
+                //   오라 원(footprint-클램프 유클리드 제곱)을 직접 그림. 노랑(호버 관례).
+                if (EntityManager.HasComponent<AuraSupplier>(_hovered))
+                {
+                    var aura = EntityManager.GetComponentData<AuraSupplier>(_hovered);
+                    var afp  = EntityManager.GetComponentData<BuildingFootprint>(_hovered);
+                    if (aura.Radius > 0)
+                    {
+                        int2 aeff = EntranceOps.RotateSize(afp.Size, afp.RotSteps);
+                        int r2 = aura.Radius * aura.Radius;
+                        var colA = CHover; colA.a = HoverAlpha;
+                        for (int y = afp.Origin.y - aura.Radius; y <= afp.Origin.y + aeff.y - 1 + aura.Radius; y++)
+                        for (int x = afp.Origin.x - aura.Radius; x <= afp.Origin.x + aeff.x - 1 + aura.Radius; x++)
+                        {
+                            int nx = math.clamp(x, afp.Origin.x, afp.Origin.x + aeff.x - 1);
+                            int ny = math.clamp(y, afp.Origin.y, afp.Origin.y + aeff.y - 1);
+                            int dx = x - nx, dy = y - ny;
+                            if (dx * dx + dy * dy > r2) continue;
+                            AddCell(new int2(x, y), cs, 0.09f, colA);
+                        }
                     }
                 }
             }
 
             Upload(_hover);
         }
+
+        static int2 Dir4(int d) => d switch
+        {
+            0 => new int2(0, 1),
+            1 => new int2(1, 0),
+            2 => new int2(0, -1),
+            _ => new int2(-1, 0),
+        };
 
         void AddCell(int2 cell, float cs, float h, Color col)
         {

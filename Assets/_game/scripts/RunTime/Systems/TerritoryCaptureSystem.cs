@@ -72,12 +72,31 @@ namespace CitySim
                     bf.Origin, eff, teams.Get(bf.OwnerLocalId),
                     cfg.RequireFullFootprint != 0, in layers.TerritoryLayer);
 
+                // 입구 강탈 = 기능적 함락(2026-07-11 유저 실측 — "본체는 포켓 잔존, 입구는 타 팀 도로").
+                //   경위: 내 입구 도로가 doom 철거된 자리에 타 팀이 자기 도로를 재건(도로 소유권 자체는
+                //   불변 — remove+재건으로만 발생). RequireFullFootprint(경계 보호)의 영토 포켓이 본체
+                //   캡처를 놓쳐도, 입구가 적 팀 도로면 물류·시민 접속이 영구 불능인 유령 건물 →
+                //   같은 doom/dwell/사면 기계에 태운다(적 도로가 사라지면 위 사면 분기로 자동 회복).
+                if (!captured && SystemAPI.HasComponent<BuildingEntrance>(e))
+                {
+                    var be = SystemAPI.GetComponent<BuildingEntrance>(e);
+                    int2 erc = EntranceOps.EntranceRoadCell(bf.Origin, bf.Size, in be.Entrance, bf.RotSteps);
+                    if (layers.RoadLayer.TryGetValue(erc, out var ercRc)
+                        && teams.Get(ercRc.OwnerLocalId) != teams.Get(bf.OwnerLocalId))
+                    {
+                        captured = true;
+                        if (!SystemAPI.HasComponent<CaptureDoom>(e))
+                            UnityEngine.Debug.Log($"[Capture] P{bf.OwnerLocalId} 입구 강탈 감지"
+                                + $"(입구 도로={erc} 소유 P{ercRc.OwnerLocalId}) origin={bf.Origin} → doom");
+                    }
+                }
+
                 bool marked = SystemAPI.HasComponent<CaptureDoom>(e);
                 if (captured && !marked)
                     ecb.AddComponent(e, new CaptureDoom
                     { DeadlineSeconds = now + dwellSecs, DwellSeconds = dwellSecs });
                 else if (!captured && marked)
-                    ecb.RemoveComponent<CaptureDoom>(e);   // 사면 — 영토 회복
+                    ecb.RemoveComponent<CaptureDoom>(e);   // 사면 — 영토 회복/적 도로 소멸
             }
 
             // 중립 도로 타겟화용 — owner 팀 정보(LocalId별 대표값) 수집.
