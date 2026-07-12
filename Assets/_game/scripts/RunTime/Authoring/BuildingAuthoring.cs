@@ -84,6 +84,10 @@ namespace CitySim.Authoring
         [Tooltip("오라 반경(셀). 판정 = footprint 최근접 유클리드 제곱(dx²+dz² ≤ R²).")]
         public int AuraRadius = 0;
 
+        [Tooltip("오라 정원(커버 인구 상한, v1.5 과밀 신호). 최근접-귀속 커버 인구가 초과하면 " +
+                 "이웃 지구 증설 수요만 발생 — 해소는 불변. 0 = 무제한(신호 없음).")]
+        public int AuraCapacity = 0;
+
         [Header("생산")]
         [Tooltip("이 건물이 만드는 품목(RecipeDefs 키). None이 아니면 ProductionJob을 굽는다.")]
         public Commodity ProductionOutput = Commodity.None;
@@ -124,6 +128,8 @@ namespace CitySim.Authoring
                     AddComponent(e, new WorkplaceBuilding { ProvidedJob = a.ProvidedJob });
                     int cap = a.WorkerSlots > 0 ? a.WorkerSlots : math.max(1, a.Capacity);
                     AddComponent(e, new BuildingOccupancy { Current = 0, Capacity = cap });
+                    // 직무 효과 스칼라(2026-07-12) — 유인 직장 공통. 0 시작(직원 출근 시 갱신).
+                    AddComponent(e, new StaffEffect { Factor = 0f });
                 }
 
                 // ── 욕구 공급(방문형) — owner는 스폰 주입(-1 표식) ──
@@ -146,7 +152,11 @@ namespace CitySim.Authoring
                 // ── 욕구 공급(오라형) — 커버형 욕구(경찰서·광장류) 자리. 소비 시스템은 후속 단계.
                 if (a.AuraReliefRaw != 0 && a.AuraRadius > 0)
                     AddComponent(e, new AuraSupplier
-                    { Relief = a.AuraReliefMask, Radius = a.AuraRadius });
+                    {
+                        Relief   = a.AuraReliefMask,
+                        Radius   = a.AuraRadius,
+                        Capacity = a.AuraCapacity,
+                    });
 
                 // ── 생산 ──
                 if (a.ProductionOutput != Commodity.None)

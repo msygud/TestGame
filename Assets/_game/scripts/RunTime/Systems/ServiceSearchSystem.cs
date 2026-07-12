@@ -88,7 +88,7 @@ namespace CitySim
                 EntLookup     = SystemAPI.GetComponentLookup<BuildingEntrance>(true),
                 StockLookup   = SystemAPI.GetBufferLookup<StockEntry>(true),
                 VisitorLookup = SystemAPI.GetComponentLookup<VisitorOccupancy>(true),
-                ProdLookup    = SystemAPI.GetComponentLookup<ProductionJob>(true),
+                StaffLookup   = SystemAPI.GetComponentLookup<StaffEffect>(true),
             }.ScheduleParallel(state.Dependency);
         }
     }
@@ -103,7 +103,7 @@ namespace CitySim
         [ReadOnly] public ComponentLookup<BuildingEntrance>  EntLookup;
         [ReadOnly] public BufferLookup<StockEntry>           StockLookup;
         [ReadOnly] public ComponentLookup<VisitorOccupancy>  VisitorLookup;
-        [ReadOnly] public ComponentLookup<ProductionJob>     ProdLookup;
+        [ReadOnly] public ComponentLookup<StaffEffect>       StaffLookup;
 
         void Execute(ref ServiceTarget target, in CitizenNeeds needs, in CitizenState st)
         {
@@ -149,10 +149,12 @@ namespace CitySim
                         continue;
                     // Relief 일치 = 이 욕구 공급자가 도달 가능 → 실패해도 NoCoverage 아닌 Reached.
                     reached = true;
-                    // 무인 폐점(2026-07-07 decision 1a) — 직원 미출근(SkillFactor<=0)이면 영업 안 함.
-                    //   ProductionJob 없는 공급자(광장 등)는 게이트 없음(항상 열림).
-                    if (ProdLookup.HasComponent(sr.Supplier)
-                        && ProdLookup[sr.Supplier].SkillFactor <= 0f)
+                    // 무인 폐점(decision 1a) — 직원 미출근(StaffEffect.Factor<=0)이면 영업 안 함.
+                    //   StaffEffect 없는 공급자(공원 등 무인 설계)는 게이트 없음(항상 열림).
+                    //   (2026-07-12 일반화: 구 ProductionJob.SkillFactor 게이트 은퇴 — 생산 없는
+                    //    유인 시설(미래 놀이공원)도 같은 게이트를 탄다.)
+                    if (StaffLookup.HasComponent(sr.Supplier)
+                        && StaffLookup[sr.Supplier].Factor <= 0f)
                         continue;
                     if (!SupplierHasGoods(sr.Supplier))
                         continue;

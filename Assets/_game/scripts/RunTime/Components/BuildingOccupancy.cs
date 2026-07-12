@@ -57,6 +57,21 @@ namespace CitySim
     /// <summary>거주 가능 건물(집). 시민 Home 배정 대상.</summary>
     public struct ResidenceBuilding : IComponentData { }
 
+    /// <summary>
+    /// 유인 직장의 "직무 효과" 스칼라(2026-07-12 유저 일반화: **산출 = 그 직무가 내는
+    /// 긍정 효과** — 생산량은 그 해석 사례일 뿐). WorkforceProductivitySystem이 시간당
+    /// 기록: 출근 노동자의 숙련×컨디션×적성 합 ÷ 정원(무인 = 0). 도메인별 해석:
+    ///   · 생산 = 진행 속도 승수(ProductionSystem)
+    ///   · 서비스 = 영업 게이트(>0 = staffed — 탐색·데스크)
+    ///   · (미래) 여가 = 해소 가산 / 치안 = 검거율 / 물류 = 처리 속도
+    /// 모양 통합·값 직업별 — 소비자는 자기 의미로 읽기만. 구 ProductionJob.SkillFactor 은퇴.
+    /// 무인 설계 건물(WorkplaceBuilding 없음)은 이 컴포넌트도 없음 = 소비자 폴백(생산 1, 게이트 통과).
+    /// </summary>
+    public struct StaffEffect : IComponentData
+    {
+        public float Factor;
+    }
+
     /// <summary>일자리를 제공하는 건물(직장). 시민 Work 배정 대상.</summary>
     public struct WorkplaceBuilding : IComponentData
     {
@@ -144,6 +159,11 @@ namespace CitySim
 
         /// <summary>오라 반경(셀).</summary>
         public int Radius;
+
+        /// <summary>정원(커버 인구 상한, v1.5 과밀 신호 2026-07-12). **해소를 게이트하지
+        /// 않는다**(커버=해소 불변) — 최근접-귀속 커버 인구가 이를 초과하면 이웃 지구
+        /// 증설 수요(AuraOverfullLog)만 발생. 0 이하 = 무제한(신호 없음, 옵트인).</summary>
+        public int Capacity;
     }
 
     /// <summary>
@@ -156,6 +176,31 @@ namespace CitySim
     public struct AuraCoverage : IComponentData
     {
         public NativeHashMap<int3, ulong> Map;
+        public uint Version;
+    }
+
+    /// <summary>
+    /// 오라 과밀 창 싱글톤(v1.5 과밀 신호, 2026-07-12) — AuraCoverageSystem이 시간당
+    /// 재작성(Clear 후 재채움)하는 **지속 플래그**. key = DemandSample.Key 동형
+    /// (owner, 수요셀x, 수요셀y, needBit) — 값은 무의미(1). DemandAggregation이 매초
+    /// 드레인하되 **클리어하지 않는다**(LogisticsMissLog와 달리 소유권이 발행자에 있음):
+    /// 존재하는 동안 셀당 1샘플/초 → 기존 임계·쿨다운·재기준선 기계가 그대로 소비.
+    /// 부하가 정원 밑으로 내려가거나 목표 지구에 오라가 서면 다음 재작성에서 자연 소멸.
+    /// </summary>
+    public struct AuraOverfullLog : IComponentData
+    {
+        public NativeHashMap<int4, byte> Window;
+    }
+
+    /// <summary>
+    /// 오라 시설 부하 front 싱글톤(v1.5 표시용, 2026-07-12) — AuraCoverageSystem이
+    /// 시간당 발행. key = 시설 엔티티, value = (커버 인구(최근접 귀속), 정원).
+    /// 독자 = AuraLoadHud(F6 연동 머리 위 라벨). 죽은 엔티티 항목은 다음 발행까지
+    /// 잔존할 수 있음 — 독자가 Exists 가드.
+    /// </summary>
+    public struct AuraLoadMap : IComponentData
+    {
+        public NativeHashMap<Entity, int2> Map;
         public uint Version;
     }
 }

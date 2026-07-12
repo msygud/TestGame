@@ -106,6 +106,15 @@ namespace CitySim
                 missLog.Window.Clear();
             }
 
+            // v1.5 과밀 신호(2026-07-12): 오라 과밀 창은 **클리어하지 않는다** — 발행자
+            //   (AuraCoverageSystem)가 시간당 재작성하는 지속 플래그(소유권이 발행자에 있음).
+            //   존재하는 동안 셀당 1샘플/초(물류 미스 창과 동일 가중) → 임계·쿨다운·재기준선
+            //   기계가 그대로 소비. WHERE = 이웃 지구 중심(발행자가 선정) — 커버 구멍 수요
+            //   (CollectSafetyDemandJob, 시민 위치)와 같은 채널로 합류하되 출처가 다르다.
+            if (SystemAPI.TryGetSingleton<AuraOverfullLog>(out var overfull) && overfull.Window.IsCreated)
+                foreach (var kv in overfull.Window)
+                    _keys.Enqueue(new DemandSample { Key = kv.Key, Cause = 0 });
+
             var collectH = new CollectDemandJob
             {
                 FpLookup = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
@@ -183,9 +192,12 @@ namespace CitySim
     // (구 CollectSupplyDemandJob은 2b에서 메인스레드 수집으로 이관 — OnUpdate 인라인 + SupplyHasWarehouseCoverage.
     //  이유: 연결 수요가 stamp를 읽는데 백그라운드 폴링 잡이 라이브 stamp를 들면 StampRebuild 쓰기와 충돌.)
 
-    // ── ①-b 커버형 욕구(치안) 수집 — "집 미커버 + 불안" 시민 → NoCoverage 샘플(병렬) ──
-    //   커버면 샘플 없음(SafetySystem이 해소 중). 무주택은 위치를 특정할 수 없어 제외.
-    //   셀당 1샘플/초 가중 = 시민·물류 채널과 동등. 임계/블랙리스트/재기준선 기계는 그대로 재사용.
+    // ── ①-b 커버형 욕구(치안) 수집 — "현재 위치 미커버 + 불안" 시민 → NoCoverage 샘플 ──
+    //   판정 위치 = 현재 건물(2026-07-12 유저 재설계, SafetySystem과 동일 기준): 집 고정
+    //   판정은 커버 수요를 주거지로만 쏠리게 함 — 직장에서 불안한 시민은 **직장 셀**에
+    //   수요를 남겨 경찰서가 상업·산업 지구에도 선다. 커버면 샘플 없음(해소 진행 중).
+    //   이동 중(CurrentBuilding=Null)은 위치 특정 불가라 제외.
+    //   셀당 1샘플/초 가중 = 시민·물류 채널과 동등. 임계/블랙리스트/재기준선 기계 재사용.
     [BurstCompile]
     [WithAll(typeof(CitizenTag))]
     public partial struct CollectSafetyDemandJob : IJobEntity
@@ -194,11 +206,12 @@ namespace CitySim
         [ReadOnly] public NativeHashMap<int3, ulong> Aura;
         public NativeQueue<DemandSample>.ParallelWriter Samples;
 
-        void Execute(in CitizenSafety safety, in CitizenResidence res)
+        void Execute(in CitizenSafety safety, in CitizenState st)
         {
             if (!safety.IsActive) return;
-            if (res.Home == Entity.Null || !FpLookup.HasComponent(res.Home)) return;
-            var fp = FpLookup[res.Home];
+            Entity at = st.CurrentBuilding;
+            if (at == Entity.Null || !FpLookup.HasComponent(at)) return;
+            var fp = FpLookup[at];
 
             if (Aura.TryGetValue(new int3(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y), out ulong bits)
                 && (bits & (ulong)NeedType.HighCrime) != 0) return;   // 커버 → 해소 진행 중
@@ -208,7 +221,7 @@ namespace CitySim
             Samples.Enqueue(new DemandSample
             {
                 Key   = new int4(fp.OwnerLocalId, dcell.x, dcell.y, bit),
-                Cause = 0,   // NoCoverage — 신설 수요(WHERE = 시민 집 위치)
+                Cause = 0,   // NoCoverage — 신설 수요(WHERE = 시민의 현재 위치)
             });
         }
     }

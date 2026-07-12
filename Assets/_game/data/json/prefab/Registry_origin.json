@@ -28,6 +28,7 @@
     {"mainKey":1003,"variantKey":0,"name":"powder_h","category":1},
     {"mainKey":1004,"variantKey":0,"name":"farm_h","category":1},
     {"mainKey":1005,"variantKey":0,"name":"stock_h","category":1},
-    {"mainKey":1006,"variantKey":0,"name":"police_h","category":1}
+    {"mainKey":1006,"variantKey":0,"name":"police_h","category":1},
+    {"mainKey":1007,"variantKey":0,"name":"park_h","category":1}
   ]
 }

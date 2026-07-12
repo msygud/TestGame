@@ -62,9 +62,12 @@ namespace CitySim
             //  ※ 직장 배정은 EmploymentAssignmentSystem으로 분리(고용 1차, 2026-07-06).
             var freeHomes = new NativeList<BuildingSlot>(Allocator.Temp);
 
+            // WithNone<WorkplaceBuilding>(2026-07-12): 거주+고용 겸용은 정상 경로에 없음 —
+            //   과거 맨 우클릭 오태그(Test.cs)로 창고 등이 '집'이 되어 근로자 카운터
+            //   (BuildingOccupancy)를 주거 배정과 나눠 쓰던 오염 차단(전 소비처 공통 필터).
             foreach (var (occ, bf, e) in
                      SystemAPI.Query<RefRO<BuildingOccupancy>, RefRO<BuildingFootprint>>()
-                         .WithAll<ResidenceBuilding>()
+                         .WithAll<ResidenceBuilding>().WithNone<WorkplaceBuilding>()
                          .WithEntityAccess())
             {
                 int free = occ.ValueRO.Capacity - occ.ValueRO.Current;

@@ -58,9 +58,9 @@ namespace CitySim
 
                 if (ok && HasNewCell(in path, in layers.RoadLayer))
                     EmitDrawnPath(in path, req.OwnerLocalId, req.FactionId, ref ecb);
-                else
-                    Debug.Log($"[RoadPath] team{req.OwnerLocalId}: Target={req.Target} " +
-                              $"경로 없음 또는 이미 연결 (found={ok}, len={path.Length})");
+                else if (!ok)
+                    // '이미 연결'(정상 멱등)은 무로그 — 진짜 경로 실패만 관찰(2026-07-12 로그 정리).
+                    Debug.Log($"[RoadPath] team{req.OwnerLocalId}: Target={req.Target} 경로 없음");
 
                 // 활성 지선 등록(성공+RegisterSpur 요청 시, 중복 방지) — janitor가 보호·자가수리에 사용.
                 //   일회성 부설(입구 복구 등)은 등록 안 함 — 대상 소멸 후에도 영구 재부설되는 것 방지.

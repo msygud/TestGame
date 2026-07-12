@@ -132,9 +132,11 @@ namespace CitySim
 
             // ── 거주건물 수집 (메인 — 수백 개, 저비용) ─────────────────────────
             _residences = new NativeList<ResInfo>(64, Allocator.Persistent);
+            // WithNone<WorkplaceBuilding>: 오태그(거주+고용 겸용) 건물의 근로자 수를
+            //   거주 인구로 오인해 영역이 부풀던 것 차단(전 소비처 공통 필터, 2026-07-12).
             foreach (var (occ, bf) in
                      SystemAPI.Query<RefRO<BuildingOccupancy>, RefRO<BuildingFootprint>>()
-                              .WithAll<ResidenceBuilding>())
+                              .WithAll<ResidenceBuilding>().WithNone<WorkplaceBuilding>())
             {
                 int owner = bf.ValueRO.OwnerLocalId;
                 if ((uint)owner >= MP) continue;

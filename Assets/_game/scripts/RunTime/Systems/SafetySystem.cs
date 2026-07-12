@@ -8,13 +8,15 @@ namespace CitySim
     // ══════════════════════════════════════════════════════════════════════════
     //  SafetySystem — 치안 욕구(CitizenSafety) 전담: 증가 + 해소 (커버형 v1, 2026-07-12)
     //
-    //  커버형 욕구는 방문·추구가 없다 — 집이 오라(경찰서류) 커버 **안**이면 Level 감소
-    //  (4배속 회복), **밖**이면 증가. NeedDecision/ServiceSearch/Movement 파이프라인을
-    //  전혀 안 탄다(공통 시스템 무수정 — "공통 시스템은 욕구 타입을 모른다" 검증 사례).
+    //  커버형 욕구는 방문·추구가 없다 — **지금 있는 곳**이 오라(경찰서류) 커버 **안**이면
+    //  Level 감소(배속 회복), **밖**이면 증가. NeedDecision/ServiceSearch/Movement 파이프
+    //  라인을 전혀 안 탄다(공통 시스템 무수정).
     //
-    //  판정 위치 = 집(CitizenResidence.Home)의 footprint 원점 셀 — 도시빌더 관례
-    //  (치안은 거주지 기준). 무주택 시민은 커버 판정 불가 → 증가만(불안 지속).
-    //  owner = 집 소유자 — 오라 맵이 (owner, 셀) 키라 자기 도시의 시설만 진정시킨다.
+    //  판정 위치 = **현재 건물(CitizenState.CurrentBuilding)** — 2026-07-12 유저 재설계:
+    //  구 "거주지 고정" 판정은 모든 커버 수요를 주거지로 쏠리게 함(직장 지구가 영원히
+    //  미커버). 범위형은 "내가 지금 있는 자리"가 좌우한다: AtHome=집 / AtWork=직장 /
+    //  AtDestination=방문지. 이동 중·노숙(CurrentBuilding=Null) = 미커버 취급(거리의 불안).
+    //  owner = 그 건물 소유자 — 오라 맵이 (owner, 셀) 키라 자기 도시의 시설만 진정시킨다.
     //
     //  실행: 실시간 ~1초 게이트(느슨함 — 매 프레임 정밀 불필요) + 게임초 누적 dt.
     //  잡은 front 오라 맵을 [ReadOnly]로 읽음 — 발행측(AuraCoverageSystem)의
@@ -58,7 +60,7 @@ namespace CitySim
         }
     }
 
-    // ── 증가/해소 통합(커버 여부가 부호를 정함) ──
+    // ── 증가/해소 통합(현재 위치의 커버 여부가 부호를 정함) ──
     [BurstCompile]
     [WithAll(typeof(CitizenTag))]
     public partial struct SafetyTickJob : IJobEntity
@@ -67,21 +69,31 @@ namespace CitySim
         [ReadOnly] public NativeHashMap<int3, ulong> Aura;
         public float Dt;   // 게임초(누적)
 
-        const float ReliefFactor = 4f;   // 커버 시 회복 배속 — 튜닝 대상
+        // ⚠ 테스트 과장 배속(2026-07-12 유저 요청 "크게 차이 나도록") — 미커버 증가에 적용.
+        //   기본 Rate 0.0005/게임초는 커버 차이가 며칠 뒤에야 보임 → ×20이면 미커버
+        //   ~1.5게임시간에 임계 도달(즉시 체감). 밸런싱 #1에서 1로 되돌리고 Rate로 조정.
+        const float TestRateScale = 20f;
 
-        void Execute(ref CitizenSafety safety, in CitizenResidence res)
+        void Execute(ref CitizenSafety safety, in CitizenState st)
         {
+            // 판정 위치 = 지금 있는 건물(집/직장/방문지). 없으면(이동·노숙) 미커버.
             bool covered = false;
-            if (res.Home != Entity.Null && FpLookup.HasComponent(res.Home))
+            Entity at = st.CurrentBuilding;
+            if (at != Entity.Null && FpLookup.HasComponent(at))
             {
-                var fp = FpLookup[res.Home];
+                var fp = FpLookup[at];
                 covered = Aura.TryGetValue(
                               new int3(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y), out ulong bits)
                           && (bits & (ulong)NeedType.HighCrime) != 0;
             }
 
-            safety.Level = math.saturate(safety.Level
-                + (covered ? -safety.Rate * ReliefFactor : safety.Rate) * Dt);
+            // 비대칭 일괄(2026-07-12 유저 결정): 커버 = **즉시 안심(Level=0, 일괄 해소)** /
+            //   미커버 = 점진 누적(불안은 서서히 — 수요도 "지속 노출된 곳"에만 쌓여 폭풍 방지).
+            //   구 대칭 적분(커버 시 ×4 배속 회복)은 톱니(집↔직장 왕복)로 staff 샘플링이
+            //   출렁이던 원인 — 은퇴.
+            safety.Level = covered
+                ? 0f
+                : math.saturate(safety.Level + safety.Rate * TestRateScale * Dt);
         }
     }
 }

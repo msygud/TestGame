@@ -7,9 +7,12 @@ using UnityEngine.InputSystem;
 
 // 디버그 입력 — 마우스로 가리킨 건물에:
 //   Alt+좌클릭 = 파괴 (건물=RazeAreaCommand, 도로=Forced RemoveRoadCommand).
-//   우클릭 = '거주건물'로 지정 (ResidenceBuilding + BuildingOccupancy{Capacity=50}).
+//   Ctrl+우클릭 = '거주건물'로 지정 (ResidenceBuilding + BuildingOccupancy{Capacity=50}).
 //            → TerritorySystem이 1초마다 전체 재계산해 그 건물 중심으로 영역을 그린다.
 //            영역 확인: F7(TerritoryDebugSystem 오버레이). PopPerCell 필드로 영역 크기 조절.
+//   ⚠ Ctrl 게이트(2026-07-12): 맨 우클릭은 유닛 이동 명령과 겹쳐, 명령 중 커서 아래 건물
+//     (창고 포함)을 조용히 거주건물로 오태그 → 재개발 철거 대상이 되던 함정("창고 소멸"의
+//     유력 경로). 파괴(Alt+좌클릭)와 동일한 수식키 규약으로 봉인.
 //   ※ 프로덕션은 프리팹에 BuildingAuthoring(Kind=Residence, Capacity)로 베이크하는 게 정석.
 //     우클릭 태깅은 프리팹 미설정 상태에서 영역 파이프라인을 즉시 검증하기 위한 테스트용.
 public class Test : MonoBehaviour
@@ -99,7 +102,8 @@ public class Test : MonoBehaviour
         var kb   = Keyboard.current;
         bool alt = kb != null && kb.altKey.isPressed;
         bool raze = alt && mouse.leftButton.wasPressedThisFrame;
-        bool tag  = mouse.rightButton.wasPressedThisFrame;
+        // Ctrl 필수 — 맨 우클릭(유닛 명령)이 건물을 거주건물로 오태그하지 않도록(헤더 주석 참조).
+        bool tag  = kb != null && kb.ctrlKey.isPressed && mouse.rightButton.wasPressedThisFrame;
         if (!raze && !tag) return;
 
         var world = World.DefaultGameObjectInjectionWorld;

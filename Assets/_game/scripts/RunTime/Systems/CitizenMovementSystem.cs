@@ -94,7 +94,7 @@ namespace CitySim
                 ServeQueue    = serveQueue,
                 VisitorLookup = SystemAPI.GetComponentLookup<VisitorOccupancy>(false),
                 StatsLookup   = SystemAPI.GetComponentLookup<ServiceStats>(false),
-                ProdLookup    = SystemAPI.GetComponentLookup<ProductionJob>(true),
+                StaffLookup   = SystemAPI.GetComponentLookup<StaffEffect>(true),
                 StockLookup   = SystemAPI.GetBufferLookup<StockEntry>(false),
                 StateLookup   = SystemAPI.GetComponentLookup<CitizenState>(false),
                 TargetLookup  = SystemAPI.GetComponentLookup<ServiceTarget>(false),
@@ -118,15 +118,27 @@ namespace CitySim
         public Entity Supplier;
     }
 
+    // 욕구별 목적지 머무름 시간(게임초) — 결정 테이블(비트 → 시간, NeedServiceHours 동형).
+    //   공통 이동 시스템은 욕구 의미를 모른 채 표만 조회한다. 새 욕구 = case 한 줄.
+    //   · 기본(식사류) = 3게임초 고정(구 EatSeconds).
+    //   · 체류형(LowEntertainment) = **최대** 2게임시간 — 실제 퇴장은 해소 완료 시
+    //     전담 시스템(BoredomReliefJob)이 타이머를 당겨 조기 확정(체류형 규약).
+    public static class NeedDwell
+    {
+        public static double GameSeconds(NeedType relief, double secPerGameHour)
+            => (relief & NeedType.Disease) != NeedType.None
+               ? 8.0 * secPerGameHour          // 입원 최대 8게임시간(완치 시 조기 퇴원)
+             : (relief & NeedType.LowEntertainment) != NeedType.None
+               ? 2.0 * secPerGameHour          // 공원 최대 2게임시간(해소 완료 시 조기 퇴장)
+               : 3.0;                          // 식사류(재화 양자) 고정
+    }
+
     [BurstCompile]
     [WithAll(typeof(CitizenTag))]
     public partial struct CitizenMoveJob : IJobEntity
     {
         // 도로 한 칸당 이동 게임초(정적). 추후 교통통계(혼잡도)로 동적 보정.
         public const double SecPerCell = 0.5;
-
-        // 목적지에서 머무는(서비스/식사) 게임초. 추후 서비스 def별 시간으로 분리.
-        const double EatSeconds = 3.0;
 
         public double Now;
         public float  Hour;             // 현재 게임 시각(0~24)
@@ -225,7 +237,9 @@ namespace CitySim
                             default:   // Service (+ None 레거시)
                                 cs.Activity        = CitizenActivity.AtDestination;
                                 cs.CurrentBuilding = target.Supplier;
-                                cs.ActionEndTime   = Now + EatSeconds;
+                                // 머무름 = 욕구별 표(식사 3게임초 / 체류형 최대 2게임시간).
+                                cs.ActionEndTime   = Now + NeedDwell.GameSeconds(
+                                                         target.Relief, SecPerGameHour);
                                 ServeQueue.Enqueue(new ServeRequest
                                 { Citizen = entity, Supplier = target.Supplier });
                                 break;
@@ -357,7 +371,7 @@ namespace CitySim
         public NativeQueue<ServeRequest> ServeQueue;
         public ComponentLookup<VisitorOccupancy> VisitorLookup;
         public ComponentLookup<ServiceStats>     StatsLookup;
-        [ReadOnly] public ComponentLookup<ProductionJob> ProdLookup;
+        [ReadOnly] public ComponentLookup<StaffEffect> StaffLookup;
         public BufferLookup<StockEntry>          StockLookup;
         public ComponentLookup<CitizenState>     StateLookup;
         public ComponentLookup<ServiceTarget>    TargetLookup;
@@ -408,29 +422,39 @@ namespace CitySim
             // ── ③ 서빙(도착) ───────────────────────────────────────────────
             while (ServeQueue.TryDequeue(out var req))
             {
-                // 재고 버퍼 없음 = 무한 공급(통과).
-                if (!StockLookup.HasBuffer(req.Supplier)) continue;
-
-                // 무인 폐점(decision 1a) — 도착 직전 직원이 퇴근(SkillFactor<=0)했으면 서빙 거부
+                // 무인 폐점(decision 1a) — 도착 직전 직원이 퇴근(StaffEffect 0)했으면 서빙 거부
                 //   (탐색-도착 레이스 방어). 아래 거절 경로로 자리 반납 + 귀가.
-                bool closed = ProdLookup.HasComponent(req.Supplier)
-                              && ProdLookup[req.Supplier].SkillFactor <= 0f;
+                //   StaffEffect 없는 공급자(공원 등 무인 설계)는 게이트 없음(항상 열림).
+                bool closed = StaffLookup.HasComponent(req.Supplier)
+                              && StaffLookup[req.Supplier].Factor <= 0f;
 
-                var stock  = StockLookup[req.Supplier];
                 bool served = false;
                 if (!closed)
-                for (int i = 0; i < stock.Length; i++)
                 {
-                    var s = stock[i];
-                    if (s.Commodity != Commodity.Meal || s.Role != StockRole.LocalFinal)
-                        continue;
-                    if (s.Current > 0)
+                    if (!StockLookup.HasBuffer(req.Supplier))
                     {
-                        s.Current--;
-                        stock[i] = s;
+                        // 재고 개념이 없는 공급자(공원 등 체류형) = 무한 서빙 — 탐색의
+                        //   SupplierHasGoods와 동일 규칙(시간이 자원, 재화 차감 없음).
+                        //   통계(TodayServed)는 아래 공통 경로에서 동일하게 누적.
                         served = true;
                     }
-                    break;
+                    else
+                    {
+                        var stock = StockLookup[req.Supplier];
+                        for (int i = 0; i < stock.Length; i++)
+                        {
+                            var s = stock[i];
+                            if (s.Commodity != Commodity.Meal || s.Role != StockRole.LocalFinal)
+                                continue;
+                            if (s.Current > 0)
+                            {
+                                s.Current--;
+                                stock[i] = s;
+                                served = true;
+                            }
+                            break;
+                        }
+                    }
                 }
                 if (served)
                 {

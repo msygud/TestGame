@@ -51,9 +51,11 @@ namespace CitySim
             // ── owner별 빈 정원 합 + 스폰 후보(빈자리 있는 거주건물) ────────────
             var freeCap = new NativeArray<int>(MP, Allocator.Temp);
             var slots   = new NativeList<HomeSlot>(64, Allocator.Temp);
+            // WithNone<WorkplaceBuilding>: 오태그(거주+고용 겸용) 건물을 이민 정원에서 제외
+            //   (CitizenAssignment와 동일 사유 — 근로자 슬롯을 이민 정원으로 오인 방지).
             foreach (var (occ, bf) in
                      SystemAPI.Query<RefRO<BuildingOccupancy>, RefRO<BuildingFootprint>>()
-                              .WithAll<ResidenceBuilding>())
+                              .WithAll<ResidenceBuilding>().WithNone<WorkplaceBuilding>())
             {
                 int owner = bf.ValueRO.OwnerLocalId;
                 if ((uint)owner >= MP) continue;

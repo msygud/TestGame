@@ -7,11 +7,11 @@ namespace CitySim
     //
     //  흐름:
     //    Input 재고(StockRole.Input) 차감
-    //    → Progress 누적(게임초 × SkillFactor)
+    //    → Progress 누적(게임초 × StaffEffect.Factor — 무인 설계는 1)
     //    → 완료 시 Output 재고(StockRole.Output or LocalFinal) 추가
     //
     //  레시피 키 = Output 품목. 건물은 ProductionJob.RecipeOutput으로 레시피를 고른다.
-    //  숙련도(SkillFactor ≥ 1.0): 제작 진행 속도 승수 — 숙련 건물이 더 빠르게 만든다.
+    //  직무 효과(StaffEffect): 제작 진행 속도 승수 — 노동자 숙련·컨디션·적성이 속도를 정한다.
     //
     //  stub 체인: Grain→Flour(중간재), Flour→Meal(완성품).
     //  품목 추가 시 RecipeDefs.Get() 스위치와 Commodity enum만 확장.
@@ -95,8 +95,10 @@ namespace CitySim
         public Commodity RecipeOutput;
 
         /// <summary>
-        /// 숙련도 승수. 1.0 = 기본 속도, 1.5 = 50% 빠름.
-        /// 제작 진행 = deltaGameSeconds × SkillFactor.
+        /// (은퇴 2026-07-12 — 직무 효과는 범용 **StaffEffect** 컴포넌트로 이동: "산출 =
+        /// 그 직무의 긍정 효과" 일반화. 진행 = dt × StaffEffect.Factor(무인 설계 = 1 폴백).
+        /// 세이브 레이아웃 호환을 위해 필드만 유지 — 어떤 시스템도 읽고 쓰지 않는다.
+        /// 다음 세이브 마이그레이션 때 삭제.)
         /// </summary>
         public float SkillFactor;
 

@@ -42,7 +42,8 @@ namespace CitySim
         {
             // ① 욕구별 긴급도 후보 갱신 — 욕구 추가 시 여기 한 줄씩.
             state.Dependency = new HungerUrgencyJob().ScheduleParallel(state.Dependency);
-            //  (미래) state.Dependency = new ThirstUrgencyJob().ScheduleParallel(state.Dependency);
+            state.Dependency = new BoredomUrgencyJob().ScheduleParallel(state.Dependency);
+            state.Dependency = new SicknessUrgencyJob().ScheduleParallel(state.Dependency);
             //  (메카닉) EnergyLevel 등도 동일 패턴.
 
             // ② 공통 선택 — 후보 소비 + 리셋.
@@ -67,6 +68,47 @@ namespace CitySim
             if (urgency > needs.CandidateUrgency)
             {
                 needs.CandidateNeed    = NeedType.Hunger;
+                needs.CandidateUrgency = urgency;
+            }
+        }
+    }
+
+    // ── ① [Boredom] 긴급도 후보 — 체류형 첫 사례(2026-07-12). Hunger와 동형. ──
+    [BurstCompile]
+    public partial struct BoredomUrgencyJob : IJobEntity
+    {
+        void Execute(ref CitizenNeeds needs, in CitizenBoredom boredom, in CitizenState st)
+        {
+            if (needs.Pursuing != NeedType.None) return;
+            var act = st.Activity;
+            if (act != CitizenActivity.Idle && act != CitizenActivity.AtHome) return;
+
+            if (!boredom.IsActive) return;
+            float urgency = boredom.Level - boredom.Threshold;
+            if (urgency > needs.CandidateUrgency)
+            {
+                needs.CandidateNeed    = NeedType.LowEntertainment;
+                needs.CandidateUrgency = urgency;
+            }
+        }
+    }
+
+    // ── ① [Sickness] 긴급도 후보 — 생애주기 v1(2026-07-12). 병세 0.8 − 임계 0.3 =
+    //    긴급도 0.5로 통상 허기(최대 0.4)를 자연 압도 → 병자는 병원 우선. ──
+    [BurstCompile]
+    public partial struct SicknessUrgencyJob : IJobEntity
+    {
+        void Execute(ref CitizenNeeds needs, in CitizenSickness sickness, in CitizenState st)
+        {
+            if (needs.Pursuing != NeedType.None) return;
+            var act = st.Activity;
+            if (act != CitizenActivity.Idle && act != CitizenActivity.AtHome) return;
+
+            if (!sickness.IsActive) return;
+            float urgency = sickness.Level - sickness.Threshold;
+            if (urgency > needs.CandidateUrgency)
+            {
+                needs.CandidateNeed    = NeedType.Disease;
                 needs.CandidateUrgency = urgency;
             }
         }

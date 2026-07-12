@@ -187,6 +187,7 @@ namespace CitySim
                             });
                             ecb.AddComponent(instance, ProductionJob.Make(Commodity.Meal));
                             ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Merchant });
+                            ecb.AddComponent(instance, new StaffEffect { Factor = 0f });
                             ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WorkerSlots });
                             ecb.AddComponent(instance, new VisitorOccupancy { Current = 0, Capacity = VisitorSlots });
                             ecb.AddComponent(instance, new ServiceStats { TodayServed = 0, YesterdayServed = 0 });
@@ -202,6 +203,7 @@ namespace CitySim
                             });
                             ecb.AddComponent(instance, ProductionJob.Make(Commodity.Grain));
                             ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Farmer });
+                            ecb.AddComponent(instance, new StaffEffect { Factor = 0f });
                             ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WorkerSlots });
                             SpawnLegacyWarn.Once(mk);
                         }
@@ -220,6 +222,7 @@ namespace CitySim
                             });
                             ecb.AddComponent(instance, ProductionJob.Make(Commodity.Flour));
                             ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Engineer });
+                            ecb.AddComponent(instance, new StaffEffect { Factor = 0f });
                             ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WorkerSlots });
                             SpawnLegacyWarn.Once(mk);
                         }
@@ -244,6 +247,7 @@ namespace CitySim
                                 });
                             // 창고 고용(2026-07-07) — Administrator 직종, 24h 3교대(JobSchedule).
                             ecb.AddComponent(instance, new WorkplaceBuilding { ProvidedJob = JobType.Administrator });
+                            ecb.AddComponent(instance, new StaffEffect { Factor = 0f });
                             ecb.AddComponent(instance, new BuildingOccupancy { Current = 0, Capacity = WarehouseWorkerSlots });
                             SpawnLegacyWarn.Once(mk);
                         }

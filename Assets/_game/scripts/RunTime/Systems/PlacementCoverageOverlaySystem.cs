@@ -48,6 +48,7 @@ namespace CitySim
         Mesh     _mesh;
 
         bool _lastActive; int _lastKey = -1; int2 _lastOrigin; byte _lastRot; int _lastOwner;
+        int  _lastViewMask = -1;   // CoverageView 토글 변경 감지(통합창, 2026-07-12)
         float _nextRT;
 
         readonly List<Vector3> _v = new(2048);
@@ -94,12 +95,13 @@ namespace CitySim
 
             bool changed = !_lastActive || st.MainKey != _lastKey
                            || !st.Origin.Equals(_lastOrigin) || st.RotSteps != _lastRot
-                           || st.OwnerSlot != _lastOwner;
+                           || st.OwnerSlot != _lastOwner || CoverageView.Mask != _lastViewMask;
             if (changed || UnityEngine.Time.unscaledTime >= _nextRT)
             {
                 _nextRT = UnityEngine.Time.unscaledTime + 0.25f;
                 _lastActive = true; _lastKey = st.MainKey; _lastOrigin = st.Origin;
                 _lastRot = st.RotSteps; _lastOwner = st.OwnerSlot;
+                _lastViewMask = CoverageView.Mask;
                 Build(in st);
             }
 
@@ -125,8 +127,9 @@ namespace CitySim
             if (eff.x <= 0) eff.x = 1;
             if (eff.y <= 0) eff.y = 1;
 
+            EntranceInfo ent = default;
             bool hasEnt = SystemAPI.TryGetSingleton<EntranceLookup>(out var entLookup)
-                          && entLookup.TryGet(st.MainKey, out var ent);
+                          && entLookup.TryGet(st.MainKey, out ent);
             int2 erc = hasEnt
                 ? EntranceOps.EntranceRoadCell(st.Origin, meta.Size, in ent, st.RotSteps)
                 : default;
@@ -134,8 +137,8 @@ namespace CitySim
             bool hasLayers = SystemAPI.TryGetSingleton<GridLayers>(out var layers)
                              && layers.RoadLayer.IsCreated;
 
-            // ── ① 내보내는 커버 ────────────────────────────────────────────
-            if (em.HasComponent<AuraSupplier>(prefab))
+            // ── ① 내보내는 커버 — 종류별 토글(CoverageView, 통합창) 게이트 ──────
+            if (CoverageView.ShowAura && em.HasComponent<AuraSupplier>(prefab))
             {
                 var aura = em.GetComponentData<AuraSupplier>(prefab);
                 if (aura.Radius > 0)
@@ -143,11 +146,11 @@ namespace CitySim
             }
             if (hasEnt && hasLayers && st.OwnerSlot >= 0)
             {
-                if (em.HasComponent<StampSupplier>(prefab))
+                if (CoverageView.ShowSupply && em.HasComponent<StampSupplier>(prefab))
                     FillRoadFlood(erc, st.OwnerSlot,
                         em.GetComponentData<StampSupplier>(prefab).MaxDist,
                         in layers.RoadLayer, cs, 0.06f, COutSupply);
-                if (em.HasComponent<WarehouseTag>(prefab))
+                if (CoverageView.ShowWarehouse && em.HasComponent<WarehouseTag>(prefab))
                     FillRoadFlood(erc, st.OwnerSlot,
                         em.GetComponentData<WarehouseTag>(prefab).MaxDist,
                         in layers.RoadLayer, cs, 0.06f, COutWarehouse);
@@ -155,8 +158,9 @@ namespace CitySim
 
             // ── ② 받는 커버 배지(능력 파생) ───────────────────────────────
             //   프로브 셀 = 입구 도로셀(있으면). 오라는 footprint 원점(치안 판정과 동일 해상도).
+            StampLayers stamp = default;
             bool probeStamp = hasEnt && st.OwnerSlot >= 0
-                              && SystemAPI.TryGetSingleton<StampLayers>(out var stamp)
+                              && SystemAPI.TryGetSingleton<StampLayers>(out stamp)
                               && (uint)st.OwnerSlot < StampLayers.MaxPlayers;
             bool whCovered = false, hungerCovered = false;
             if (probeStamp)
@@ -181,10 +185,13 @@ namespace CitySim
             int badge = 0;
             if (em.HasComponent<ResidenceBuilding>(prefab))
             {
-                AddBadge(st.Origin, eff, badge++, cs, hungerCovered, COutSupply);
-                AddBadge(st.Origin, eff, badge++, cs, auraCovered,   COutAura);
+                // 배지도 같은 토글 게이트 — 끈 종류는 프리뷰 전체(범위+배지)에서 사라진다.
+                if (CoverageView.ShowSupply)
+                    AddBadge(st.Origin, eff, badge++, cs, hungerCovered, COutSupply);
+                if (CoverageView.ShowAura)
+                    AddBadge(st.Origin, eff, badge++, cs, auraCovered,   COutAura);
             }
-            if (em.HasBuffer<StockEntry>(prefab))
+            if (CoverageView.ShowWarehouse && em.HasBuffer<StockEntry>(prefab))
             {
                 // 물류 연결 필요 = Input/Output 칸 보유(완성품 로컬·Store만 있으면 무관).
                 var stock = em.GetBuffer<StockEntry>(prefab);

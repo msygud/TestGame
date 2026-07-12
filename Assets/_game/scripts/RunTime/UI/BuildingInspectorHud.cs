@@ -207,8 +207,10 @@ namespace CitySim
             {
                 var pj = em.GetComponentData<ProductionJob>(e);
                 var recipe = RecipeDefs.Get(pj.RecipeOutput);
+                float staffX = em.HasComponent<StaffEffect>(e)
+                    ? em.GetComponentData<StaffEffect>(e).Factor : 1f;
                 sb.Append("\nProd ").Append(pj.RecipeOutput.ToString())
-                  .Append("  skill x").Append(pj.SkillFactor.ToString("0.00"));
+                  .Append("  staff x").Append(staffX.ToString("0.00"));
                 if (recipe.BaseDuration > 0f)
                 {
                     if (pj.Progress < 0f) sb.Append("  [idle]");

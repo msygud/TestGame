@@ -774,6 +774,9 @@ MonoBehaviour:
   - {fileID: 11400000, guid: 5b901df1f5fdc524dbcf5683c9a7a532, type: 2}
   _buildButtonContainer: {fileID: 1139164203}
   _buildButtonTemplate: {fileID: 117962955}
+  _tglCovWarehouse: {fileID: 0}
+  _tglCovSupply: {fileID: 0}
+  _tglCovAura: {fileID: 0}
 --- !u!4 &752812473
 Transform:
   m_ObjectHideFlags: 0
@@ -3295,7 +3298,7 @@ MonoBehaviour:
   _slots:
   - IsOpen: 1
     TeamID: 0
-    IsPlayer: 0
+    IsPlayer: 1
     Cell: {x: 0, y: 0}
     FactionId: 0
   - IsOpen: 1

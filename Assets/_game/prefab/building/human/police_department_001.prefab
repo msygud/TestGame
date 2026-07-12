@@ -286,6 +286,7 @@ MonoBehaviour:
   VisitorSlots: 0
   AuraReliefRaw: 65536
   AuraRadius: 20
+  AuraCapacity: 250
   ProductionOutput: 0
   Stocks: []
   IsWarehouse: 0

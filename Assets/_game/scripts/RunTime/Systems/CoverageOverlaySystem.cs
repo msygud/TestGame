@@ -67,6 +67,9 @@ namespace CitySim
         const float GlobalAlpha = 0.35f;
         const float HoverAlpha  = 0.70f;
 
+        // ECS→UI 정적 미러(관례) — F6 전역 모드 상태. AuraLoadHud(치안 부하 라벨)가 읽는다.
+        public static bool GlobalEnabled;
+
         protected override void OnCreate()
         {
             var shader = Shader.Find("Hidden/Internal-Colored");
@@ -108,6 +111,7 @@ namespace CitySim
         {
             var kb = Keyboard.current;
             if (kb != null && kb.f6Key.wasPressedThisFrame) _enabled = !_enabled;
+            GlobalEnabled = _enabled;
 
             float cs = SystemAPI.GetSingleton<GridSettings>().CellSize;
             if (cs <= 0f) return;

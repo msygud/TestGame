@@ -102,6 +102,25 @@ namespace CitySim
                 Threshold = 0.6f,
             });
 
+            // 따분함(체류형 욕구 v1, 2026-07-12) — 공원류 방문·체류(시간 적분)로 해소.
+            //   기본 Rate 0.0008/게임초 ≈ 방치 시 ~0.9 게임일에 임계(0.6) 도달.
+            //   Safety 뒤에 추가(needRng 소비 순서 보존 — 기존 욕구 산포 불변).
+            ecb.AddComponent(e, new CitizenBoredom
+            {
+                Level     = needRng.NextFloat(0f, 0.3f),
+                Rate      = 0.0008f * needRng.NextFloat(0.85f, 1.15f),
+                Threshold = 0.6f,
+            });
+
+            // 나이 + 질병(생애주기 v1, 2026-07-12) — Boredom 뒤 추가(needRng 순서 보존).
+            ecb.AddComponent(e, new CitizenAge { Years = needRng.NextFloat(18f, 50f) });
+            ecb.AddComponent(e, new CitizenSickness
+            {
+                Level     = 0f,
+                Rate      = 0.0005f,   // 자연 회복(병세 0.8 ≈ 27게임시간) — 입원(0.003)의 1/6
+                Threshold = 0.3f,
+            });
+
             // 콜드: 직업 + 직업별 숙련(고용 2차 — 직업이 바뀌어도 각 숙련 보존)
             ecb.AddComponent(e, new JobData { Job = req.InitialJob });
             ecb.AddComponent(e, CitizenSkills.Empty);

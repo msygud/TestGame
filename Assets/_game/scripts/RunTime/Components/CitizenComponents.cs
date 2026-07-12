@@ -54,17 +54,18 @@ namespace CitySim
     // ──────────────────────────────────────────────────────────────────────────
     public struct CitizenConditions : IComponentData
     {
-        public float Satiety;   // 포만도 — 배고픔/갈증 반영
+        public float Satiety;   // 포만도 — 배고픔/갈증 반영(투영: 1−Hunger.Level)
         public float Energy;    // 활력   — 수면 반영, 노동효율 핵심
         public float Morale;    // 사기   — 사회·자아 욕구 반영
         public float Stress;    // 스트레스 — 누적 미충족(높을수록 나쁨)
         public float Health;    // 신체건강 — 질병·노동 누적
         public float Loyalty;   // 충성도 — 도시 전반 만족(이주 결정)
+        public float Safety;    // 안심도 — 치안 반영(투영: 1−CitizenSafety.Level, 미보유=1)
 
         public static CitizenConditions Healthy => new CitizenConditions
         {
             Satiety = 1f, Energy = 1f, Morale = 1f,
-            Stress  = 0f, Health = 1f, Loyalty = 1f,
+            Stress  = 0f, Health = 1f, Loyalty = 1f, Safety = 1f,
         };
     }
 
@@ -135,6 +136,53 @@ namespace CitySim
         public readonly bool IsActive => Level > Threshold;
     }
 
+    /// <summary>
+    /// 따분함 욕구(NeedType.LowEntertainment) — **체류형 욕구의 첫 사례**(2026-07-12).
+    /// 방문은 하되 재화 소비가 없다: 공원류(StampSupplier + 재고 0)에 도착해 머무는 동안
+    /// 시간 비례로 해소(BoredomSystem 적분 — 식당의 일괄 Level=0과 대비: 식당은 재화가
+    /// 양자(quantum), 공원은 시간이 양자). 발견·이동·좌석은 공통 파이프라인 그대로
+    /// (stamp 탐색 + VisitorOccupancy = 용량). 다 풀리면(Level 0) 머무름 타이머를 당겨
+    /// 조기 퇴장 — 심심한 만큼 머물러 좌석 회전율이 수요를 반영한다.
+    /// 모양 규약(Level/Rate/Threshold + IsActive) 준수.
+    /// </summary>
+    public struct CitizenBoredom : IComponentData
+    {
+        public float Level;       // 0(즐거움) ~ 1(최악).
+        public float Rate;        // 게임초당 증가 속도. 체류 해소 = Rate × ReliefFactor(8배).
+        public float Threshold;   // 초과 = 따분(추구 후보).
+
+        public readonly bool IsActive => Level > Threshold;
+    }
+
+    /// <summary>
+    /// 나이(콜드, 2026-07-12 생애주기 v1) — 불사 세계의 마찰 축: 무한 숙련의 루즈함을
+    /// "관리 비용"으로 상쇄. AgingSystem이 게임 일 단위로 증가. 효과: ① 피로 증가 가산
+    /// (EnergyTickJob — 40세부터 드레인 가중) ② 질병 싸움 불리(DiseaseFightSystem).
+    /// </summary>
+    public struct CitizenAge : IComponentData
+    {
+        /// <summary>나이(세, float — 게임 일마다 YearsPerGameDay씩 증가).</summary>
+        public float Years;
+    }
+
+    /// <summary>
+    /// 질병(NeedType.Disease) — 커버형(치안)·체류형(공원) 패턴의 합성(2026-07-12 생애주기 v1).
+    ///   · 발병 = DiseaseFightSystem의 주기 롤(시민당 게임 1일 1회, 위상 분산): 체력·인내 저항,
+    ///     나이 불리, 현재 위치가 병원 오라 커버면 유리. 패배 = Level 일괄 상승(앓아누움).
+    ///   · 치료 = 병원 방문·입원(체류 적분, 공원 동형 — 완치 시 조기 퇴원) + 자연 회복(극저속,
+    ///     병원 없는 초기 도시 붕괴 방지 — 불사 세계라 죽지 않고 오래 앓을 뿐).
+    ///   · 노동 = 병세 중 결근(CollectWorkerProd가 cond.Health로 게이트 — 공통 시스템 무지 유지).
+    /// 모양 규약(Level/Rate/Threshold + IsActive) 준수. Rate = 자연 회복률(음수 방향으로 사용).
+    /// </summary>
+    public struct CitizenSickness : IComponentData
+    {
+        public float Level;       // 0(건강) ~ 1(중병).
+        public float Rate;        // 자연 회복률(게임초당 — 입원의 1/6 수준, 하루+ 소요).
+        public float Threshold;   // 초과 = 병원 추구(수요 샘플 대상).
+
+        public readonly bool IsActive => Level > Threshold;
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     //  콜드: 직업 (Job)
     //  직업은 거의 안 바뀜. 숙련도 성장은 가끔(콜드 취급, 생산 시 결과만 핫쿼리).
@@ -198,8 +246,12 @@ namespace CitySim
 
     // ──────────────────────────────────────────────────────────────────────────
     //  직업 적성 테이블(정적 스위치, Burst-safe — RecipeDefs 패턴의 결정 테이블).
-    //  능력치는 "숙련 성장속도"에만 관여(생산성 직접 반영 금지 — 이중 계산 방지,
-    //  재능 있는 초보 < 평범한 베테랑). 성실성(Diligence)은 전 직업 공통 보정.
+    //  인과 사슬(2026-07-12 재확정 — "물고 물리는 관계 해소", 유저):
+    //      능력치(적성 2종+성실) + 근무시간 → 숙련  →  산출 ← 욕구(컨디션 가중)
+    //  능력치는 **숙련 성장속도로만** 산출에 도달한다(직접 반영 없음 — 같은 날 도입했던
+    //  ±15% 직접 항은 이중 경로(능력→숙련→산출 ∥ 능력→산출)라 철회). 재능은 "더 빨리
+    //  커서 결국 더 많이 내는" 유일 경로 하나만 가진다. 유닛 스탯 머티리얼라이즈(미래)는
+    //  Aptitude()를 복사 시점에 직접 읽는다 — 그건 산출 경로가 아니라 스폰 해석.
     // ──────────────────────────────────────────────────────────────────────────
     // ──────────────────────────────────────────────────────────────────────────
     //  직업별 근무 프로파일 + 교대(2026-07-07 유저 설계) — 결정 테이블.
@@ -208,7 +260,7 @@ namespace CitySim
     //    · 생산(농장·제분소): 기본 창(config WorkStart/End), 1교대.
     //    · 서비스(식당):      8~24, 2교대(8~16 / 16~24) — 조식~심야, 소비자 시간대 커버.
     //    · 물류(창고):        0~24, 3교대(0~8/8~16/16~24) — 24시간(미래 서비스 대비).
-    //  ※ 무인 시 폐점(decision 1a): 서비스는 staffed(ProductionJob.SkillFactor>0)일 때만 이용가능.
+    //  ※ 무인 시 폐점(decision 1a): 서비스는 staffed(StaffEffect.Factor>0)일 때만 이용가능.
     //  ※ Close=24는 wrap 없음(Hour<24). 자정 넘는 창이 필요하면 wrap 추가.
     // ──────────────────────────────────────────────────────────────────────────
     public static class JobSchedule
@@ -235,16 +287,21 @@ namespace CitySim
     public static class JobAptitude
     {
         // ──────────────────────────────────────────────────────────────────
-        //  직업별 컨디션 가중(2026-07-07, 유저 설계) — "당일 효율"의 직업 차.
-        //  컨디션 계수 = 0.5 + 0.5 × Σ(가중치 × 욕구 만족도). 육체직은 포만(배부름)에
-        //  민감, 지식직은 (미래) 여가·교육에 민감 → 노동 구성에 따라 어떤 욕구를
-        //  채울지가 전략이 된다. 욕구 추가 = 여기 가중치 열 확장(공통 시스템 무수정).
-        //  Energy(피로)는 "휴식 욕구의 만족도"로 취급 — 수면 욕구 도입 시 자연 통합.
+        //  직업별 컨디션 가중(2026-07-07 유저 설계 / 2026-07-12 치안 축 추가) — "당일
+        //  효율"의 직업 차. 컨디션 계수 = 0.5 + 0.5 × Σ(가중치 × 욕구 만족도).
+        //  육체직은 포만에 민감, 지식직은 피로·치안에 민감 → 노동 구성에 따라 어떤
+        //  욕구를 채울지가 전략이 된다. 욕구 추가 = 여기 가중치 열 확장(합 1 유지,
+        //  공통 시스템 무수정). Energy(피로)는 "휴식 욕구의 만족도"로 취급 — 수면
+        //  욕구 도입 시 자연 통합.
         // ──────────────────────────────────────────────────────────────────
-        /// <summary>컨디션 계수(0.5~1.0): energy=피로 회복도, satiety=포만도(1−Hunger).</summary>
-        public static float ConditionFactor(JobType job, float energy, float satiety)
+        /// <summary>컨디션 계수(0.5~1.0): energy=피로 회복도, satiety=포만도(1−Hunger),
+        /// safety=안심도(1−CitizenSafety.Level, 미보유 팩션/구세이브 = 중립 1).</summary>
+        public static float ConditionFactor(JobType job, float energy, float satiety, float safety)
         {
-            float wEnergy, wSatiety;
+            // ⚠ 치안 가중 테스트 과장값(2026-07-12 유저 요청 "크게 차이 나도록") —
+            //   커버/미커버가 staff에 최대 ±20%로 보이게 wSafety 0.40대. 밸런싱 #1에서
+            //   본값(육체 .45/.45/.10, 혼합 .55/.35/.10, 지식 .60/.25/.15)으로 복원.
+            float wEnergy, wSatiety, wSafety;
             switch (job)
             {
                 // 육체직 — 밥이 반이다.
@@ -252,41 +309,46 @@ namespace CitySim
                 case JobType.Miner:
                 case JobType.Builder:
                 case JobType.Soldier:
-                    wEnergy = 0.5f; wSatiety = 0.5f; break;
+                    wEnergy = 0.30f; wSatiety = 0.30f; wSafety = 0.40f; break;
 
                 // 혼합직.
                 case JobType.Engineer:
                 case JobType.Merchant:
-                    wEnergy = 0.6f; wSatiety = 0.4f; break;
+                    wEnergy = 0.35f; wSatiety = 0.25f; wSafety = 0.40f; break;
 
-                // 지식직 — 피로 민감(여가·교육 욕구가 생기면 그쪽으로 가중 분배).
+                // 지식직 — 피로·치안 민감(여가·교육 욕구가 생기면 그쪽으로 가중 분배).
                 default:
-                    wEnergy = 0.7f; wSatiety = 0.3f; break;
+                    wEnergy = 0.35f; wSatiety = 0.20f; wSafety = 0.45f; break;
             }
-            float satisfaction = wEnergy * energy + wSatiety * satiety;
+            float satisfaction = wEnergy * energy + wSatiety * satiety + wSafety * safety;
             return 0.5f + 0.5f * math.saturate(satisfaction);
         }
 
-        /// <summary>숙련 성장 배율(~0.4×—1.9×): (0.5+적성) × 성실 보정(0.75~1.25).</summary>
-        public static float GrowthFactor(JobType job, in CitizenAttributes a)
+        // ──────────────────────────────────────────────────────────────────
+        //  직업 적성(능력치 2종 블렌드, 0~1) — 단일 소스(2026-07-12 통합).
+        //  숙련 성장(GrowthFactor)·산출 계수(AptitudeOutputFactor)·(미래) 전투 유닛
+        //  스탯 머티리얼라이즈가 전부 이 한 표를 읽는다(직업↔능력치 조합 drift 0).
+        // ──────────────────────────────────────────────────────────────────
+        public static float Aptitude(JobType job, in CitizenAttributes a) => job switch
         {
-            float apt = job switch
-            {
-                JobType.Farmer        => 0.7f * a.PhysiqueN     + 0.3f * a.DexterityN,
-                JobType.Miner         => 0.8f * a.PhysiqueN     + 0.2f * a.ResilienceN,
-                JobType.Builder       => 0.5f * a.PhysiqueN     + 0.5f * a.DexterityN,
-                JobType.Engineer      => 0.6f * a.IntelligenceN + 0.4f * a.DexterityN,
-                JobType.Merchant      => 0.7f * a.SociabilityN  + 0.3f * a.IntelligenceN,
-                JobType.Doctor        => 0.6f * a.IntelligenceN + 0.4f * a.DexterityN,
-                JobType.Teacher       => 0.5f * a.IntelligenceN + 0.5f * a.SociabilityN,
-                JobType.Researcher    => 0.7f * a.IntelligenceN + 0.3f * a.CreativityN,
-                JobType.Artist        => 0.8f * a.CreativityN   + 0.2f * a.DexterityN,
-                JobType.Administrator => 0.5f * a.IntelligenceN + 0.5f * a.SociabilityN,
-                JobType.Soldier       => 0.6f * a.PhysiqueN     + 0.4f * a.ResilienceN,
-                _                     => 0.5f,
-            };
-            return (0.5f + apt) * (0.75f + 0.5f * a.DiligenceN);
-        }
+            JobType.Farmer        => 0.7f * a.PhysiqueN     + 0.3f * a.DexterityN,
+            JobType.Miner         => 0.8f * a.PhysiqueN     + 0.2f * a.ResilienceN,
+            JobType.Builder       => 0.5f * a.PhysiqueN     + 0.5f * a.DexterityN,
+            JobType.Engineer      => 0.6f * a.IntelligenceN + 0.4f * a.DexterityN,
+            JobType.Merchant      => 0.7f * a.SociabilityN  + 0.3f * a.IntelligenceN,
+            JobType.Doctor        => 0.6f * a.IntelligenceN + 0.4f * a.DexterityN,
+            JobType.Teacher       => 0.5f * a.IntelligenceN + 0.5f * a.SociabilityN,
+            JobType.Researcher    => 0.7f * a.IntelligenceN + 0.3f * a.CreativityN,
+            JobType.Artist        => 0.8f * a.CreativityN   + 0.2f * a.DexterityN,
+            JobType.Administrator => 0.5f * a.IntelligenceN + 0.5f * a.SociabilityN,
+            JobType.Soldier       => 0.6f * a.PhysiqueN     + 0.4f * a.ResilienceN,
+            _                     => 0.5f,
+        };
+
+        /// <summary>숙련 성장 배율(~0.4×—1.9×): (0.5+적성) × 성실 보정(0.75~1.25).
+        /// 능력치가 산출에 이르는 **유일한 경로**(성장속도) — 인과 사슬 주석 참조.</summary>
+        public static float GrowthFactor(JobType job, in CitizenAttributes a)
+            => (0.5f + Aptitude(job, in a)) * (0.75f + 0.5f * a.DiligenceN);
     }
 
     // ──────────────────────────────────────────────────────────────────────────

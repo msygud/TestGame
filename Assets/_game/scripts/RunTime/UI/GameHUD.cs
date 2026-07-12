@@ -26,6 +26,13 @@ namespace CitySim
     //      Content(Transform, VerticalLayoutGroup 등) → _buildButtonContainer
     //      ButtonTemplate(Button, 비활성)             → _buildButtonTemplate
     //        · _registries의 Building 항목마다 이 버튼을 복제해 자동 채움.
+    //      CoverageToggles(선택 — 커버리지 통합창, 2026-07-12)
+    //        TglCovWarehouse → _tglCovWarehouse  (창고 커버 초록)
+    //        TglCovSupply    → _tglCovSupply     (서비스 커버 주황)
+    //        TglCovAura      → _tglCovAura       (치안 오라 보라)
+    //        · 배치 프리뷰의 종류별 커버 표시를 켜고 끔(CoverageView 정적 상태).
+    //        · 미할당이면 전부 표시(기본값) — 창은 나중에 붙여도 됨("길만 열어두기").
+    //        · 상태는 PlayerPrefs로 세션 간 유지.
     //
     //  단축키:
     //    Enter / Space  — 도로 확정
@@ -66,6 +73,12 @@ namespace CitySim
 
         bool _buildButtonsBuilt;
 
+        // ── 커버리지 표시 토글(통합창, 2026-07-12) — 미할당 시 전부 표시 ──
+        [Header("커버리지 표시 토글(선택 — 미할당이면 전부 표시)")]
+        [SerializeField] Toggle _tglCovWarehouse;
+        [SerializeField] Toggle _tglCovSupply;
+        [SerializeField] Toggle _tglCovAura;
+
         // ── 탭 색 ──────────────────────────────────────────────────
         static readonly Color TabActive   = new Color(0.25f, 0.55f, 1.00f);
         static readonly Color TabInactive = new Color(0.20f, 0.20f, 0.20f);
@@ -96,7 +109,30 @@ namespace CitySim
             _btnRoadConfirm.onClick.AddListener(OnRoadConfirm);
             _btnRoadUndo   .onClick.AddListener(OnRoadUndo);
 
+            // 커버리지 통합창 토글 — CoverageView(정적 상태) ↔ PlayerPrefs 영속.
+            WireCoverageToggle(_tglCovWarehouse, "CovShowWarehouse",
+                v => CoverageView.ShowWarehouse = v, () => CoverageView.ShowWarehouse);
+            WireCoverageToggle(_tglCovSupply, "CovShowSupply",
+                v => CoverageView.ShowSupply = v, () => CoverageView.ShowSupply);
+            WireCoverageToggle(_tglCovAura, "CovShowAura",
+                v => CoverageView.ShowAura = v, () => CoverageView.ShowAura);
+
             ShowTab(0);
+        }
+
+        // 커버리지 토글 와이어링 — 씬에 토글이 없으면(미할당) 해당 종류는 항상 표시.
+        static void WireCoverageToggle(Toggle tgl, string prefKey,
+            System.Action<bool> set, System.Func<bool> get)
+        {
+            if (tgl == null) return;
+            bool v = PlayerPrefs.GetInt(prefKey, get() ? 1 : 0) != 0;
+            set(v);
+            tgl.SetIsOnWithoutNotify(v);
+            tgl.onValueChanged.AddListener(on =>
+            {
+                set(on);
+                PlayerPrefs.SetInt(prefKey, on ? 1 : 0);
+            });
         }
 
         void Update()
