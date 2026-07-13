@@ -6,49 +6,43 @@ using Unity.Mathematics;
 namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════════════════
-    //  SicknessSystem — 질병 욕구 전담: 발병 롤 + 자연 회복 + 입원 치료
-    //  (생애주기 v1, 2026-07-12 — 치안(현재 위치·일괄)과 공원(체류 적분)의 합성)
+    //  SicknessSystem — 질병 상태 전담: 발병 체크 + 회복(자연·입원) (상태화 v2, 2026-07-13)
     //
-    //  발병(DiseaseFightJob): 시민당 게임 1일 1회(위상 분산 — entity 해시 % 24 == 현재 시).
-    //    "질병과 싸워 이겨야 함": 승률 = 기본 + 저항(체력·인내) − 나이 불리
-    //    + 병원 근처 보정(**현재 위치**가 병원 오라(Disease 비트) 커버 안 — 치안과 동일 판정).
-    //    패배 = Level 일괄 0.8(앓아누움 — 일괄 증감 철학). 이미 앓는 중이면 롤 없음.
-    //    질병 위험은 모든 건물에 존재(위치 무관 롤, 커버가 보정만).
+    //  질병 = **상태**(DiseasedTag)로 재설계(유저): 욕구 긴급도 경쟁이 아니라 "일반 시민과
+    //  다른 생활로직" 모드. 발병 = enable → 별도 쿼리(NeedDecisionSystem.DiseaseRouteJob)가
+    //  병원 직행 라우팅. 완치 = disable → 정상 복귀. 여기(전담 시스템)는 세 가지만:
+    //    ① 발병 체크(DiseaseCheckJob) — **게임 3시간마다**(위상 분산: index%3 == Hour%3),
+    //       비질병 시민만. 저항 = base + **헬스케어**(현재 건물 병원 오라 커버) + 쾌적함(미구현 0)
+    //       − 나이 불리. 시민별 난수(질병값) ≥ 저항 → **패배 = Level 상승 + DiseasedTag enable**.
+    //       (구 체력·인내 저항 항은 유저의 새 3항 공식으로 대체 — 필요 시 재도입.)
+    //    ② 자연 회복(SicknessTickJob) — 앓는 동안 극저속. Level≤0 → DiseasedTag disable(완치).
+    //    ③ 입원 회복(SicknessReliefJob) — 병원 방문(Disease relief) 체류 적분(배속). 완치 시
+    //       타이머 당김(조기 퇴원) + DiseasedTag disable.
     //
-    //  회복 2경로:
-    //    · 자연: Rate(0.0005/게임초 ≈ 27게임시간) — 병원 없는 초기 도시 붕괴 방지(불사:
-    //      죽지 않고 오래 앓을 뿐). SicknessTickJob.
-    //    · 입원: 병원 방문(stamp 탐색 — Disease 비트) 후 체류 적분(HospitalReliefRate
-    //      0.003/게임초 ≈ 4.4게임시간), 완치 시 타이머 당김 = **조기 퇴원**(공원 동형).
-    //      병원 질(StaffEffect→회복 배속)은 후속(ServiceTarget 효과 스냅샷 복사 때).
+    //  헬스케어(CitizenHealthcare): "건물이 보유한 값"(오라 맵)을 **현재 건물 커버로 통째 교체**
+    //  (머티리얼라이즈 — 가감 아님, 드리프트 없음). 유일 용도 = 이 저항 입력(컨디션 무연결).
     //
-    //  노동: 병세 중 결근은 WorkforceProductivity가 cond.Health(투영)로 게이트 —
-    //  공통 시스템은 질병을 모른다. 수요: 병원 미발견 병자 → Disease 비트 NoCoverage
-    //  샘플(공통 CollectDemandJob — 병원 프리팹 등록 전엔 resolvable 가드가 침묵).
-    //
-    //  파이프라인: [이 시스템] → NeedDecision → ServiceSearch → Movement.
+    //  파이프라인: [이 시스템] → NeedDecision(DiseaseRoute) → ServiceSearch → Movement.
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     [UpdateAfter(typeof(AuraCoverageSystem))]
     [UpdateBefore(typeof(NeedDecisionSystem))]
     public partial struct SicknessSystem : ISystem
     {
-        double _lastGameSec;
-        int    _lastRollHour;
+        int _lastCheckHour;
 
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<GameClock>();
             state.RequireForUpdate<CitizenTag>();
-            _lastGameSec = -1;
-            _lastRollHour = -1;
+            _lastCheckHour = -1;
         }
 
         public void OnUpdate(ref SystemState state)
         {
             var clock = SystemAPI.GetSingleton<GameClock>();
 
-            // ── 회복(자연 + 입원) — 게임초 누적 dt, ~매 프레임(값 변경뿐이라 저비용) ──
+            // ── 회복(자연 + 입원) — 게임초 dt, 앓는(DiseasedTag) 시민만 처리 ──
             float gameDt = SystemAPI.Time.DeltaTime * clock.TimeScale;
             if (gameDt <= 0f) return;   // 일시정지
 
@@ -57,43 +51,49 @@ namespace CitySim
             state.Dependency = new SicknessReliefJob { Dt = gameDt, Now = clock.TotalSeconds }
                 .ScheduleParallel(state.Dependency);
 
-            // ── 발병 롤 — 시간이 바뀔 때 1회, 그 시각을 배정받은 시민만(하루 1회/인) ──
-            if (clock.Hour == _lastRollHour) return;
-            _lastRollHour = clock.Hour;
+            // ── 발병 체크 — 시간이 바뀔 때 1회. 위상 분산(index%3 == Hour%3)으로 각 시민이
+            //    게임 3시간에 정확히 한 번 체크 = CPU 균등 + 결정적 주기. ──
+            if (clock.Hour == _lastCheckHour) return;
+            _lastCheckHour = clock.Hour;
 
             bool haveAura = SystemAPI.TryGetSingleton<AuraCoverage>(out var aura)
                             && aura.Map.IsCreated;
-            if (!haveAura) return;   // 오라 front 준비 전(첫 틱)엔 롤 생략
+            if (!haveAura) return;   // 오라 front 준비 전(첫 틱)엔 체크 생략
 
             int day = (int)math.floor(clock.TotalSeconds / math.max(1f, clock.SecondsPerDay));
-            state.Dependency = new DiseaseFightJob
+            state.Dependency = new DiseaseCheckJob
             {
                 FpLookup = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
                 Aura     = aura.Map,
                 Hour     = clock.Hour,
-                Day      = day,
+                CheckSalt = day * 24 + clock.Hour,   // 체크 시점별 결정적 난수 salt
             }.ScheduleParallel(state.Dependency);
         }
     }
 
-    // ── 자연 회복(느림) — 앓는 동안 서서히. 구세이브 zero-init Threshold 부트스트랩. ──
+    // ── 자연 회복(느림) — 앓는 시민(DiseasedTag)만. Level≤0 → 완치(DiseasedTag disable). ──
+    //   ⚠ 입원 중(AtDestination)은 SicknessReliefJob이 회복+조기 퇴원(좌석 반납)을 전담한다.
+    //   여기서 자연 회복이 먼저 완치시켜 DiseasedTag를 끄면, Relief가 [WithAll(DiseasedTag)]에서
+    //   같은 프레임 제외돼 ActionEndTime 당김(조기 퇴원)이 스킵 → 완치자가 좌석을 dwell 만료까지
+    //   붙잡는다(병상 누수). 병원 밖 앓는 시민만 자연 회복(좌석 없으니 퇴원 처리 불요).
     [BurstCompile]
-    [WithAll(typeof(CitizenTag))]
+    [WithAll(typeof(CitizenTag), typeof(DiseasedTag))]
     public partial struct SicknessTickJob : IJobEntity
     {
         public float Dt;
 
-        void Execute(ref CitizenSickness s)
+        void Execute(ref CitizenSickness s, in CitizenState st, EnabledRefRW<DiseasedTag> diseased)
         {
-            if (s.Threshold <= 0f) { s.Threshold = 0.3f; if (s.Rate <= 0f) s.Rate = 0.0005f; }
-            if (s.Level > 0f)
-                s.Level = math.max(0f, s.Level - s.Rate * Dt);
+            if (st.Activity == CitizenActivity.AtDestination) return;   // 입원 = Relief 전담
+            if (s.Rate <= 0f) s.Rate = 0.0005f;   // 구세이브 zero-init 부트스트랩
+            s.Level = math.max(0f, s.Level - s.Rate * Dt);
+            if (s.Level <= 0f) diseased.ValueRW = false;   // 완치 → 상태 해제
         }
     }
 
-    // ── 입원 치료(체류 적분, 공원 동형) — 완치 시 타이머 당김 = 조기 퇴원. ──
+    // ── 입원 회복(체류 적분, 공원 동형) — 완치 시 타이머 당김(조기 퇴원) + 상태 해제. ──
     [BurstCompile]
-    [WithAll(typeof(CitizenTag))]
+    [WithAll(typeof(CitizenTag), typeof(DiseasedTag))]
     public partial struct SicknessReliefJob : IJobEntity
     {
         // 입원 회복률(게임초당) — 자연 회복의 6배(병세 0.8 ≈ 4.4게임시간 입원).
@@ -103,63 +103,72 @@ namespace CitySim
         public float  Dt;
         public double Now;
 
-        void Execute(ref CitizenSickness s, ref CitizenState st, in ServiceTarget target)
+        void Execute(ref CitizenSickness s, ref CitizenState st, in ServiceTarget target,
+                     EnabledRefRW<DiseasedTag> diseased)
         {
             if (st.Activity != CitizenActivity.AtDestination) return;
             if ((target.Relief & NeedType.Disease) == NeedType.None) return;
 
             s.Level = math.max(0f, s.Level - HospitalReliefRate * Dt);
 
-            if (s.Level <= 0f && Now < st.ActionEndTime)
-                st.ActionEndTime = Now;   // 완치 → 조기 퇴원(자리 반납은 Movement가 처리)
+            if (s.Level <= 0f)
+            {
+                diseased.ValueRW = false;                       // 완치 → 상태 해제
+                if (Now < st.ActionEndTime) st.ActionEndTime = Now;   // 조기 퇴원(자리 반납은 Movement)
+            }
         }
     }
 
-    // ── 발병 롤 — 배정 시각(entity 해시 % 24)의 시민만, 하루 1회. 전부 시민 로컬 +
-    //    오라 front RO(치안 판정과 동일 계약). 결정적 rng(시민×일 시드). ──
+    // ── 발병 체크 — 비질병(WithDisabled)만 위상 분산(index%3==Hour%3) 체크. 헬스케어
+    //    머티리얼라이즈 + 저항 vs 시민별 난수(질병값). 패배 = Level 상승 + DiseasedTag enable.
+    //    ([WithDisabled] + EnabledRefRW = "비활성 순회 후 활성화" 표준 패턴 — 멤버십 명시적.) ──
     [BurstCompile]
     [WithAll(typeof(CitizenTag))]
-    public partial struct DiseaseFightJob : IJobEntity
+    [WithDisabled(typeof(DiseasedTag))]
+    public partial struct DiseaseCheckJob : IJobEntity
     {
         [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
         [ReadOnly] public NativeHashMap<int3, ulong> Aura;
         public int Hour;
-        public int Day;
+        public int CheckSalt;
 
-        // ⚠ 테스트 성향 상수(체감 우선) — 밸런싱 #1 대상.
-        const float BaseWin     = 0.85f;   // 기본 승률(젊고 건강 ≈ 92%)
-        const float ResistGain  = 0.15f;   // 저항(체력·인내) 기여
-        const float AgePenalty  = 0.50f;   // 나이 불리(40세 0 → 90세 최대)
-        const float HospitalAid = 0.15f;   // 현재 위치가 병원 오라 커버면 가산
-        const float SickLevel   = 0.80f;   // 패배 시 병세(일괄)
+        // ⚠ 밸런싱 #1 대상 — 3게임시간 주기(하루 8체크)에 맞춘 임시 상수(과속 방지).
+        const float BaseResist   = 0.98f;   // 기본 저항(젊고 미커버 ≈ 2%/체크 발병)
+        const float HealthcareMax = 0.02f;   // 헬스케어 커버 시 가산(현재 CitizenHealthcare.Value 상한)
+        const float AgePenaltyMax = 0.08f;   // 나이 불리(40세 0 → 90세 최대)
+        const float SickLevel    = 0.80f;   // 패배 시 병세(일괄)
 
-        void Execute(Entity e, ref CitizenSickness s, in CitizenState st,
-                     in CitizenAge age, in CitizenAttributes attr)
+        void Execute(Entity e, ref CitizenSickness s, ref CitizenHealthcare hc,
+                     in CitizenState st, in CitizenAge age, EnabledRefRW<DiseasedTag> diseased)
         {
-            if (((uint)e.Index % 24u) != (uint)Hour) return;   // 내 배정 시각만(위상 분산)
-            if (s.IsActive) return;                             // 이미 앓는 중 — 롤 없음
+            if (((uint)e.Index % 3u) != (uint)(Hour % 3)) return;   // 내 위상만(3시간 주기)
 
-            // 병원 근처 보정 — 현재 위치의 오라에 Disease 비트(병원)가 있는가.
-            bool nearHospital = false;
+            // 헬스케어 머티리얼라이즈 — 현재 건물 셀의 병원 오라(PoorHealthcare) 커버로 교체.
+            //   가감이 아니라 통째 replace(드리프트 없음). 미커버/이동 중 = 0.
+            float healthcare = 0f;
             Entity at = st.CurrentBuilding;
             if (at != Entity.Null && FpLookup.HasComponent(at))
             {
                 var fp = FpLookup[at];
-                nearHospital = Aura.TryGetValue(
-                                   new int3(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y), out ulong bits)
-                               && (bits & (ulong)NeedType.Disease) != 0;
+                if (Aura.TryGetValue(new int3(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y),
+                                     out ulong bits)
+                    && (bits & (ulong)NeedType.PoorHealthcare) != 0)
+                    healthcare = HealthcareMax;
             }
+            hc.Value = healthcare;
 
-            float resist = 0.5f * attr.PhysiqueN + 0.5f * attr.ResilienceN;
+            // 저항 = base + 헬스케어 + 쾌적함(미구현 0) − 나이 불리. 질병값(난수) ≥ 저항 → 발병.
             float agePen = math.saturate((age.Years - 40f) / 50f);
-            float win    = math.saturate(BaseWin + ResistGain * resist
-                                         - AgePenalty * agePen
-                                         + (nearHospital ? HospitalAid : 0f));
+            float comfort = 0f;   // TODO: 쾌적함 욕구 구현 시 여기 가산.
+            float resist = math.saturate(BaseResist + healthcare + comfort - AgePenaltyMax * agePen);
 
             var rng = Unity.Mathematics.Random.CreateFromIndex(
-                math.hash(new int2(e.Index, Day)) | 1u);
-            if (rng.NextFloat() >= win)
+                math.hash(new int2(e.Index, CheckSalt)) | 1u);
+            if (rng.NextFloat() >= resist)
+            {
                 s.Level = math.max(s.Level, SickLevel);   // 패배 — 앓아누움(일괄)
+                diseased.ValueRW = true;                   // 질병 상태 진입
+            }
         }
     }
 }

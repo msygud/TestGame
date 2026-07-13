@@ -178,9 +178,31 @@ namespace CitySim
     {
         public float Level;       // 0(건강) ~ 1(중병).
         public float Rate;        // 자연 회복률(게임초당 — 입원의 1/6 수준, 하루+ 소요).
-        public float Threshold;   // 초과 = 병원 추구(수요 샘플 대상).
+        public float Threshold;   // 미사용(상태화 후) — Level>0이면 앓는 중. 하위호환 잔존.
 
-        public readonly bool IsActive => Level > Threshold;
+        public readonly bool IsActive => Level > 0f;
+    }
+
+    /// <summary>
+    /// 질병 = **상태**(2026-07-13 유저 재설계) — 욕구가 아니라 "일반 시민과 다른 생활로직"의
+    /// 모드 전환. 발병(SicknessSystem 3게임시간 체크) 시 enable → 별도 쿼리(WithAll)가
+    /// 다른 생활로직 수행(모든 것 중단·병원 직행, 막히면 귀가+재요청+수요 분출). 완치 시 disable.
+    /// IEnableableComponent 토글 = 구조 변경 없는 상태 전환(청크 안정). 정상 욕구·근무 시스템은
+    /// WithDisabled로 상태 시민을 자동 제외 → "다른 생활로직"이 자연스럽게 격리된다.
+    /// (불사 원칙의 무력화→병원행·입원 중도 같은 상태 계열로 확장 예정.)
+    /// </summary>
+    public struct DiseasedTag : IComponentData, IEnableableComponent { }
+
+    /// <summary>
+    /// 헬스케어 커버 값(2026-07-13 유저 설계) — 병원 오라(NeedType.PoorHealthcare) 커버 여부에서
+    /// 파생되는 **고정 상수·전원 동일** 값. 유일한 용도 = **질병 상태 진입 판정의 저항 입력**
+    /// (컨디션·사기·생산성과 무연결). 오라 맵(AuraCoverage, (owner,셀) 키)이 "건물이 보유한 값"의
+    /// 원천이고, 시민은 질병 체크 시점에 **현재 건물 셀의 커버로 통째 교체**(머티리얼라이즈) —
+    /// 가감(±)이 아니라 replace라 "안에 있는 동안 값이 바뀌어도 퇴실 시 뺄 값" 드리프트가 없다.
+    /// </summary>
+    public struct CitizenHealthcare : IComponentData
+    {
+        public float Value;   // 0(미커버) ~ CoverBonus(커버). 질병 저항에 가산.
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -272,6 +294,7 @@ namespace CitySim
         {
             JobType.Merchant      => new Window { Open = 8,  Close = 24, Shifts = 2 },  // 식당
             JobType.Administrator => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 창고 24h
+            JobType.Doctor        => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 병원 24h(2026-07-13)
             _                     => new Window { Open = defOpen, Close = defClose, Shifts = 1 },
         };
 
@@ -280,6 +303,7 @@ namespace CitySim
         {
             JobType.Merchant      => 2,
             JobType.Administrator => 3,
+            JobType.Doctor        => 3,   // 병원 24h(2026-07-13)
             _                     => 1,
         };
     }

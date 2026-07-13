@@ -39,6 +39,7 @@ namespace CitySim
             public ulong Relief;
             public int   Radius;
             public int   Capacity; // 정원(v1.5 과밀 신호). 0 이하 = 무제한(신호 없음)
+            public int   Bucket;   // relief 종류 버킷(오라 종류별 독립 부하 집계 — 2026-07-13)
         }
 
         NativeHashMap<int3, ulong> _back;   // 잡이 채우는 백 버퍼(Persistent)
@@ -150,20 +151,24 @@ namespace CitySim
                 ofLog.Window.Clear();
                 if (_srcs.Length > 0)
                 {
-                    var auraD = new NativeHashSet<int3>(_srcs.Length * 2, Allocator.Temp);
+                    // auraD = 오라 보유 지구 — relief 종류별로 독립(2026-07-13): key에 relief 비트
+                    //   포함. 경찰 과밀은 '경찰 없는' 이웃을, 병원 과밀은 '병원 없는' 이웃을 찾도록.
+                    //   (구 relief 무관 int3는 병원 있는 지구를 경찰 증설 목표에서 잘못 제외했다.)
+                    var auraD = new NativeHashSet<int4>(_srcs.Length * 2, Allocator.Temp);
                     for (int i = 0; i < _srcs.Length; i++)
                     {
                         int2 sd = DistrictGrid.ToDistrict(_srcs[i].Origin);
-                        auraD.Add(new int3(_srcs[i].Owner, sd.x, sd.y));
+                        auraD.Add(new int4(_srcs[i].Owner, sd.x, sd.y,
+                                           math.tzcnt(_srcs[i].Relief)));
                     }
                     bool haveTable = SystemAPI.TryGetSingleton<DistrictTable>(out var dtable)
                                      && dtable.Stats.IsCreated;
-                    int hcBit = math.tzcnt((ulong)NeedType.HighCrime);
 
                     for (int i = 0; i < _srcs.Length; i++)
                     {
                         var src = _srcs[i];
                         if (src.Capacity <= 0 || _counts[i] <= src.Capacity) continue;
+                        int srcBit = math.tzcnt(src.Relief);   // 이 오라 종류의 수요 비트
 
                         int2 d0 = DistrictGrid.ToDistrict(src.Origin);
                         bool found = false; int2 target = default;
@@ -171,14 +176,14 @@ namespace CitySim
                         for (int n = 0; n < 8; n++)
                         {
                             int2 nd = d0 + Neigh8(n);
-                            if (auraD.Contains(new int3(src.Owner, nd.x, nd.y))) continue;
+                            if (auraD.Contains(new int4(src.Owner, nd.x, nd.y, srcBit))) continue;
 
-                            // 중심이 이미 내 오라 커버 = 실질 서비스 존재(옆 지구에 선 시설이
-                            //   여길 덮는 경우). 지구 귀속(auraD)만 보면 이를 못 보고 같은 목표를
-                            //   영원히 재지목한다 — 나쁜 지형 연쇄 착지(연속 N채)의 한 축.
+                            // 중심이 이미 내 오라(같은 relief) 커버 = 실질 서비스 존재(옆 지구에 선
+                            //   시설이 여길 덮는 경우). 지구 귀속(auraD)만 보면 이를 못 보고 같은
+                            //   목표를 영원히 재지목한다 — 나쁜 지형 연쇄 착지(연속 N채)의 한 축.
                             int2 nc = DistrictGrid.Center(nd);
                             if (ac.Map.TryGetValue(new int3(src.Owner, nc.x, nc.y), out ulong cbits)
-                                && (cbits & (ulong)NeedType.HighCrime) != 0) continue;
+                                && (cbits & src.Relief) != 0) continue;
 
                             // 개발 여지 없는 지구(물·단차 = 나쁜 지형) 제외 — 목표로 삼으면
                             //   시설이 영원히 못 서고 신호가 안 꺼져 옆 회랑에 연쇄 착지한다.
@@ -193,7 +198,7 @@ namespace CitySim
                         if (!found) continue;   // 유효 이웃 없음 = 포화/지형 한계 — 무신호(정직)
 
                         int2 dc = DemandGrid.ToCell(DistrictGrid.Center(target));
-                        var okey = new int4(src.Owner, dc.x, dc.y, hcBit);
+                        var okey = new int4(src.Owner, dc.x, dc.y, srcBit);
                         if (ofLog.Window.TryAdd(okey, 1) && !prevOverfull.Contains(okey))
                             UnityEngine.Debug.Log(
                                 $"[Aura] P{src.Owner} 과밀 {_counts[i]}/{src.Capacity} " +
@@ -232,15 +237,36 @@ namespace CitySim
                 });
             }
 
+            // relief 종류별 버킷 부여(2026-07-13) — 오라 종류별 독립 부하 집계. 단일 비트 relief
+            //   가정(HighCrime/PoorHealthcare 등). 병원 오라가 경찰 부하를 훔치던 오염을 근절:
+            //   시민은 relief 버킷마다 각각 최근접 시설에 귀속(교차-relief 도둑질 없음).
+            int bucketCount = 0;
+            {
+                var reliefs = new NativeList<ulong>(4, Allocator.Temp);
+                for (int i = 0; i < _srcs.Length; i++)
+                {
+                    var src = _srcs[i];
+                    int b = -1;
+                    for (int k = 0; k < reliefs.Length; k++)
+                        if (reliefs[k] == src.Relief) { b = k; break; }
+                    if (b < 0) { b = reliefs.Length; reliefs.Add(src.Relief); }
+                    src.Bucket = b;
+                    _srcs[i] = src;
+                }
+                bucketCount = reliefs.Length;
+                reliefs.Dispose();
+            }
+
             // 커버 맵 재그리기 + 시설별 부하 집계(v1.5) — 서로 독립(둘 다 _srcs RO), 병렬.
             _counts = new NativeArray<int>(_srcs.Length, Allocator.Persistent);
             var hRebuild = new RebuildAuraJob { Srcs = _srcs, Back = _back }.Schedule(state.Dependency);
             var hCount = _srcs.Length > 0
                 ? new CountAuraLoadJob
                   {
-                      FpLookup = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
-                      Srcs     = _srcs,
-                      Counts   = _counts,
+                      FpLookup    = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
+                      Srcs        = _srcs,
+                      Counts      = _counts,
+                      BucketCount = bucketCount,
                   }.Schedule(state.Dependency)
                 : default;
             _handle = JobHandle.CombineDependencies(hRebuild, hCount);
@@ -266,13 +292,20 @@ namespace CitySim
             [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
             [ReadOnly] public NativeList<AuraSrc> Srcs;
             public NativeArray<int> Counts;
+            public int BucketCount;   // relief 종류 수(버킷) — 종류별 독립 귀속
 
             void Execute(in CitizenResidence res)
             {
                 if (res.Home == Entity.Null || !FpLookup.HasComponent(res.Home)) return;
                 var fp = FpLookup[res.Home];
 
-                int best = -1, bestD = int.MaxValue;
+                // relief 버킷마다 최근접 시설 1곳에 귀속(2026-07-13 오염 픽스): 시민이 경찰(치안)과
+                //   병원(헬스케어) 둘 다 커버되면 각 버킷의 최근접에 각각 +1 — 교차-relief 도둑질 없음.
+                //   (구 구현은 relief 무관 단일 최근접이라 병원이 경찰 부하를 훔쳐 과밀 신호를 억눌렀다.)
+                var bestD = new FixedList128Bytes<int>();
+                var bestI = new FixedList128Bytes<int>();
+                for (int b = 0; b < BucketCount; b++) { bestD.Add(int.MaxValue); bestI.Add(-1); }
+
                 for (int s = 0; s < Srcs.Length; s++)
                 {
                     var src = Srcs[s];
@@ -282,10 +315,12 @@ namespace CitySim
                     int ny = math.clamp(fp.Origin.y, src.Origin.y, src.Origin.y + src.Eff.y - 1);
                     int dx = fp.Origin.x - nx, dy = fp.Origin.y - ny;
                     int d2 = dx * dx + dy * dy;
-                    if (d2 > src.Radius * src.Radius || d2 >= bestD) continue;
-                    bestD = d2; best = s;
+                    if (d2 > src.Radius * src.Radius) continue;
+                    int bkt = src.Bucket;
+                    if (d2 < bestD[bkt]) { bestD[bkt] = d2; bestI[bkt] = s; }
                 }
-                if (best >= 0) Counts[best]++;
+                for (int b = 0; b < BucketCount; b++)
+                    if (bestI[b] >= 0) Counts[bestI[b]]++;
             }
         }
 

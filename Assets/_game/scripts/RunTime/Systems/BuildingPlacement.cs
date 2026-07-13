@@ -316,7 +316,12 @@ namespace CitySim
             GridSettings         settings,
             EntityCommandBuffer  ecb)
         {
-            float3 pos = settings.CellCenter(req.Cell.x, req.Cell.y, meta.Size, baseHeight)
+            // 비주얼 중심은 그리드 점유와 동일한 회전 반영 크기로 계산해야 한다.
+            //   점유(ValidateCells/MarkOccupied)는 RotateSize(effSize)를 req.Cell(최소코너)
+            //   기준으로 쓰는데, 여기서 원본 meta.Size로 중심을 잡으면 90°/270°에서 Size.x↔y
+            //   교환분만큼(예: 6×4 → (1,-1)셀) 메시가 그리드와 어긋난다.
+            int2 effSize = EntranceOps.RotateSize(meta.Size, rotSteps);
+            float3 pos = settings.CellCenter(req.Cell.x, req.Cell.y, effSize, baseHeight)
                          + meta.Offset;
 
             // 입구 정보: 입구 있는 건물만 적재 (검증부와 동일한 조회 경로).

@@ -2,6 +2,7 @@ using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
+using Game.Unit;   // CombatHealth(내구 표시)
 
 namespace CitySim
 {
@@ -42,7 +43,7 @@ namespace CitySim
         bool _enabled = true;   // F11 토글
 
         World       _qWorld;
-        EntityQuery _gsQ, _bfQ, _citQ, _poolQ;
+        EntityQuery _gsQ, _bfQ, _citQ, _poolQ, _auraQ, _dmdQ;
 
         GUIStyle _style;
         Entity   _hovered = Entity.Null;
@@ -74,6 +75,8 @@ namespace CitySim
                     ComponentType.ReadOnly<CitizenResidence>(),
                     ComponentType.ReadOnly<CitizenState>());
                 _poolQ = em.CreateEntityQuery(ComponentType.ReadOnly<LogisticsPool>());
+                _auraQ = em.CreateEntityQuery(ComponentType.ReadOnly<AuraLoadMap>());
+                _dmdQ  = em.CreateEntityQuery(ComponentType.ReadOnly<DemandField>());
                 _hovered = Entity.Null; _text = string.Empty;
             }
 
@@ -157,6 +160,61 @@ namespace CitySim
             sb.Append(type).Append("   P").Append(bf.OwnerLocalId)
               .Append("   @(").Append(bf.Origin.x).Append(',').Append(bf.Origin.y).Append(')');
 
+            // ── 내구(전투 파괴 가능 건물) ──
+            if (em.HasComponent<CombatHealth>(e))
+            {
+                var hp = em.GetComponentData<CombatHealth>(e);
+                sb.Append("   hp ").Append(hp.Health.ToString("0")).Append('/')
+                  .Append(hp.MaxHealth.ToString("0"));
+            }
+
+            // ── 용도 요약: 해소하는 욕구(방문 / 오라) + 직무 효과 ──
+            //   Serves = 찾아와서(방문) 해소하는 욕구 / Aura = 반경 안 수동 해소(치안·의료).
+            if (em.HasComponent<StampSupplier>(e))
+            {
+                var ss = em.GetComponentData<StampSupplier>(e);
+                sb.Append("\nServes ").Append(ReliefName(ss.Relief)).Append(" (visit)");
+            }
+            if (em.HasComponent<AuraSupplier>(e))
+            {
+                var a = em.GetComponentData<AuraSupplier>(e);
+                sb.Append("\nAura ").Append(ReliefName(a.Relief)).Append("  r").Append(a.Radius);
+                // 커버 부하(최근접 귀속 인구)/정원 + 품질(초과 시 정원÷부하). AuraLoadMap에서.
+                if (_auraQ.CalculateEntityCount() == 1)
+                {
+                    var lm = _auraQ.GetSingleton<AuraLoadMap>();
+                    if (lm.Map.IsCreated && lm.Map.TryGetValue(e, out var load))
+                    {
+                        int pop = load.x, cap = load.y;
+                        sb.Append("  load ").Append(pop);
+                        if (cap > 0)
+                        {
+                            int q = pop <= cap ? 100 : (int)(100f * cap / pop);
+                            sb.Append('/').Append(cap).Append("  q").Append(q).Append('%');
+                        }
+                        else sb.Append(" (uncapped)");
+                    }
+                }
+            }
+            // 직무 효과(유인 직장 공통 — 무인/폐점=0, 정상=숙련·컨디션·적성 합÷정원).
+            if (em.HasComponent<StaffEffect>(e))
+                sb.Append("\nStaff x").Append(em.GetComponentData<StaffEffect>(e).Factor.ToString("0.00"));
+
+            // ── 이 셀 사람들의 미충족 수요(사유별, 누적 — remedy 진단) ──
+            //   집·직장 = 여기 거주민/근로자가 못 얻는 것 / 서비스 건물 = 자기 상태(Seats·Stock·Staff)로 판단.
+            //   cov=신설 / full=증설 / goods=상류 / staff=고용. (누적값 — 비율/추세가 진단 포인트.)
+            if (_dmdQ.CalculateEntityCount() == 1)
+            {
+                var df = _dmdQ.GetSingleton<DemandField>();
+                if (df.Stats.IsCreated)
+                {
+                    int2 dc = DemandGrid.ToCell(bf.Origin);
+                    AppendDemand(sb, in df, bf.OwnerLocalId, dc, NeedType.Hunger, "food");
+                    AppendDemand(sb, in df, bf.OwnerLocalId, dc, NeedType.LowEntertainment, "fun");
+                    AppendDemand(sb, in df, bf.OwnerLocalId, dc, NeedType.Disease, "hlth");
+                }
+            }
+
             // ── 거주 / 근로: 명부 vs 실제 출근 구분(2026-07-07 유저 지적) ──
             bool isResidence = em.HasComponent<ResidenceBuilding>(e);
             bool isWorkplace = em.HasComponent<WorkplaceBuilding>(e);
@@ -207,10 +265,7 @@ namespace CitySim
             {
                 var pj = em.GetComponentData<ProductionJob>(e);
                 var recipe = RecipeDefs.Get(pj.RecipeOutput);
-                float staffX = em.HasComponent<StaffEffect>(e)
-                    ? em.GetComponentData<StaffEffect>(e).Factor : 1f;
-                sb.Append("\nProd ").Append(pj.RecipeOutput.ToString())
-                  .Append("  staff x").Append(staffX.ToString("0.00"));
+                sb.Append("\nProd ").Append(pj.RecipeOutput.ToString());   // staff는 위 공통 라인
                 if (recipe.BaseDuration > 0f)
                 {
                     if (pj.Progress < 0f) sb.Append("  [idle]");
@@ -289,10 +344,19 @@ namespace CitySim
         static string ClassifyType(EntityManager em, Entity e)
         {
             if (em.HasComponent<WarehouseTag>(e)) return "Warehouse";
+            // 오라 공급자 우선(치안·의료 커버 시설 — 병원은 오라+방문 겸용이라 여기서 잡힘).
+            if (em.HasComponent<AuraSupplier>(e))
+            {
+                var a = em.GetComponentData<AuraSupplier>(e);
+                if ((a.Relief & NeedType.HighCrime) != NeedType.None)      return "Police";
+                if ((a.Relief & NeedType.PoorHealthcare) != NeedType.None) return "Hospital";
+            }
             if (em.HasComponent<StampSupplier>(e))
             {
                 var ss = em.GetComponentData<StampSupplier>(e);
-                if ((ss.Relief & NeedType.Hunger) != NeedType.None) return "Restaurant";
+                if ((ss.Relief & NeedType.Hunger) != NeedType.None)           return "Restaurant";
+                if ((ss.Relief & NeedType.Disease) != NeedType.None)          return "Hospital";
+                if ((ss.Relief & NeedType.LowEntertainment) != NeedType.None) return "Park";
                 return "Service";
             }
             if (em.HasComponent<ResidenceBuilding>(e)) return "House";
@@ -303,10 +367,37 @@ namespace CitySim
                 {
                     JobType.Farmer   => "Farm",
                     JobType.Engineer => "Mill",
+                    JobType.Merchant => "Restaurant",
+                    JobType.Doctor   => "Hospital",
                     _                => "Workplace",
                 };
             }
             return "Building";
+        }
+
+        // 이 셀·욕구의 사유별 미충족 누적을 한 줄로(0이면 생략). df.Stats 키 = (owner,dx,dy,needBit).
+        static void AppendDemand(System.Text.StringBuilder sb, in DemandField df,
+                                 int owner, int2 dc, NeedType need, string label)
+        {
+            int bit = math.tzcnt((ulong)need);
+            if (df.Stats.TryGetValue(new int4(owner, dc.x, dc.y, bit), out var st) && st.Failures > 0)
+                sb.Append("\ndmd ").Append(label)
+                  .Append(" cov").Append(st.FailNoCoverage)
+                  .Append(" full").Append(st.FailFull)
+                  .Append(" goods").Append(st.FailNoGoods)
+                  .Append(" staff").Append(st.FailUnstaffed);
+        }
+
+        // NeedType(단일/복합 비트) → 짧은 표시명. 복합이면 첫 매칭.
+        static string ReliefName(NeedType r)
+        {
+            if ((r & NeedType.Hunger) != NeedType.None)           return "food";
+            if ((r & NeedType.LowEntertainment) != NeedType.None) return "fun";
+            if ((r & NeedType.Disease) != NeedType.None)          return "disease";
+            if ((r & NeedType.HighCrime) != NeedType.None)        return "safety";
+            if ((r & NeedType.PoorHealthcare) != NeedType.None)   return "health";
+            if (r == NeedType.None) return "none";
+            return "#" + ((ulong)r).ToString();
         }
     }
 }

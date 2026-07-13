@@ -148,7 +148,7 @@ namespace CitySim
     public struct DemandSample
     {
         public int4 Key;    // (owner, dx, dy, needBit)
-        public byte Cause;  // 0 = NoCoverage / 1 = Reached
+        public byte Cause;  // 0=NoCoverage / 1=Full / 2=NoGoods / 3=Unstaffed (2026-07-14 세분)
     }
 
     // ── ① 미충족 시민 → (시도위치 key, 사유) 수집(병렬) ─────────────────────────
@@ -181,10 +181,17 @@ namespace CitySim
             var fp = FpLookup[cur];
 
             int2 dcell = DemandGrid.ToCell(fp.Origin);
+            byte cause = outcome switch
+            {
+                ServiceOutcome.Full      => 1,
+                ServiceOutcome.NoGoods   => 2,
+                ServiceOutcome.Unstaffed => 3,
+                _                        => 0,   // NoCoverage
+            };
             Samples.Enqueue(new DemandSample
             {
                 Key   = new int4(fp.OwnerLocalId, dcell.x, dcell.y, bit),
-                Cause = (byte)(outcome == ServiceOutcome.Reached ? 1 : 0),
+                Cause = cause,
             });
         }
     }
@@ -251,8 +258,13 @@ namespace CitySim
             while (Samples.TryDequeue(out var s))
             {
                 Back.TryGetValue(s.Key, out var stat);
-                if (s.Cause == 1) stat.FailReached++;
-                else              stat.FailNoCoverage++;
+                switch (s.Cause)
+                {
+                    case 1:  stat.FailFull++;      break;
+                    case 2:  stat.FailNoGoods++;   break;
+                    case 3:  stat.FailUnstaffed++; break;
+                    default: stat.FailNoCoverage++; break;
+                }
                 Back[s.Key] = stat;
             }
         }

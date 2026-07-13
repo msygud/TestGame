@@ -78,6 +78,7 @@ namespace CitySim
                 ResLookup   = SystemAPI.GetComponentLookup<CitizenResidence>(true),
                 FpLookup    = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
                 EntLookup   = SystemAPI.GetComponentLookup<BuildingEntrance>(true),
+                DiseasedLookup = SystemAPI.GetComponentLookup<DiseasedTag>(true),
                 Ecb         = ecbSingleton.CreateCommandBuffer(state.WorldUnmanaged).AsParallelWriter(),
                 DepartQueue = departQueue.AsParallelWriter(),
                 LeaveQueue  = leaveQueue.AsParallelWriter(),
@@ -149,6 +150,7 @@ namespace CitySim
         [ReadOnly] public ComponentLookup<CitizenResidence>  ResLookup;
         [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
         [ReadOnly] public ComponentLookup<BuildingEntrance>  EntLookup;
+        [ReadOnly] public ComponentLookup<DiseasedTag>       DiseasedLookup;
         public EntityCommandBuffer.ParallelWriter Ecb;
         public NativeQueue<Entity>.ParallelWriter       DepartQueue;
         public NativeQueue<Entity>.ParallelWriter       LeaveQueue;
@@ -175,6 +177,10 @@ namespace CitySim
                      ref CitizenSkills skills, in JobData job, in CitizenAttributes attr)
         {
             bool workHours = IsWorkHours(job.Job, job.Shift);
+            // 질병 상태 = 다른 생활로직(근무 X, 병원行). 룩업 IsComponentEnabled로 읽어
+            //   쿼리 멤버십(전 시민)을 유지 — 코드베이스 관례(HealthBarRenderSystem 등).
+            bool diseased  = DiseasedLookup.HasComponent(entity)
+                             && DiseasedLookup.IsComponentEnabled(entity);
 
             switch (cs.Activity)
             {
@@ -187,6 +193,16 @@ namespace CitySim
                         //   예약 후 수행(2026-07-07). 여기선 출발 희망만 등록(상태 불변 —
                         //   데스크가 같은 프레임 뒤에서 Traveling 전환 또는 만석 시 target 비움).
                         DepartQueue.Enqueue(entity);
+                    }
+                    else if (diseased)
+                    {
+                        // 질병 상태(2026-07-13): 병원 미발견(target 없음) → 귀가해 대기.
+                        //   "막히면 집으로, 자리 날 때까지 요청" — DiseaseRoute가 Pursuing=Disease를
+                        //   유지하고 CollectDemandJob이 병원 건설 수요를 발행한다. 근무는 하지 않는다.
+                        Entity dhome = ResLookup.HasComponent(entity)
+                            ? ResLookup[entity].Home : Entity.Null;
+                        if (dhome != Entity.Null && cs.CurrentBuilding != dhome)
+                            BeginTravel(sortKey, ref cs, cs.CurrentBuilding, dhome, TravelPurpose.Home);
                     }
                     else if (workHours)
                     {
@@ -265,7 +281,10 @@ namespace CitySim
                         if (ResLookup.HasComponent(entity))
                         { var r = ResLookup[entity]; work = r.Work; home = r.Home; }
 
-                        if (workHours && work != Entity.Null)
+                        // 질병 상태(방문 중 발병)면 근무로 가지 않는다(Idle 분기와 동일 규약) —
+                        //   귀가/제자리 후 DiseaseRoute가 병원으로 재라우팅. 미적용 시 병자가
+                        //   직장으로 헛걸음(다음 틱 AtWork→Idle 재교정)하는 낭비 왕복.
+                        if (!diseased && workHours && work != Entity.Null)
                             BeginTravel(sortKey, ref cs, cs.CurrentBuilding, work, TravelPurpose.Work);
                         else if (home != Entity.Null)
                             BeginTravel(sortKey, ref cs, cs.CurrentBuilding, home, TravelPurpose.Home);

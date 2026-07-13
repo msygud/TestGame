@@ -574,7 +574,10 @@ namespace CitySim
             var cur = new NativeHashMap<int2, CurAgg>(64, Allocator.Temp);
             foreach (var kv in stats)
             {
-                int nc = kv.Value.FailNoCoverage;      // NoCoverage 계열(시민 커버 공백 + 공급자 상류 부족)
+                // 건설 트리거 = NoCoverage(신설) + Full(만석→증설, 슬라이스 2 2026-07-14). 둘 다
+                //   "같은 종류 건물을 시민 위치 근처에 하나 더"로 해결됨. NoGoods/Unstaffed는 제외
+                //   (상류·고용 소관 — 복제하면 굶는 건물만 늘어남). Full 정교화(per-capita 비율·사이징)는 후속.
+                int nc = kv.Value.FailNoCoverage + kv.Value.FailFull;
                 if (nc == 0) continue;
                 var okey = new int2(kv.Key.x, kv.Key.w);   // (owner, resId)
                 cur.TryGetValue(okey, out var agg);
@@ -641,7 +644,7 @@ namespace CitySim
                         //   커버된 자리 옆에 반복 건설되는 결함(경찰서 인접 3개) 차단.
                         foreach (var sc in stats)
                             if (sc.Key.x == owner && sc.Key.w == res)
-                                _cellSeen[sc.Key] = sc.Value.FailNoCoverage;
+                                _cellSeen[sc.Key] = sc.Value.FailNoCoverage + sc.Value.FailFull;
                         _demandRebaselineAt.Remove(ckey);
                         continue;                                  // 다음 틱부터 '반영 후' 수요만 판단
                     }
@@ -706,8 +709,9 @@ namespace CitySim
                         {
                             if (s.Key.x != owner || s.Key.w != res) continue;
                             // 신규 미스(재기준선 이후)만 — 누적 더미의 우세 독점 차단(2026-07-12).
+                            //   NoCoverage + Full(만석) — 셀 선택도 트리거와 동일 기준(슬라이스 2).
                             _cellSeen.TryGetValue(s.Key, out int seen2);
-                            int nc2 = s.Value.FailNoCoverage - seen2;
+                            int nc2 = s.Value.FailNoCoverage + s.Value.FailFull - seen2;
                             if (nc2 <= bestNc2) continue;
                             var k2 = new int4(owner, s.Key.y, s.Key.z, res);
                             _demandAttempts.TryGetValue(k2, out int at2);

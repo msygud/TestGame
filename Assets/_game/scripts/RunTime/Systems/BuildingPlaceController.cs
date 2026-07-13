@@ -171,7 +171,12 @@ namespace CitySim
             float3 pos = default;
             var gq = _em.CreateEntityQuery(typeof(GridSettings));
             if (!gq.IsEmpty)
-                pos = gq.GetSingleton<GridSettings>().CellCenter(origin.x, origin.y, meta.Size, baseHeight) + meta.Offset;
+            {
+                // 실제 스폰(EmitSingle)과 동일: 회전 반영 크기로 중심 계산 —
+                //   원본 meta.Size로 잡으면 90°/270°에서 그리드와 (Size.x↔y)만큼 어긋난다.
+                int2 effSize = EntranceOps.RotateSize(meta.Size, _rotSteps);
+                pos = gq.GetSingleton<GridSettings>().CellCenter(origin.x, origin.y, effSize, baseHeight) + meta.Offset;
+            }
             gq.Dispose();
 
             quaternion rot = quaternion.RotateY(math.radians(_rotSteps * 90f));

@@ -28,15 +28,22 @@ namespace CitySim
     //  독자(히트맵/배치)는 front만 읽는다(메인만 쓰므로 안전). Version = 렌더 캐시 키.
     // ══════════════════════════════════════════════════════════════════════════
 
-    /// <summary>수요셀·욕구별 실패 누적 통계(사유 2분류, 2026-07-08).</summary>
+    /// <summary>수요셀·욕구별 실패 누적 통계(거절 사유 세분, 2026-07-14).
+    /// remedy가 사유마다 다르다: NoCoverage=신설 / Full=증설 / NoGoods=상류 / Unstaffed=노동.</summary>
     public struct DemandStat
     {
         /// <summary>사거리 내 공급자 자체가 없음 → 신설(WHERE = 시민 위치).</summary>
         public int FailNoCoverage;
-        /// <summary>도달했으나 서빙 실패(재고·만석·폐점) → 상류/용량/노동(WHERE = 공급자).</summary>
-        public int FailReached;
+        /// <summary>도달했으나 만석 → 증설(같은 종류 더, WHERE = 시민 위치).</summary>
+        public int FailFull;
+        /// <summary>도달했으나 재고 0 → 상류 보강(생산·물류).</summary>
+        public int FailNoGoods;
+        /// <summary>도달했으나 무인/폐점 → 노동 배정(고용).</summary>
+        public int FailUnstaffed;
 
-        public readonly int Failures => FailNoCoverage + FailReached;
+        /// <summary>구 Reached 합계(하위호환 — 히트맵 등 기존 독자용).</summary>
+        public readonly int FailReached => FailFull + FailNoGoods + FailUnstaffed;
+        public readonly int Failures    => FailNoCoverage + FailReached;
     }
 
     public struct DemandField : IComponentData

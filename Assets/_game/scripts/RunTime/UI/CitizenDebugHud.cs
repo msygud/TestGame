@@ -138,7 +138,18 @@ namespace CitySim
             var needs   = _qNeeds.ToComponentDataArray<CitizenNeeds>(Allocator.Temp);
             var targets = _qNeeds.ToComponentDataArray<ServiceTarget>(Allocator.Temp);
             var nStates = _qNeeds.ToComponentDataArray<CitizenState>(Allocator.Temp);
-            int pursuing = 0, unmet = 0, unmetCov = 0, unmetFull = 0;
+            int pursuing = 0, unmet = 0;
+            // 미충족 세분(2026-07-14): [욕구 0=food/1=fun/2=health/3=other][사유 0=cov/1=full/2=goods/3=staff].
+            //   remedy 진단(유저·AI 공통): cov=신설 / full=증설(더/크게) / goods=상류 / staff=고용.
+            var ub = new NativeArray<int>(16, Allocator.Temp);
+            static int NeedIdx(NeedType n) =>
+                  (n & NeedType.Hunger) != NeedType.None          ? 0
+                : (n & NeedType.LowEntertainment) != NeedType.None ? 1
+                : (n & NeedType.Disease) != NeedType.None          ? 2 : 3;
+            static int CauseIdx(ServiceOutcome o) =>
+                  o == ServiceOutcome.Full      ? 1
+                : o == ServiceOutcome.NoGoods   ? 2
+                : o == ServiceOutcome.Unstaffed ? 3 : 0;
             for (int i = 0; i < needs.Length; i++)
             {
                 if (needs[i].Pursuing == NeedType.None) continue;
@@ -147,8 +158,7 @@ namespace CitySim
                 if (!targets[i].Has && (a == CitizenActivity.Idle || a == CitizenActivity.AtHome))
                 {
                     unmet++;
-                    if (targets[i].LastOutcome == ServiceOutcome.Reached)         unmetFull++;
-                    else if (targets[i].LastOutcome == ServiceOutcome.NoCoverage) unmetCov++;
+                    ub[NeedIdx(needs[i].Pursuing) * 4 + CauseIdx(targets[i].LastOutcome)]++;
                 }
             }
             needs.Dispose(); targets.Dispose(); nStates.Dispose();
@@ -302,9 +312,11 @@ namespace CitySim
               .Append($"Idle {idle}  Home {home}  Work {work}\n")
               .Append($"Travel {travel}  Eat {dest}  Stuck {stuck}\n")
               .Append($"Hunger avg {hungerAvg:0.00}  hungry {hungry}  En {energyAvg:0.00}\n")
-              .Append($"pursuing {pursuing}  UNMET {unmet} (cov {unmetCov} / full {unmetFull})\n")
+              .Append($"pursuing {pursuing}  UNMET {unmet}  cov{ub[0]+ub[4]+ub[8]+ub[12]} full{ub[1]+ub[5]+ub[9]+ub[13]} goods{ub[2]+ub[6]+ub[10]+ub[14]} staff{ub[3]+ub[7]+ub[11]+ub[15]}\n")
+              .Append($"  food c{ub[0]} f{ub[1]} g{ub[2]} s{ub[3]}    fun c{ub[4]} f{ub[5]} g{ub[6]} s{ub[7]}    hlth c{ub[8]} f{ub[9]} g{ub[10]} s{ub[11]}\n")
               .Append($"Housing {cur}/{cap}\n")
               .Append($"Meals {meals}/{mealCap}  Grain {grain}  Flour {flour}");
+            ub.Dispose();
 
             // ── 플레이어별(존재하는 owner만, 2줄씩): 시민 지표는 OwnerShared 청크 필터로 ──
             for (int p = 0; p < 8; p++)
@@ -336,8 +348,8 @@ namespace CitySim
                     if (!pt[i].Has && (a == CitizenActivity.Idle || a == CitizenActivity.AtHome))
                     {
                         pUnmet++;
-                        if (pt[i].LastOutcome == ServiceOutcome.Reached)         pUnFull++;
-                        else if (pt[i].LastOutcome == ServiceOutcome.NoCoverage) pUnCov++;
+                        if (pt[i].LastOutcome == ServiceOutcome.NoCoverage) pUnCov++;
+                        else                                                pUnFull++;   // 도달·거절
                     }
                 }
                 pn.Dispose(); pt.Dispose(); ps.Dispose();

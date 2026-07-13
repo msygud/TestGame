@@ -121,6 +121,13 @@ namespace CitySim
                 Threshold = 0.3f,
             });
 
+            // 질병 상태 토글 + 헬스케어 커버 값(2026-07-13 상태화). DiseasedTag는 비활성으로
+            //   시작(건강) — 발병 시 SicknessSystem이 enable. CitizenHealthcare는 질병 체크가
+            //   현재 건물 커버로 머티리얼라이즈(고정 상수·전원 동일, needRng 미소비 = 순서 무관).
+            ecb.AddComponent<DiseasedTag>(e);
+            ecb.SetComponentEnabled<DiseasedTag>(e, false);
+            ecb.AddComponent(e, new CitizenHealthcare { Value = 0f });
+
             // 콜드: 직업 + 직업별 숙련(고용 2차 — 직업이 바뀌어도 각 숙련 보존)
             ecb.AddComponent(e, new JobData { Job = req.InitialJob });
             ecb.AddComponent(e, CitizenSkills.Empty);

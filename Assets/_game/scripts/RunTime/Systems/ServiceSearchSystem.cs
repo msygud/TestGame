@@ -16,11 +16,18 @@ namespace CitySim
     //  검색 잡이 후보 순회 중 확정(필터가 이미 계산 — 재계산 0). 잠금 중(요청 없음)
     //  시민은 애초에 검색 자체를 안 하므로 통계에 안 들어감(시도 게이트 = 오염 필터).
     // ══════════════════════════════════════════════════════════════════════════
+    //  거절 사유 세분화(2026-07-14): 구 Reached(도달·서빙실패)를 원인별로 쪼갬 — remedy가 다르다.
+    //    · Full      = 만석(정원 초과) → **증설**(같은 종류 더, WHERE=시민 위치). 유일 신설 신호.
+    //    · NoGoods   = 재고 0        → 상류 보강(생산·물류, 신설 아님).
+    //    · Unstaffed = 무인/폐점     → 노동 배정(고용, 신설 아님).
+    //  기록만 세분(슬라이스 1) — 비율·일관성 기반 Full 증설 판단은 후속 슬라이스.
     public enum ServiceOutcome : byte
     {
         None       = 0,   // 미검색 / 성공(Has=true) — 실패 아님
-        NoCoverage = 1,   // 사거리 내 해당 욕구 공급자 없음
-        Reached    = 2,   // 도달했으나 서빙 실패(재고·만석·폐점)
+        NoCoverage = 1,   // 사거리 내 해당 욕구 공급자 없음 → 신설
+        Full       = 2,   // 도달했으나 만석 → 증설
+        NoGoods    = 3,   // 도달했으나 재고 0 → 상류
+        Unstaffed  = 4,   // 도달했으나 무인/폐점 → 노동
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -141,27 +148,28 @@ namespace CitySim
             //   정직하게 잡히고, 근무시간이면 출근 규칙이 발동. 재고가 차면 자동 복귀.
             var best = ServiceTarget.None;
             bool reached = false;   // 이 욕구를 푸는 공급자가 사거리 내 존재(필터 전) — 실패 사유 분류용
+            // 거절 사유 추적(2026-07-14): 어떤 제외가 걸렸나. 우선순위 Full>NoGoods>Unstaffed —
+            //   staffed+stocked인데 만석 = "증설하면 해결"의 가장 강한 신호라 최우선 보고.
+            bool anyFull = false, anyNoGoods = false, anyUnstaffed = false;
             if (map.TryGetFirstValue(roadCell, out var sr, out var it))
             {
                 do
                 {
                     if ((sr.Relief & want) == NeedType.None)
                         continue;
-                    // Relief 일치 = 이 욕구 공급자가 도달 가능 → 실패해도 NoCoverage 아닌 Reached.
+                    // Relief 일치 = 이 욕구 공급자가 도달 가능 → 실패해도 NoCoverage 아님.
                     reached = true;
                     // 무인 폐점(decision 1a) — 직원 미출근(StaffEffect.Factor<=0)이면 영업 안 함.
                     //   StaffEffect 없는 공급자(공원 등 무인 설계)는 게이트 없음(항상 열림).
-                    //   (2026-07-12 일반화: 구 ProductionJob.SkillFactor 게이트 은퇴 — 생산 없는
-                    //    유인 시설(미래 놀이공원)도 같은 게이트를 탄다.)
                     if (StaffLookup.HasComponent(sr.Supplier)
                         && StaffLookup[sr.Supplier].Factor <= 0f)
-                        continue;
+                    { anyUnstaffed = true; continue; }
                     if (!SupplierHasGoods(sr.Supplier))
-                        continue;
+                    { anyNoGoods = true; continue; }
                     // 만석 제외 — 대안탐색의 본체: 최근접이 만석이면 자연히 차선(다음 Dist) 선택.
                     if (VisitorLookup.HasComponent(sr.Supplier)
                         && VisitorLookup[sr.Supplier].Full)
-                        continue;
+                    { anyFull = true; continue; }
 
                     if (sr.Dist < best.Dist)
                     {
@@ -173,10 +181,14 @@ namespace CitySim
                 while (map.TryGetNextValue(out sr, ref it));
             }
 
-            // 실패 사유 기록(욕구 주도 배치 입력) — 성공이면 None, 실패면 도달여부로 2분류.
-            //   reached=false → NoCoverage(공급자 자체가 없음) / true → Reached(있으나 못 서빙).
-            best.LastOutcome = best.Has ? ServiceOutcome.None
-                             : (reached ? ServiceOutcome.Reached : ServiceOutcome.NoCoverage);
+            // 실패 사유 기록(욕구 주도 배치 입력). 성공=None / 공급자 없음=NoCoverage /
+            //   도달했으나 못 서빙=원인별(Full>NoGoods>Unstaffed 우선). remedy가 사유마다 다름.
+            best.LastOutcome =
+                  best.Has        ? ServiceOutcome.None
+                : !reached        ? ServiceOutcome.NoCoverage
+                : anyFull         ? ServiceOutcome.Full
+                : anyNoGoods      ? ServiceOutcome.NoGoods
+                                  : ServiceOutcome.Unstaffed;
             target = best;
         }
 

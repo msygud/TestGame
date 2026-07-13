@@ -85,6 +85,8 @@ namespace CitySim
             // ── 3. 매칭 (시민 소유자 == 건물 소유자) ─────────────────────────
             var ecb        = new EntityCommandBuffer(Allocator.Temp);
             var occLookup  = SystemAPI.GetComponentLookup<BuildingOccupancy>(false);
+            var tgtLookup  = SystemAPI.GetComponentLookup<ServiceTarget>(false);
+            var voLookup   = SystemAPI.GetComponentLookup<VisitorOccupancy>(false);
 
             var perOwner = new NativeArray<int>(MaxOwners, Allocator.Temp);
 
@@ -106,6 +108,26 @@ namespace CitySim
                 if (res.ValueRO.Home == Entity.Null &&
                     TakeSlot(ref freeHomes, owner.LocalId, occLookup, out Entity home))
                 {
+                    // #3 좌석 누수 픽스(2026-07-13): 방문 중(Traveling(Service)/AtDestination)
+                    //   노숙 시민을 재하우징하며 상태를 덮으면 예약한 방문 좌석이 샜다(퇴장
+                    //   경로를 안 타므로) → 유령 점유 누적으로 정원 미만인데 Full(긴 체류 공원·
+                    //   병원에서 창 넓음). 덮기 전에 좌석 반납 + target 비움(DeadRef 이동 취소 동형).
+                    var stv = cstate.ValueRO;
+                    bool inService = stv.Activity == CitizenActivity.AtDestination
+                        || (stv.Activity == CitizenActivity.Traveling
+                            && stv.Purpose == TravelPurpose.Service);
+                    if (inService && tgtLookup.HasComponent(e))
+                    {
+                        var tgt = tgtLookup[e];
+                        if (tgt.Supplier != Entity.Null && voLookup.HasComponent(tgt.Supplier))
+                        {
+                            var vo = voLookup[tgt.Supplier];
+                            vo.Release();
+                            voLookup[tgt.Supplier] = vo;
+                        }
+                        tgtLookup[e] = ServiceTarget.None;
+                    }
+
                     res.ValueRW.Home = home;
 
                     // P1: 막 집을 배정받은 "이 순간 한 번만" 집에 앉힌다.

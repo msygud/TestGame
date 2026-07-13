@@ -634,9 +634,9 @@ MonoBehaviour:
     Name: police_h
     Category: 1
     Usage: -1
-    Prefab: {fileID: 6814581231218064991, guid: 286b9e3969ef3f84cab5895a0af1f2af, type: 3}
-    Size: {x: 4, y: 3}
-    Offset: {x: 0, y: 0, z: 0}
+    Prefab: {fileID: 5878416764063573305, guid: d7a523b9ea94ee74bae99f5e47085d05, type: 3}
+    Size: {x: 5, y: 5}
+    Offset: {x: 0, y: 0.1, z: 0}
     BuildableOn: 1
     RoadMask: 0
     MultiCountPerCell: 5
@@ -651,8 +651,25 @@ MonoBehaviour:
     Name: park_h
     Category: 1
     Usage: -1
-    Prefab: {fileID: 5006114553823489597, guid: 0b757de51193aab4ab9cb371d0f4b351, type: 3}
+    Prefab: {fileID: 3196457925528537521, guid: 89bd39aaf7d22c943a429a3c1e715a19, type: 3}
     Size: {x: 6, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1008
+    VariantKey: 0
+    Name: hospital_h_l
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 4410697343001653342, guid: 42acde3288b15874287c5370378c429f, type: 3}
+    Size: {x: 6, y: 6}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
@@ -687,8 +704,11 @@ MonoBehaviour:
     Offset: {x: 2, y: 0}
     Dir: 4
   - MainKey: 1006
-    Offset: {x: 2, y: 2}
+    Offset: {x: 2, y: 4}
     Dir: 1
   - MainKey: 1007
-    Offset: {x: 2, y: 0}
-    Dir: 4
+    Offset: {x: 0, y: 3}
+    Dir: 8
+  - MainKey: 1008
+    Offset: {x: 3, y: 5}
+    Dir: 1
