@@ -22,57 +22,62 @@ namespace CitySim
     //  → 발행측 GetSingletonRW와 프레임워크 의존성으로 상호 안전).
     //  비용: 시설 수 × 원 면적(반경 20 ≈ 1,300셀) — 시간당 1회라 사실상 0.
     //
-    //  v1.5 과밀 신호(2026-07-12): 같은 틱에 시설별 커버 인구도 집계(CountAuraLoadJob,
-    //  최근접 귀속) → 커버 인구 > 정원(AuraSupplier.Capacity)이면 이웃 지구 증설 수요를
-    //  AuraOverfullLog(지속 플래그, 시간당 재작성)로 발행 — DemandAggregation이 매초 샘플.
-    //  해소(SafetySystem)는 무수정: 정원은 해소 게이트가 아니라 수요 신호다.
+    //  관리형 모델(2026-07-15~16): 셀값 = 서비스 품질 permille. d = Quality × min(1, a/b),
+    //  a = 배정 근무자수 × 담당인원(PerWorkerCoverage), b = 범위 내 건물 캐퍼 합. 발행:
+    //    · AuraCoverage(셀→품질 permille, 동종 합산) — SafetySystem 등이 비례 완화.
+    //    · AuraLoadMap(시설→(감당중 b, 감당가능 a)) — AuraLoadHud(F6) 표시.
+    //    · AuraUtilization(시설→가동률 min(1,b/a)) — CitizenMovementSystem 오라직 숙련 성장률.
+    //  증설 수요는 시설 과밀 신호가 아니라 **d<1 불평 시민**(DemandAggregation.CollectSafetyDemandJob)
+    //  이 담당(2026-07-16 통일) — 구 AuraOverfullLog/CountAuraLoadJob/정원 은퇴.
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct AuraCoverageSystem : ISystem
     {
         struct AuraSrc
         {
-            public Entity Ent;     // 시설 엔티티(부하 발행 키 — AuraLoadMap)
-            public int   Owner;
-            public int2  Origin;
-            public int2  Eff;      // 회전 반영 크기
-            public ulong Relief;
-            public int   Radius;
-            public int   Capacity; // 정원(v1.5 과밀 신호). 0 이하 = 무제한(신호 없음)
-            public int   Bucket;   // relief 종류 버킷(오라 종류별 독립 부하 집계 — 2026-07-13)
+            public Entity Ent;         // 시설 엔티티(발행 키 — AuraLoadMap·AuraUtilization)
+            public int    Owner;
+            public int2   Origin;
+            public int2   Eff;         // 회전 반영 크기
+            public ulong  Relief;
+            public int    Radius;
+            public int    PerWorker;   // 근무자당 담당 인원(관리형 캐퍼 a = WorkerCount × PerWorker).
+            public int    WorkerCount; // 배정 근무자수(BuildingOccupancy.Current) — 순수 인원.
+            public int    Quality;     // 서비스 품질 c(0~100, authored) — d = c × min(1,a/b).
         }
 
-        NativeHashMap<int3, ulong> _back;   // 잡이 채우는 백 버퍼(Persistent)
-        NativeList<AuraSrc>        _srcs;   // 런별 소스 스냅샷
-        NativeArray<int>           _counts; // 런별 시설 커버 인구(최근접 귀속, v1.5)
+        // 관리형 부하(b) 입력 — 범위 내 건물의 캐퍼 합(주거+근무+방문). 2026-07-15.
+        struct BldCap
+        {
+            public int  Owner;
+            public int2 Origin;
+            public int2 Eff;    // 회전 반영 크기
+            public int  Load;   // 주거+근무+방문 캐퍼 합
+        }
+
+        NativeHashMap<int4, int> _back;    // 잡이 채우는 백 버퍼(Persistent) — int4(owner,x,y,reliefBit)→품질 permille
+        NativeList<AuraSrc>          _srcs;   // 런별 소스 스냅샷
+        NativeList<BldCap>           _bld;    // 런별 건물 캐퍼 스냅샷(관리형 부하 b 입력)
+        NativeHashMap<Entity, float> _util;   // 백 버퍼: 오라 건물 → 가동률 min(1,b/a)(숙련 성장률)
+        NativeHashMap<Entity, int>   _load;   // 백 버퍼: 오라 건물 → 감당중 b(범위 내 건물 캐퍼 합)
         JobHandle _handle;
         bool      _running;
         bool      _everBuilt;
 
-        // 과밀 목표 지구 최소 개발 여지(셀) — 물·단차로 개발 불가한 '나쁜 지형' 지구를
-        // 증설 목표에서 배제(목표로 삼으면 시설이 영원히 못 서고 신호가 안 꺼진다).
-        const int AuraTargetMinRoom = 24;
-
         public void OnCreate(ref SystemState state)
         {
             state.RequireForUpdate<GameClock>();
-            _back = new NativeHashMap<int3, ulong>(1024, Allocator.Persistent);
+            _back = new NativeHashMap<int4, int>(1024, Allocator.Persistent);
+            _util = new NativeHashMap<Entity, float>(64, Allocator.Persistent);
+            _load = new NativeHashMap<Entity, int>(64, Allocator.Persistent);
 
             if (!SystemAPI.HasSingleton<AuraCoverage>())
             {
                 var e = state.EntityManager.CreateEntity(typeof(AuraCoverage));
                 state.EntityManager.SetComponentData(e, new AuraCoverage
                 {
-                    Map     = new NativeHashMap<int3, ulong>(1024, Allocator.Persistent),
+                    Map     = new NativeHashMap<int4, int>(1024, Allocator.Persistent),
                     Version = 0,
-                });
-            }
-            if (!SystemAPI.HasSingleton<AuraOverfullLog>())
-            {
-                var e = state.EntityManager.CreateEntity(typeof(AuraOverfullLog));
-                state.EntityManager.SetComponentData(e, new AuraOverfullLog
-                {
-                    Window = new NativeHashMap<int4, byte>(32, Allocator.Persistent),
                 });
             }
             if (!SystemAPI.HasSingleton<AuraLoadMap>())
@@ -84,26 +89,42 @@ namespace CitySim
                     Version = 0,
                 });
             }
+            if (!SystemAPI.HasSingleton<AuraUtilization>())
+            {
+                var e = state.EntityManager.CreateEntity(typeof(AuraUtilization));
+                state.EntityManager.SetComponentData(e, new AuraUtilization
+                {
+                    Map     = new NativeHashMap<Entity, float>(64, Allocator.Persistent),
+                    Version = 0,
+                });
+            }
         }
 
         public void OnDestroy(ref SystemState state)
         {
-            if (_running) { _handle.Complete(); _srcs.Dispose(); _counts.Dispose(); _running = false; }
+            if (_running)
+            {
+                _handle.Complete();
+                _srcs.Dispose(); _bld.Dispose();
+                _running = false;
+            }
             if (_back.IsCreated) _back.Dispose();
+            if (_util.IsCreated) _util.Dispose();
+            if (_load.IsCreated) _load.Dispose();
             if (SystemAPI.HasSingleton<AuraCoverage>())
             {
                 var ac = SystemAPI.GetSingleton<AuraCoverage>();
                 if (ac.Map.IsCreated) ac.Map.Dispose();
             }
-            if (SystemAPI.HasSingleton<AuraOverfullLog>())
-            {
-                var log = SystemAPI.GetSingleton<AuraOverfullLog>();
-                if (log.Window.IsCreated) log.Window.Dispose();
-            }
             if (SystemAPI.HasSingleton<AuraLoadMap>())
             {
                 var lm = SystemAPI.GetSingleton<AuraLoadMap>();
                 if (lm.Map.IsCreated) lm.Map.Dispose();
+            }
+            if (SystemAPI.HasSingleton<AuraUtilization>())
+            {
+                var u = SystemAPI.GetSingleton<AuraUtilization>();
+                if (u.Map.IsCreated) u.Map.Dispose();
             }
         }
 
@@ -130,86 +151,30 @@ namespace CitySim
                 kv.Dispose();
                 ac.Version++;
 
-                // ── v1.5 부하 발행(표시용): 시설 → (커버 인구, 정원). AuraLoadHud(F6)가 읽음.
+                // ── 부하/캐퍼 발행(관리형, 2026-07-16): 시설 → (감당중 b, 감당가능 a). AuraLoadHud(F6)가 읽음.
+                //   b = 범위 내 건물 캐퍼 합(_load), a = 배정 근무자수 × 담당인원.
                 ref var loadMap = ref SystemAPI.GetSingletonRW<AuraLoadMap>().ValueRW;
                 loadMap.Map.Clear();
                 for (int i = 0; i < _srcs.Length; i++)
-                    loadMap.Map[_srcs[i].Ent] = new int2(_counts[i], _srcs[i].Capacity);
+                {
+                    var src = _srcs[i];
+                    _load.TryGetValue(src.Ent, out int bLoad);
+                    loadMap.Map[src.Ent] = new int2(bLoad, src.WorkerCount * src.PerWorker);
+                }
                 loadMap.Version++;
 
-                // ── v1.5 과밀 신호(2026-07-12): 커버 인구 > 정원 → 이웃 지구 증설 수요 ──
-                //   해소는 커버만으로 성립(불변) — 정원은 해소 게이트가 아니라 **수요 신호**
-                //   ("수용량을 해소가 아니라 수요로 쓴다"). 부하 귀속 = 최근접 시설 1곳(좌석
-                //   모델, CountAuraLoadJob): 이웃 증설이 경계 시민을 흡수해 부하가 정원 밑으로
-                //   내려가면 신호가 자연 소멸(자기 종결 피드백). 목표 = 8-이웃 중 내 오라 없는
-                //   지구(1패스 = 내 도로 보유 지구 우선, 2패스 = 아무 오라-없는 이웃).
-                //   전 이웃 보유 = 포화 → 무신호(정직 — Capacity가 밸런싱 손잡이).
-                ref var ofLog = ref SystemAPI.GetSingletonRW<AuraOverfullLog>().ValueRW;
-                // 로그는 '신규 진입'만(2026-07-12 로그 정리) — 지속 과밀의 시간당 반복 로그 방지.
-                var prevOverfull = new NativeHashSet<int4>(32, Allocator.Temp);
-                foreach (var pk in ofLog.Window) prevOverfull.Add(pk.Key);
-                ofLog.Window.Clear();
-                if (_srcs.Length > 0)
-                {
-                    // auraD = 오라 보유 지구 — relief 종류별로 독립(2026-07-13): key에 relief 비트
-                    //   포함. 경찰 과밀은 '경찰 없는' 이웃을, 병원 과밀은 '병원 없는' 이웃을 찾도록.
-                    //   (구 relief 무관 int3는 병원 있는 지구를 경찰 증설 목표에서 잘못 제외했다.)
-                    var auraD = new NativeHashSet<int4>(_srcs.Length * 2, Allocator.Temp);
-                    for (int i = 0; i < _srcs.Length; i++)
-                    {
-                        int2 sd = DistrictGrid.ToDistrict(_srcs[i].Origin);
-                        auraD.Add(new int4(_srcs[i].Owner, sd.x, sd.y,
-                                           math.tzcnt(_srcs[i].Relief)));
-                    }
-                    bool haveTable = SystemAPI.TryGetSingleton<DistrictTable>(out var dtable)
-                                     && dtable.Stats.IsCreated;
-
-                    for (int i = 0; i < _srcs.Length; i++)
-                    {
-                        var src = _srcs[i];
-                        if (src.Capacity <= 0 || _counts[i] <= src.Capacity) continue;
-                        int srcBit = math.tzcnt(src.Relief);   // 이 오라 종류의 수요 비트
-
-                        int2 d0 = DistrictGrid.ToDistrict(src.Origin);
-                        bool found = false; int2 target = default;
-                        for (int pass = 0; pass < 2 && !found; pass++)
-                        for (int n = 0; n < 8; n++)
-                        {
-                            int2 nd = d0 + Neigh8(n);
-                            if (auraD.Contains(new int4(src.Owner, nd.x, nd.y, srcBit))) continue;
-
-                            // 중심이 이미 내 오라(같은 relief) 커버 = 실질 서비스 존재(옆 지구에 선
-                            //   시설이 여길 덮는 경우). 지구 귀속(auraD)만 보면 이를 못 보고 같은
-                            //   목표를 영원히 재지목한다 — 나쁜 지형 연쇄 착지(연속 N채)의 한 축.
-                            int2 nc = DistrictGrid.Center(nd);
-                            if (ac.Map.TryGetValue(new int3(src.Owner, nc.x, nc.y), out ulong cbits)
-                                && (cbits & src.Relief) != 0) continue;
-
-                            // 개발 여지 없는 지구(물·단차 = 나쁜 지형) 제외 — 목표로 삼으면
-                            //   시설이 영원히 못 서고 신호가 안 꺼져 옆 회랑에 연쇄 착지한다.
-                            DistrictStat dstat = default;
-                            bool hasStat = haveTable && dtable.Stats.TryGetValue(nd, out dstat);
-                            if (haveTable && (!hasStat || dstat.Room < AuraTargetMinRoom)) continue;
-                            if (pass == 0 && (!hasStat
-                                || (dstat.RoadOwners & (1 << src.Owner)) == 0)) continue;
-
-                            target = nd; found = true; break;
-                        }
-                        if (!found) continue;   // 유효 이웃 없음 = 포화/지형 한계 — 무신호(정직)
-
-                        int2 dc = DemandGrid.ToCell(DistrictGrid.Center(target));
-                        var okey = new int4(src.Owner, dc.x, dc.y, srcBit);
-                        if (ofLog.Window.TryAdd(okey, 1) && !prevOverfull.Contains(okey))
-                            UnityEngine.Debug.Log(
-                                $"[Aura] P{src.Owner} 과밀 {_counts[i]}/{src.Capacity} " +
-                                $"지구=({d0.x},{d0.y}) → 증설 목표=({target.x},{target.y})");
-                    }
-                    auraD.Dispose();
-                }
-                prevOverfull.Dispose();
+                // ── 가동률 발행(관리형 숙련 성장, 2026-07-15): 오라 건물 → min(1,b/a). 백→프런트 복사.
+                //   CitizenMovementSystem(퇴근 분기)이 오라직 숙련 성장률 배수로 읽음.
+                ref var utilMap = ref SystemAPI.GetSingletonRW<AuraUtilization>().ValueRW;
+                utilMap.Map.Clear();
+                var ukv = _util.GetKeyValueArrays(Allocator.Temp);
+                for (int i = 0; i < ukv.Keys.Length; i++)
+                    utilMap.Map[ukv.Keys[i]] = ukv.Values[i];
+                ukv.Dispose();
+                utilMap.Version++;
 
                 _srcs.Dispose();
-                _counts.Dispose();
+                _bld.Dispose();
                 _running = false;
             }
 
@@ -219,6 +184,8 @@ namespace CitySim
             _everBuilt = true;
 
             // 소스 스냅샷(메인, 값 복사 — 잡이 라이브 컴포넌트를 안 듦).
+            //   WorkerCount = 오라 건물 BuildingOccupancy.Current(배정 근무자수, 무직장=0).
+            var srcOccLk = SystemAPI.GetComponentLookup<BuildingOccupancy>(true);
             _srcs = new NativeList<AuraSrc>(32, Allocator.Persistent);
             foreach (var (aura, fp, ent) in
                      SystemAPI.Query<RefRO<AuraSupplier>, RefRO<BuildingFootprint>>()
@@ -227,118 +194,118 @@ namespace CitySim
                 if (aura.ValueRO.Radius <= 0 || aura.ValueRO.Relief == NeedType.None) continue;
                 _srcs.Add(new AuraSrc
                 {
-                    Ent      = ent,
-                    Owner    = fp.ValueRO.OwnerLocalId,
-                    Origin   = fp.ValueRO.Origin,
-                    Eff      = EntranceOps.RotateSize(fp.ValueRO.Size, fp.ValueRO.RotSteps),
-                    Relief   = (ulong)aura.ValueRO.Relief,
-                    Radius   = aura.ValueRO.Radius,
-                    Capacity = aura.ValueRO.Capacity,
+                    Ent         = ent,
+                    Owner       = fp.ValueRO.OwnerLocalId,
+                    Origin      = fp.ValueRO.Origin,
+                    Eff         = EntranceOps.RotateSize(fp.ValueRO.Size, fp.ValueRO.RotSteps),
+                    Relief      = (ulong)aura.ValueRO.Relief,
+                    Radius      = aura.ValueRO.Radius,
+                    PerWorker   = aura.ValueRO.PerWorkerCoverage,
+                    WorkerCount = srcOccLk.HasComponent(ent) ? srcOccLk[ent].Current : 0,
+                    Quality     = aura.ValueRO.Quality,
                 });
             }
 
-            // relief 종류별 버킷 부여(2026-07-13) — 오라 종류별 독립 부하 집계. 단일 비트 relief
-            //   가정(HighCrime/PoorHealthcare 등). 병원 오라가 경찰 부하를 훔치던 오염을 근절:
-            //   시민은 relief 버킷마다 각각 최근접 시설에 귀속(교차-relief 도둑질 없음).
-            int bucketCount = 0;
+            // ── 관리형 부하 b: 범위 내 건물 캐퍼 스냅샷(주거+근무+방문). 2026-07-15 ──
+            //   태그로 BuildingOccupancy.Capacity를 주거(ResidenceBuilding)/근무(WorkplaceBuilding)
+            //   로 해석 + VisitorOccupancy 좌석. 부하 0(캐퍼 없음) 건물은 제외. 시간당 1회
+            //   메인 스냅샷(값 복사 — 잡이 라이브 컴포넌트를 안 듦).
+            _bld = new NativeList<BldCap>(64, Allocator.Persistent);
             {
-                var reliefs = new NativeList<ulong>(4, Allocator.Temp);
-                for (int i = 0; i < _srcs.Length; i++)
+                var occLk = SystemAPI.GetComponentLookup<BuildingOccupancy>(true);
+                var visLk = SystemAPI.GetComponentLookup<VisitorOccupancy>(true);
+                foreach (var (fp, ent) in
+                         SystemAPI.Query<RefRO<BuildingFootprint>>().WithEntityAccess())
                 {
-                    var src = _srcs[i];
-                    int b = -1;
-                    for (int k = 0; k < reliefs.Length; k++)
-                        if (reliefs[k] == src.Relief) { b = k; break; }
-                    if (b < 0) { b = reliefs.Length; reliefs.Add(src.Relief); }
-                    src.Bucket = b;
-                    _srcs[i] = src;
+                    // 부하 = 정원(BuildingOccupancy = 주거 침상 XOR 근무 데스크, 태그 무관 통합)
+                    //   + 방문 좌석(VisitorOccupancy). Stage1은 세 채널을 합산만 하므로 주거/근무
+                    //   구분 불필요 — 태그 없는 정원도 누락 없이 계산(부하 과소 → 품질 과대 방지).
+                    int load = 0;
+                    if (occLk.HasComponent(ent)) load += occLk[ent].Capacity;
+                    if (visLk.HasComponent(ent)) load += visLk[ent].Capacity;
+                    if (load <= 0) continue;
+                    _bld.Add(new BldCap
+                    {
+                        Owner  = fp.ValueRO.OwnerLocalId,
+                        Origin = fp.ValueRO.Origin,
+                        Eff    = EntranceOps.RotateSize(fp.ValueRO.Size, fp.ValueRO.RotSteps),
+                        Load   = load,
+                    });
                 }
-                bucketCount = reliefs.Length;
-                reliefs.Dispose();
             }
 
-            // 커버 맵 재그리기 + 시설별 부하 집계(v1.5) — 서로 독립(둘 다 _srcs RO), 병렬.
-            _counts = new NativeArray<int>(_srcs.Length, Allocator.Persistent);
-            var hRebuild = new RebuildAuraJob { Srcs = _srcs, Back = _back }.Schedule(state.Dependency);
-            var hCount = _srcs.Length > 0
-                ? new CountAuraLoadJob
-                  {
-                      FpLookup    = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
-                      Srcs        = _srcs,
-                      Counts      = _counts,
-                      BucketCount = bucketCount,
-                  }.Schedule(state.Dependency)
-                : default;
-            _handle = JobHandle.CombineDependencies(hRebuild, hCount);
+            // ── 잡: RebuildAuraJob(단일) — 부하 b + 캐퍼 a(WorkerCount×PerWorker) → d=c×min(1,a/b)
+            //   셀별 품질 permille 동종 합산 채움 + 가동률 min(1,b/a)를 _util, 감당중 b를 _load에 발행.
+            //   시간당 1회·시설 수십이라 단일 스레드로 충분.
+            _handle = new RebuildAuraJob
+            {
+                Srcs = _srcs,
+                Blds = _bld,
+                Back = _back,
+                Util = _util,
+                Load = _load,
+            }.Schedule(state.Dependency);
             state.Dependency = _handle;
             _running = true;
         }
 
-        // 8-이웃 오프셋(결정적 순서 — 십자 먼저, 대각 나중).
-        static int2 Neigh8(int i) => i switch
-        {
-            0 => new int2(0, 1), 1 => new int2(1, 0), 2 => new int2(0, -1), 3 => new int2(-1, 0),
-            4 => new int2(1, 1), 5 => new int2(-1, 1), 6 => new int2(1, -1), _ => new int2(-1, -1),
-        };
-
-        // ── v1.5: 시설별 커버 인구 집계(최근접 귀속 = 좌석 모델, 시간당 1회) ──
-        //   치안 대상(CitizenSafety 보유) 시민의 집 셀이 닿는 시설 중 **최근접 1곳**에만 +1.
-        //   독립 카운트(닿는 곳 전부 +1)로 하면 이웃 증설이 부하를 못 덜어 신호가 영구화된다.
-        //   시민 ~2만 × 시설 수십 = 시간당 1회 단일 스레드로 충분(워커에서 실행).
-        [BurstCompile]
-        [WithAll(typeof(CitizenTag), typeof(CitizenSafety))]
-        partial struct CountAuraLoadJob : IJobEntity
-        {
-            [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
-            [ReadOnly] public NativeList<AuraSrc> Srcs;
-            public NativeArray<int> Counts;
-            public int BucketCount;   // relief 종류 수(버킷) — 종류별 독립 귀속
-
-            void Execute(in CitizenResidence res)
-            {
-                if (res.Home == Entity.Null || !FpLookup.HasComponent(res.Home)) return;
-                var fp = FpLookup[res.Home];
-
-                // relief 버킷마다 최근접 시설 1곳에 귀속(2026-07-13 오염 픽스): 시민이 경찰(치안)과
-                //   병원(헬스케어) 둘 다 커버되면 각 버킷의 최근접에 각각 +1 — 교차-relief 도둑질 없음.
-                //   (구 구현은 relief 무관 단일 최근접이라 병원이 경찰 부하를 훔쳐 과밀 신호를 억눌렀다.)
-                var bestD = new FixedList128Bytes<int>();
-                var bestI = new FixedList128Bytes<int>();
-                for (int b = 0; b < BucketCount; b++) { bestD.Add(int.MaxValue); bestI.Add(-1); }
-
-                for (int s = 0; s < Srcs.Length; s++)
-                {
-                    var src = Srcs[s];
-                    if (src.Owner != fp.OwnerLocalId) continue;
-                    // 집 셀 → 시설 footprint 최근접점 거리²(RebuildAuraJob과 동일 판정, 역방향).
-                    int nx = math.clamp(fp.Origin.x, src.Origin.x, src.Origin.x + src.Eff.x - 1);
-                    int ny = math.clamp(fp.Origin.y, src.Origin.y, src.Origin.y + src.Eff.y - 1);
-                    int dx = fp.Origin.x - nx, dy = fp.Origin.y - ny;
-                    int d2 = dx * dx + dy * dy;
-                    if (d2 > src.Radius * src.Radius) continue;
-                    int bkt = src.Bucket;
-                    if (d2 < bestD[bkt]) { bestD[bkt] = d2; bestI[bkt] = s; }
-                }
-                for (int b = 0; b < BucketCount; b++)
-                    if (bestI[b] >= 0) Counts[bestI[b]]++;
-            }
-        }
-
-        // ── 백 버퍼 재그리기: 시설별 footprint-클램프 원형 채우기 ──
+        // ── 백 버퍼 재그리기: 시설별 부하 b·캐퍼 a 산출 → 품질 d를 원형에 채우고 동종 합산 ──
+        //   부하 b = 범위 내 건물 캐퍼 합(주거+근무+방문, 같은 owner). 판정 = 건물 origin 셀이 시설
+        //     footprint-클램프 반경 내(릴리프 read와 동일 기준). 중첩 시 공유 건물이 각 시설 부하에
+        //     양쪽 계산 = 백업 모델(각자 부하를 지되 품질 합산으로 full 회복).
+        //   캐퍼 a = WorkerCount × PerWorkerCoverage (배정 근무자수 × 담당인원, 순수 인원, 2026-07-15).
+        //   품질 d = Quality × min(1, a/b) — permille = Quality×10×min. WorkerCount·PerWorker·Quality 중
+        //     하나라도 0 → 무커버("반드시 근무자"·authoring). 부하 없음(b=0) → full(Quality). 셀별 동종
+        //     합산 상한 1000(=100). + 가동률 min(1,b/a)를 Util에 발행(오라직 숙련 성장률 배수).
+        //   시간당 1회·시설 수십이라 단일 IJob(부하 스캔 + 채움)으로 충분.
         [BurstCompile]
         struct RebuildAuraJob : IJob
         {
             [ReadOnly] public NativeList<AuraSrc> Srcs;
-            public NativeHashMap<int3, ulong> Back;
+            [ReadOnly] public NativeList<BldCap>  Blds;
+            public NativeHashMap<int4, int>     Back;   // int4(owner,x,y,reliefBit) → 품질 permille
+            public NativeHashMap<Entity, float> Util;   // 오라 건물 → 가동률 min(1,b/a)
+            public NativeHashMap<Entity, int>   Load;   // 오라 건물 → 감당중 b(범위 내 건물 캐퍼 합)
 
             public void Execute()
             {
                 Back.Clear();
+                Util.Clear();
+                Load.Clear();
                 for (int s = 0; s < Srcs.Length; s++)
                 {
                     var src = Srcs[s];
                     int r  = src.Radius;
                     int r2 = r * r;
+
+                    // 부하 b = 범위 내 건물 캐퍼 합.
+                    long load = 0;
+                    for (int i = 0; i < Blds.Length; i++)
+                    {
+                        var bld = Blds[i];
+                        if (bld.Owner != src.Owner) continue;
+                        int bnx = math.clamp(bld.Origin.x, src.Origin.x, src.Origin.x + src.Eff.x - 1);
+                        int bny = math.clamp(bld.Origin.y, src.Origin.y, src.Origin.y + src.Eff.y - 1);
+                        int bdx = bld.Origin.x - bnx, bdy = bld.Origin.y - bny;
+                        if (bdx * bdx + bdy * bdy > r2) continue;
+                        load += bld.Load;
+                    }
+
+                    // 캐퍼 a = 배정 근무자수 × 담당인원.
+                    long a = (long)src.WorkerCount * src.PerWorker;
+
+                    // 가동률(오라직 숙련 성장률 배수) = min(1, b/a). a=0·b=0 → 0(할 일 없음).
+                    Util[src.Ent] = (a > 0 && load > 0) ? math.min(1f, (float)load / a) : 0f;
+                    Load[src.Ent] = (int)math.min(load, int.MaxValue);   // 감당중 b(HUD 표시)
+
+                    // 품질 d = Quality × min(1, a/b) — permille(Quality×10×min). 셀 합산 상한 1000.
+                    int dp;
+                    if (a <= 0 || src.Quality <= 0) dp = 0;                        // 무근무·미authoring → 무커버
+                    else if (load <= 0) dp = math.min(1000, src.Quality * 10);     // 부하 없음 → full(Quality)
+                    else dp = (int)math.clamp(src.Quality * 10f * math.min(1f, (float)a / load), 0f, 1000f);
+                    if (dp <= 0) continue;
+                    int reliefBit = math.tzcnt(src.Relief);
+
                     int2 lo = src.Origin - new int2(r, r);
                     int2 hi = src.Origin + src.Eff - 1 + new int2(r, r);
                     for (int y = lo.y; y <= hi.y; y++)
@@ -350,9 +317,9 @@ namespace CitySim
                         int dx = x - nx, dy = y - ny;
                         if (dx * dx + dy * dy > r2) continue;
 
-                        var key = new int3(src.Owner, x, y);
-                        Back.TryGetValue(key, out ulong bits);
-                        Back[key] = bits | src.Relief;
+                        var key = new int4(src.Owner, x, y, reliefBit);
+                        Back.TryGetValue(key, out int cur);
+                        Back[key] = math.min(1000, cur + dp);
                     }
                 }
             }

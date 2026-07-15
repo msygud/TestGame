@@ -63,6 +63,10 @@ namespace CitySim
             var leaveQueue  = new NativeQueue<Entity>(Allocator.TempJob);        // 식사 종료(자리 해제)
             var serveQueue  = new NativeQueue<ServeRequest>(Allocator.TempJob);  // 도착(서빙)
 
+            // 오라 건물 가동률 맵(관리형 숙련 성장, 2026-07-15) — AuraCoverageSystem 발행. 없으면
+            //   default(잡 안에서 IsCreated 가드 → 비-오라직처럼 배수 1). front 맵 [ReadOnly] 캡처.
+            var auraUtilMap = SystemAPI.TryGetSingleton<AuraUtilization>(out var auCov) ? auCov.Map : default;
+
             state.Dependency = new CitizenMoveJob
             {
                 Now         = clock.TotalSeconds,
@@ -75,6 +79,7 @@ namespace CitySim
                 SkillGrowth = math.max(0f, ccfg.SkillGrowthPerWorkHour),
                 // 게임 1시간 = SecondsPerDay/24 게임초(기본 50초 — 3600 아님!) — 숙련 산정용.
                 SecPerGameHour = math.max(1f, clock.SecondsPerDay) / 24.0,
+                AuraUtil    = auraUtilMap,
                 ResLookup   = SystemAPI.GetComponentLookup<CitizenResidence>(true),
                 FpLookup    = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
                 EntLookup   = SystemAPI.GetComponentLookup<BuildingEntrance>(true),
@@ -147,6 +152,8 @@ namespace CitySim
         public bool   Visuals;
         public float  SkillGrowth;      // 근무 1게임시간당 숙련 기본 성장(적성 배율 전)
         public double SecPerGameHour;   // 게임 1시간의 게임초(= SecondsPerDay/24)
+        // 오라 건물 가동률(관리형 숙련 성장, 2026-07-15) — 오라직 근무자의 성장률 배수. 맵에 없으면 1(비-오라직).
+        [ReadOnly] public NativeHashMap<Entity, float> AuraUtil;
         [ReadOnly] public ComponentLookup<CitizenResidence>  ResLookup;
         [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
         [ReadOnly] public ComponentLookup<BuildingEntrance>  EntLookup;
@@ -297,13 +304,22 @@ namespace CitySim
                 case CitizenActivity.AtWork:
                     if (!workHours)
                     {
-                        // 숙련 성장: 근무시간 × 기본률 × 적성(능력치 — 성장속도에만 관여).
+                        // 숙련 성장: 근무시간 × 기본률 × 적성(능력치 — 성장속도에만 관여) × 가동률.
                         //   교대 종료 시 1회(저빈도 원칙). ActionEndTime = 교대 시작 시각.
                         //   ⚠ 게임 1시간 = SecondsPerDay/24 게임초(3600 하드코딩 버그 수정, 2026-07-07).
+                        //   가동률(관리형, 2026-07-15): 오라직은 시설 가동률 min(1,b/a) 비례(바쁠수록 빨리,
+                        //   한가하면 천천히 — cs.CurrentBuilding=현재 근무 건물). 비-오라직·생산직은 맵에
+                        //   없어 배수 1(근무 창 전체). 생산직 "생산한 시간만" 정밀화는 후속.
                         double workedH = math.max(0.0, (Now - cs.ActionEndTime) / SecPerGameHour);
                         if (workedH > 0.0 && job.Job != JobType.Unemployed)
+                        {
+                            float utilMult = 1f;
+                            if (AuraUtil.IsCreated && cs.CurrentBuilding != Entity.Null
+                                && AuraUtil.TryGetValue(cs.CurrentBuilding, out float u))
+                                utilMult = u;
                             skills.Add(job.Job, (float)(workedH * SkillGrowth
-                                * JobAptitude.GrowthFactor(job.Job, in attr)));
+                                * JobAptitude.GrowthFactor(job.Job, in attr)) * utilMult);
+                        }
 
                         Entity home = ResLookup.HasComponent(entity)
                             ? ResLookup[entity].Home : Entity.Null;

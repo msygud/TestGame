@@ -66,7 +66,7 @@ namespace CitySim
     public partial struct SafetyTickJob : IJobEntity
     {
         [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
-        [ReadOnly] public NativeHashMap<int3, ulong> Aura;
+        [ReadOnly] public NativeHashMap<int4, int> Aura;   // int4(owner,x,y,reliefBit)→품질 permille
         public float Dt;   // 게임초(누적)
 
         // ⚠ 테스트 과장 배속(2026-07-12 유저 요청 "크게 차이 나도록") — 미커버 증가에 적용.
@@ -76,24 +76,26 @@ namespace CitySim
 
         void Execute(ref CitizenSafety safety, in CitizenState st)
         {
-            // 판정 위치 = 지금 있는 건물(집/직장/방문지). 없으면(이동·노숙) 미커버.
-            bool covered = false;
+            // 판정 위치 = 지금 있는 건물(집/직장/방문지)의 치안 서비스 품질 v(permille/1000).
+            //   없으면(이동·노숙) v=0(미커버 = 거리의 불안).
+            float v = 0f;
             Entity at = st.CurrentBuilding;
             if (at != Entity.Null && FpLookup.HasComponent(at))
             {
                 var fp = FpLookup[at];
-                covered = Aura.TryGetValue(
-                              new int3(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y), out ulong bits)
-                          && (bits & (ulong)NeedType.HighCrime) != 0;
+                int bit = math.tzcnt((ulong)NeedType.HighCrime);
+                if (Aura.TryGetValue(new int4(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y, bit), out int pm))
+                    v = pm * 0.001f;
             }
 
-            // 비대칭 일괄(2026-07-12 유저 결정): 커버 = **즉시 안심(Level=0, 일괄 해소)** /
-            //   미커버 = 점진 누적(불안은 서서히 — 수요도 "지속 노출된 곳"에만 쌓여 폭풍 방지).
-            //   구 대칭 적분(커버 시 ×4 배속 회복)은 톱니(집↔직장 왕복)로 staff 샘플링이
-            //   출렁이던 원인 — 은퇴.
-            safety.Level = covered
-                ? 0f
-                : math.saturate(safety.Level + safety.Rate * TestRateScale * Dt);
+            // 비례 완화(관리형 모델, 2026-07-15) — 목표 Level = 1−v(서비스가 좋을수록 안심).
+            //   비대칭 유지(2026-07-12 유저): 개선(목표 ≤ 현재) = 즉시 안심(일괄) / 악화(목표 > 현재)
+            //   = 점진 누적(불안은 서서히 — 수요도 "지속 노출된 곳"에만 쌓여 폭풍 방지).
+            //   극단 동형: v=1 → 목표 0(구 '커버=Level 0') / v=0 → 서서히 1(구 '미커버 누적').
+            float target = 1f - v;
+            safety.Level = target <= safety.Level
+                ? target
+                : math.min(target, safety.Level + safety.Rate * TestRateScale * Dt);
         }
     }
 }

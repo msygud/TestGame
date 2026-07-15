@@ -43,7 +43,7 @@ namespace CitySim
         bool _enabled = true;   // F11 토글
 
         World       _qWorld;
-        EntityQuery _gsQ, _bfQ, _citQ, _poolQ, _auraQ, _dmdQ;
+        EntityQuery _gsQ, _bfQ, _citQ, _poolQ, _dmdQ, _auraUtilQ, _auraCovQ;
 
         GUIStyle _style;
         Entity   _hovered = Entity.Null;
@@ -73,10 +73,13 @@ namespace CitySim
                 _citQ = em.CreateEntityQuery(
                     ComponentType.ReadOnly<CitizenTag>(),
                     ComponentType.ReadOnly<CitizenResidence>(),
-                    ComponentType.ReadOnly<CitizenState>());
+                    ComponentType.ReadOnly<CitizenState>(),
+                    ComponentType.ReadOnly<JobData>(),
+                    ComponentType.ReadOnly<CitizenSkills>());
                 _poolQ = em.CreateEntityQuery(ComponentType.ReadOnly<LogisticsPool>());
-                _auraQ = em.CreateEntityQuery(ComponentType.ReadOnly<AuraLoadMap>());
                 _dmdQ  = em.CreateEntityQuery(ComponentType.ReadOnly<DemandField>());
+                _auraUtilQ = em.CreateEntityQuery(ComponentType.ReadOnly<AuraUtilization>());
+                _auraCovQ  = em.CreateEntityQuery(ComponentType.ReadOnly<AuraCoverage>());
                 _hovered = Entity.Null; _text = string.Empty;
             }
 
@@ -177,25 +180,39 @@ namespace CitySim
             }
             if (em.HasComponent<AuraSupplier>(e))
             {
-                var a = em.GetComponentData<AuraSupplier>(e);
-                sb.Append("\nAura ").Append(ReliefName(a.Relief)).Append("  r").Append(a.Radius);
-                // 커버 부하(최근접 귀속 인구)/정원 + 품질(초과 시 정원÷부하). AuraLoadMap에서.
-                if (_auraQ.CalculateEntityCount() == 1)
+                var au = em.GetComponentData<AuraSupplier>(e);
+                sb.Append("\nAura ").Append(ReliefName(au.Relief)).Append("  r").Append(au.Radius);
+                // 공급자 = 공급 측(캐퍼 a=직원수×담당인원, 품질 c authored, 가동률). 받는 값은 아래 공통 블록.
+                int workers = em.HasComponent<BuildingOccupancy>(e)
+                    ? em.GetComponentData<BuildingOccupancy>(e).Current : 0;
+                long capA = (long)workers * au.PerWorkerCoverage;
+                sb.Append("\n cap ").Append(capA)
+                  .Append(" (").Append(workers).Append('x').Append(au.PerWorkerCoverage).Append(')')
+                  .Append("  quality ").Append(au.Quality);
+                // 가동률 min(1,b/a) — 오라직 숙련 성장률(AuraUtilization).
+                if (_auraUtilQ.CalculateEntityCount() == 1)
                 {
-                    var lm = _auraQ.GetSingleton<AuraLoadMap>();
-                    if (lm.Map.IsCreated && lm.Map.TryGetValue(e, out var load))
-                    {
-                        int pop = load.x, cap = load.y;
-                        sb.Append("  load ").Append(pop);
-                        if (cap > 0)
-                        {
-                            int q = pop <= cap ? 100 : (int)(100f * cap / pop);
-                            sb.Append('/').Append(cap).Append("  q").Append(q).Append('%');
-                        }
-                        else sb.Append(" (uncapped)");
-                    }
+                    var um = _auraUtilQ.GetSingleton<AuraUtilization>();
+                    if (um.Map.IsCreated && um.Map.TryGetValue(e, out float util))
+                        sb.Append("  util ").Append((util * 100f).ToString("0")).Append('%');
                 }
             }
+
+            // ── 받는 서비스(관리형 커버, 2026-07-15): 이 건물 셀에 닿는 오라 품질 = 입실 시 시민이
+            //   받는 값. 서비스명 + 값/100(0~100). 공급자·거주·직장 무관 — 커버되면 표시.
+            if (_auraCovQ.CalculateEntityCount() == 1)
+            {
+                var cov = _auraCovQ.GetSingleton<AuraCoverage>();
+                if (cov.Map.IsCreated)
+                    foreach (var kv in cov.Map)
+                    {
+                        var k = kv.Key;
+                        if (k.x != bf.OwnerLocalId || k.y != bf.Origin.x || k.z != bf.Origin.y) continue;
+                        sb.Append('\n').Append(ReliefName((NeedType)(1ul << k.w)))
+                          .Append(' ').Append(kv.Value / 10).Append("/100");
+                    }
+            }
+
             // 직무 효과(유인 직장 공통 — 무인/폐점=0, 정상=숙련·컨디션·적성 합÷정원).
             if (em.HasComponent<StaffEffect>(e))
                 sb.Append("\nStaff x").Append(em.GetComponentData<StaffEffect>(e).Factor.ToString("0.00"));
@@ -240,6 +257,11 @@ namespace CitySim
                     sb.Append("\nRoster ").Append(occ.Current).Append('/').Append(occ.Capacity)
                       .Append("  (").Append(wp.ProvidedJob.ToString()).Append(')')
                       .Append("\n present ").Append(occup.WorkPresent).Append(" (AtWork now)");
+                    // 배정 직원 숙련(관리형 성장 확인용, 2026-07-15) — 평균·총합. 로스터=Work==건물.
+                    if (occup.WorkRoster > 0)
+                        sb.Append("\n skill avg ")
+                          .Append((occup.WorkSkillSum / occup.WorkRoster).ToString("0"))
+                          .Append("  total ").Append(occup.WorkSkillSum.ToString("0"));
                 }
                 else
                     sb.Append("\nOccupancy ").Append(occ.Current).Append('/').Append(occ.Capacity);
@@ -308,9 +330,11 @@ namespace CitySim
 
         struct OccupantScan
         {
-            public int WorkPresent;                          // Work==건물 & AtWork
-            public int ResEmployed, ResJobless;              // Home==건물 거주민 고용/무직
-            public int ResAtWork, ResOut, ResHome;           // 거주민 현재 위치
+            public int   WorkPresent;                        // Work==건물 & AtWork
+            public int   WorkRoster;                         // Work==건물(배정 전체, AtWork 무관)
+            public float WorkSkillSum;                       // Σ CitizenSkills[직업] over Work==건물
+            public int   ResEmployed, ResJobless;            // Home==건물 거주민 고용/무직
+            public int   ResAtWork, ResOut, ResHome;         // 거주민 현재 위치
         }
 
         // 건물 하나에 대한 시민 역쿼리(호버 시만, 0.2초 스로틀 — 저빈도라 전수 순회 수용).
@@ -320,10 +344,16 @@ namespace CitySim
             var scan = new OccupantScan();
             var res = _citQ.ToComponentDataArray<CitizenResidence>(Allocator.Temp);
             var st  = _citQ.ToComponentDataArray<CitizenState>(Allocator.Temp);
+            var job = _citQ.ToComponentDataArray<JobData>(Allocator.Temp);
+            var skl = _citQ.ToComponentDataArray<CitizenSkills>(Allocator.Temp);
             for (int i = 0; i < res.Length; i++)
             {
-                if (res[i].Work == building && st[i].Activity == CitizenActivity.AtWork)
-                    scan.WorkPresent++;
+                if (res[i].Work == building)
+                {
+                    scan.WorkRoster++;
+                    scan.WorkSkillSum += skl[i].Get(job[i].Job);   // 배정 직원의 직업별 숙련
+                    if (st[i].Activity == CitizenActivity.AtWork) scan.WorkPresent++;
+                }
 
                 if (res[i].Home == building)
                 {
@@ -337,7 +367,7 @@ namespace CitySim
                     }
                 }
             }
-            res.Dispose(); st.Dispose();
+            res.Dispose(); st.Dispose(); job.Dispose(); skl.Dispose();
             return scan;
         }
 

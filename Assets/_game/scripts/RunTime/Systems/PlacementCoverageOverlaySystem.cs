@@ -179,8 +179,10 @@ namespace CitySim
             }
             bool auraCovered = st.OwnerSlot >= 0
                 && SystemAPI.TryGetSingleton<AuraCoverage>(out var ac) && ac.Map.IsCreated
-                && ac.Map.TryGetValue(new int3(st.OwnerSlot, st.Origin.x, st.Origin.y), out ulong bits)
-                && (bits & (ulong)NeedType.HighCrime) != 0;
+                && ac.Map.TryGetValue(
+                       new int4(st.OwnerSlot, st.Origin.x, st.Origin.y, math.tzcnt((ulong)NeedType.HighCrime)),
+                       out int pm)
+                && pm > 0;
 
             int badge = 0;
             if (em.HasComponent<ResidenceBuilding>(prefab))

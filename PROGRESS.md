@@ -5,7 +5,43 @@
 
 ---
 
-## 🟢 현재 프론티어 (2026-07-14 세션) — 거절사유 세분화 + 만석→증설(slice2 lean) + 건물정보 HUD (⚠ 미검증)
+## 🟢 현재 프론티어 (2026-07-15~16) — 범위형(관리형) 서비스 모델 통일 (⚠ 3a 에디터 컴파일 대기)
+> **모델(유저 확정)**: 범위형 오라 서비스(치안·헬스케어, 미래 행정·소방·환경)를 한 공식으로 통일.
+>   **`d = Quality × min(1, a/b)`** — d=전달 서비스 품질(0~100), Quality=건물 authored 값(숙련 아님),
+>   a=캐퍼(감당가능)=`배정 근무자수(BuildingOccupancy.Current) × 담당인원(AuraSupplier.PerWorkerCoverage)`,
+>   b=부하(감당중)=`범위 내 건물 주거+근무+방문 캐퍼 합`. 여유(b≤a)면 full=Quality, 초과면 비율 감소.
+>   **셀에서 동종 합산(상한 100)** = 백업 모델. 소비(치안·헬스케어)는 `v=d/100` **비례 완화**(목표 Level=1−v,
+>   음의방향 욕구 자동 변환 — 소비자 무수정). 무근무·Quality 0 → 무커버("반드시 근무자").
+>   맵: `AuraCoverage`(셀→품질 permille), `AuraLoadMap`(시설→감당중 b/감당가능 a), `AuraUtilization`(시설→가동률).
+> **숙련(쌓기만, 효과=언락 미래)**: 오라직은 **가동률 min(1,b/a) 비례 성장**(바쁜 시설=빨리, 한가=천천히).
+>   AuraCoverageSystem이 건물별 가동률 발행 → CitizenMovementSystem 퇴근 분기가 성장 배수로 소비.
+> **수요(자연 중화)**: 구 시설별 과밀 신호 은퇴 → **d<1 불평 시민**(불안=safety.IsActive, 커버가 Level을 1−v로
+>   낮추므로 IsActive가 적정성 자동 추적)을 현재 셀에 샘플(DemandAggregation.CollectSafetyDemandJob). 재실
+>   인원 비례, 자기종결(증설→커버↑→불안↓→수요↓). AiCityGrowth는 DemandField(FailNoCoverage)만 읽어 무변경.
+> **구현 3단계(적대검증 다회 클린)**: 1) map int4+품질 permille·비례·합산·소비자 전환(치안·헬스케어) ✅컴파일
+>   2) 근무자 파생 a·품질 c(authored)·`Officer` JobType(24h 3교대)·숙련 성장·F11 인스펙터(cap/quality/util/served·
+>   숙련·받는값 서비스명/100) ✅**에디터 실측** 3a) 구 과밀 기계 전량 은퇴(`AuraOverfullLog`·`CountAuraLoadJob`·
+>   `AuraSupplier.Capacity`)·수요 통일·`AuraLoadMap`→감당중/감당가능·F6 라벨 ⚠**에디터 컴파일 대기**.
+> **반전된 확립 원칙(의도적 대체)**: ① 오라 중첩 비스택 → **동종 합산**. ② 정원=수요 신호(해소 게이트 아님) →
+>   **정원 은퇴, 해소는 d 공식**. (하단 07-12·07-13 역사 항목의 해당 원칙은 이 모델로 대체됨 — project_managed_service_model 메모리.)
+> **수요 게이트 정교화(2026-07-16, 3a 후속)**: `CollectSafetyDemandJob`이 현재 셀 d를 읽어 **`d < ServiceAdequate`
+>   일 때만 샘플**(구 IsActive-only는 커버 셀 도착 시 잔여 불안이 샘플되던 **팬텀** — 제거). `ServiceAdequate`
+>   (permille, 기본 1=커버되면 만족→최소 건설 / 1000=full 요구) = **건설 밀도 마스터 손잡이**. 코드 반영·컴파일 대기.
+> **⚠ 실측 발견(핵심 미결정)**: 파라미터 올려 서비스 갯수 줄이기 시도 → **방문형(공원)은 확연히 감소 ✅**(수요셀
+>   기반, 용량 올리면 매끄럽게)인데 **범위형(오라)은 무감각 ❌**. 원인 = 오라 AI 배치가 `_auraDistricts` **지구당
+>   1채 게이트 + 지구 중심 스냅**으로 **지구 수에 양자화**(판정이 "지구에 오라 **건물** 있나"지 "**커버** 되나"가
+>   아님 → 옆 지구 큰 반경이 덮어도 자기 건물 없으면 또 지음). 반경/품질이 갯수를 못 줄임. (`DistrictGrid.Pitch=24`
+>   = DemandGrid.CellSize×3, AiCityGrowth+오버레이에만 사용.)
+> **⚠ 다음 세션 우선 — 오라 배치 결정(유저 보류 "다음에")**:
+>   - **(A) 커버 인식 게이트**: `_auraDistricts`(건물 유무) → `AuraCoverage`(커버 유무)로 판정, 이미 d≥적정이면 건설
+>     스킵. 오라 전용·반경/품질로 **매끄러운** 감소. 트레이드오프=지구 경계 소량 커버 구멍. **AI 성장 수술+검증 필요**.
+>   - **(B) 지구 Pitch 확대**: 상수 1줄로 지구 키움 → 오라(+창고·공급자) 계단식 감소. **전역 거칠어짐**, 무수술.
+>     동반 필수: 반경 ≥ 0.7×Pitch, 근무자 캐퍼 ↑(부하 b 커짐), Pitch=8배수. 양자 크기 확대(양자화 유지).
+> **그 후:** 3c 밸런스(Quality·PerWorkerCoverage·safety Threshold·ServiceAdequate·누적 테스트 과장 상수 복원) /
+>   확장(헬스케어 d 소비 정교화, 행정·소방·환경 = 새 욕구비트+컴포+relief시스템+JobType+프리팹, **공통 d 기계 무수정**).
+>   에디터 선행: 경찰 `ProvidedJob=Officer`+WorkerSlots+PerWorkerCoverage+Quality / 병원 PerWorkerCoverage+Quality.
+
+## 🟡 (역사, 2026-07-14 세션) — 거절사유 세분화 + 만석→증설(slice2 lean) + 건물정보 HUD (⚠ 미검증)
 > **이번 세션 요약**: 질병 상태화(2026-07-13, 유저 "시뮬 문제없이 돌아감" = 컴파일·동작 성공) 위에 얹은 후속.
 > ① **거절사유 세분화(slice1)** — `ServiceOutcome` {None,NoCoverage,**Full**,**NoGoods**,**Unstaffed**},
 >   `DemandStat`도 `FailFull`/`FailNoGoods`/`FailUnstaffed`로 쪼갬(`FailReached`=합 프로퍼티, 하위호환). ServiceSearch가

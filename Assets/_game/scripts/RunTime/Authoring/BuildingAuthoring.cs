@@ -84,9 +84,14 @@ namespace CitySim.Authoring
         [Tooltip("오라 반경(셀). 판정 = footprint 최근접 유클리드 제곱(dx²+dz² ≤ R²).")]
         public int AuraRadius = 0;
 
-        [Tooltip("오라 정원(커버 인구 상한, v1.5 과밀 신호). 최근접-귀속 커버 인구가 초과하면 " +
-                 "이웃 지구 증설 수요만 발생 — 해소는 불변. 0 = 무제한(신호 없음).")]
-        public int AuraCapacity = 0;
+        [Tooltip("근무자 1인당 담당 인원(관리형 서비스). 캐퍼(처리량) a = 배정 근무자수 × 이 값. " +
+                 "⚠ 오라 건물은 반드시 ProvidedJob(전문직 예:Officer)+WorkerSlots+이 값 필요 — " +
+                 "0이거나 근무자 없으면 무커버.")]
+        public int AuraPerWorkerCoverage = 100;
+
+        [Tooltip("서비스 품질 c(0~100) — 이 건물이 제공하는 값. 캐퍼 안 넘으면 이 값 그대로, " +
+                 "넘으면 비율 감소(d = Quality × min(1, 캐퍼/부하)). 동종 겹치면 셀에서 합산(상한 100).")]
+        public int AuraQuality = 80;
 
         [Header("생산")]
         [Tooltip("이 건물이 만드는 품목(RecipeDefs 키). None이 아니면 ProductionJob을 굽는다.")]
@@ -153,9 +158,10 @@ namespace CitySim.Authoring
                 if (a.AuraReliefRaw != 0 && a.AuraRadius > 0)
                     AddComponent(e, new AuraSupplier
                     {
-                        Relief   = a.AuraReliefMask,
-                        Radius   = a.AuraRadius,
-                        Capacity = a.AuraCapacity,
+                        Relief            = a.AuraReliefMask,
+                        Radius            = a.AuraRadius,
+                        PerWorkerCoverage = a.AuraPerWorkerCoverage,
+                        Quality           = a.AuraQuality,
                     });
 
                 // ── 생산 ──

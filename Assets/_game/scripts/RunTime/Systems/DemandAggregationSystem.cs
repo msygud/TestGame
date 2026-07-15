@@ -106,14 +106,8 @@ namespace CitySim
                 missLog.Window.Clear();
             }
 
-            // v1.5 과밀 신호(2026-07-12): 오라 과밀 창은 **클리어하지 않는다** — 발행자
-            //   (AuraCoverageSystem)가 시간당 재작성하는 지속 플래그(소유권이 발행자에 있음).
-            //   존재하는 동안 셀당 1샘플/초(물류 미스 창과 동일 가중) → 임계·쿨다운·재기준선
-            //   기계가 그대로 소비. WHERE = 이웃 지구 중심(발행자가 선정) — 커버 구멍 수요
-            //   (CollectSafetyDemandJob, 시민 위치)와 같은 채널로 합류하되 출처가 다르다.
-            if (SystemAPI.TryGetSingleton<AuraOverfullLog>(out var overfull) && overfull.Window.IsCreated)
-                foreach (var kv in overfull.Window)
-                    _keys.Enqueue(new DemandSample { Key = kv.Key, Cause = 0 });
+            // (구 v1.5 오라 과밀 신호 AuraOverfullLog 드레인 은퇴 — 2026-07-16 관리형 통일:
+            //   증설 수요는 이제 CollectSafetyDemandJob이 d<1 불평 시민을 현재 셀에 직접 샘플한다.)
 
             var collectH = new CollectDemandJob
             {
@@ -122,18 +116,18 @@ namespace CitySim
                 Samples  = _keys.AsParallelWriter(),
             }.ScheduleParallel(state.Dependency);
 
-            // 커버형 욕구 채널(치안 v1, 2026-07-12): 추구/방문 파이프라인을 안 타므로 위
-            //   CollectDemandJob(미충족=Pursuing 기반)이 못 본다 — "집 미커버 + 불안" 시민을
-            //   직접 샘플(NoCoverage). 오라 front 맵 [ReadOnly] — 발행측과 프레임워크 의존성 안전.
+            // 커버형 욕구 채널(치안, 관리형 d<1 불평 2026-07-16): 추구/방문 파이프라인을 안 타므로 위
+            //   CollectDemandJob(미충족=Pursuing 기반)이 못 본다 — **현재 셀의 서비스 품질 d가 적정
+            //   미만인 시민**을 그 셀에 직접 샘플(present-based 자연 중화). 커버 좋으면(d≥ServiceAdequate)
+            //   무샘플 → AI가 안 지음(품질·반경·근무자 올리면 d↑ → 미달 셀↓ → 건설 수↓). 오라 front
+            //   맵 [ReadOnly] 캡처(발행측 CompleteAllTrackedJobs로 안전 — AuraCoverageSystem 참조).
             if (SystemAPI.TryGetSingleton<AuraCoverage>(out var aura) && aura.Map.IsCreated)
-            {
                 collectH = new CollectSafetyDemandJob
                 {
                     FpLookup = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
                     Aura     = aura.Map,
                     Samples  = _keys.AsParallelWriter(),
                 }.ScheduleParallel(collectH);
-            }
 
             _handle = new TallyDemandJob { Samples = _keys, Back = _back }.Schedule(collectH);
             state.Dependency = _handle;   // 라이브 시민 컴포넌트 읽기 안전(프레임워크 추적)
@@ -206,29 +200,37 @@ namespace CitySim
     //   이동 중(CurrentBuilding=Null)은 위치 특정 불가라 제외.
     //   셀당 1샘플/초 가중 = 시민·물류 채널과 동등. 임계/블랙리스트/재기준선 기계 재사용.
     [BurstCompile]
-    [WithAll(typeof(CitizenTag))]
+    [WithAll(typeof(CitizenTag), typeof(CitizenSafety))]
     public partial struct CollectSafetyDemandJob : IJobEntity
     {
         [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
-        [ReadOnly] public NativeHashMap<int3, ulong> Aura;
+        [ReadOnly] public NativeHashMap<int4, int> Aura;   // int4(owner,x,y,reliefBit)→품질 permille
         public NativeQueue<DemandSample>.ParallelWriter Samples;
 
-        void Execute(in CitizenSafety safety, in CitizenState st)
+        // 서비스 적정 임계(permille) — 현재 셀 d가 이 값 **미만**이면 불평(수요 샘플). ★건설 밀도 마스터
+        //   손잡이★: 1 = 커버되면 만족(최소 건설·겹침 없음, 품질이 서비스 수준을 정함) / 1000 = full 요구
+        //   (degraded도 증설). 품질·반경·근무자를 올리면 d↑ → 미달 셀↓ → AI 건설 수↓(밸런스가 직접 좌우).
+        const int ServiceAdequate = 1;
+
+        void Execute(in CitizenState st)
         {
-            if (!safety.IsActive) return;
+            // d<1 불평(유저 모델): 지금 있는 건물 셀의 치안 서비스 품질 d가 적정 미만이면 그 셀에 샘플.
+            //   present-based(재실 인원 비례 = 자연 중화). d≥적정이면 무샘플 → **커버된 셀은 수요 0**
+            //   (구 IsActive 게이트의 팬텀 — 커버 셀 도착 시 잔여 불안이 샘플되던 문제 — 제거).
+            //   WHERE = 시민 현재 셀, 자기종결(증설→커버↑→미달 셀↓→수요↓).
             Entity at = st.CurrentBuilding;
             if (at == Entity.Null || !FpLookup.HasComponent(at)) return;
             var fp = FpLookup[at];
 
-            if (Aura.TryGetValue(new int3(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y), out ulong bits)
-                && (bits & (ulong)NeedType.HighCrime) != 0) return;   // 커버 → 해소 진행 중
+            int bit = math.tzcnt((ulong)NeedType.HighCrime);
+            Aura.TryGetValue(new int4(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y, bit), out int pm);
+            if (pm >= ServiceAdequate) return;   // 적정 이상 커버 → 불평 없음(팬텀 방지·밸런스 반영)
 
             int2 dcell = DemandGrid.ToCell(fp.Origin);
-            int  bit   = math.tzcnt((ulong)NeedType.HighCrime);
             Samples.Enqueue(new DemandSample
             {
                 Key   = new int4(fp.OwnerLocalId, dcell.x, dcell.y, bit),
-                Cause = 0,   // NoCoverage — 신설 수요(WHERE = 시민의 현재 위치)
+                Cause = 0,   // NoCoverage — 신설/증설 수요(WHERE = 시민의 현재 위치)
             });
         }
     }

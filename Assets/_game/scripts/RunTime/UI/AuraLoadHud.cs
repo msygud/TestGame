@@ -6,13 +6,13 @@ using UnityEngine;
 namespace CitySim
 {
     // ══════════════════════════════════════════════════════════════
-    //  AuraLoadHud — 오라 시설(경찰서류) 머리 위 "커버 인구/정원" 라벨 (F6 연동)
+    //  AuraLoadHud — 오라 시설(경찰서류) 머리 위 "감당중/감당가능" 라벨 (F6 연동)
     //
-    //  v1.5 과밀 신호의 관측 도구(유저 요청 2026-07-12): F6(커버리지 오버레이)이
-    //  켜져 있으면 모든 오라 시설 위에 부하를 표시한다. 데이터 = AuraLoadMap
-    //  (AuraCoverageSystem이 시간당 발행: 시설 엔티티 → (커버 인구, 정원)).
-    //    · 정원>0: "820/250" — 여유=초록 / 정원 초과=주황 / 2배 초과=빨강
-    //    · 정원≤0(무제한 = 과밀 신호 꺼짐): 커버 인구만 회백.
+    //  관리형 관측 도구(2026-07-16): F6(커버리지 오버레이)이 켜져 있으면 모든 오라 시설 위에
+    //  부하/캐퍼를 표시한다. 데이터 = AuraLoadMap(AuraCoverageSystem 시간당 발행: 시설 →
+    //  (감당중 b, 감당가능 a)). b = 범위 내 건물 캐퍼 합 / a = 배정 근무자수 × 담당인원.
+    //    · a>0: "150/300" — 여유(b≤a)=초록 / 초과(b≤2a)=주황 / 2배 초과=빨강
+    //    · a≤0(무근무 = 무서비스): 감당중만 회백.
     //
     //  GC 규약(CLAUDE.md): 쿼리 월드당 1회 / 문자열은 발행 Version 변화 시만 재조립 /
     //  Repaint 전용. 화면 투영은 매 Repaint 계산(카메라 추종, 무할당).
@@ -86,16 +86,16 @@ namespace CitySim
                 _ents.Clear(); _texts.Clear(); _cols.Clear();
                 foreach (var kv in load.Map)
                 {
-                    int covered = kv.Value.x, cap = kv.Value.y;
+                    int b = kv.Value.x, cap = kv.Value.y;   // 감당중 b / 감당가능 a(=cap)
                     _ents.Add(kv.Key);
                     if (cap > 0)
                     {
-                        _texts.Add($"{covered}/{cap}");
-                        _cols.Add(covered <= cap ? COk : covered <= cap * 2 ? COver : CHot);
+                        _texts.Add($"{b}/{cap}");
+                        _cols.Add(b <= cap ? COk : b <= cap * 2 ? COver : CHot);
                     }
                     else
                     {
-                        _texts.Add(covered.ToString());
+                        _texts.Add(b.ToString());
                         _cols.Add(CInf);
                     }
                 }

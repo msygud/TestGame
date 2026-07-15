@@ -128,7 +128,7 @@ namespace CitySim
     public partial struct DiseaseCheckJob : IJobEntity
     {
         [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
-        [ReadOnly] public NativeHashMap<int3, ulong> Aura;
+        [ReadOnly] public NativeHashMap<int4, int> Aura;   // int4(owner,x,y,reliefBit)→품질 permille
         public int Hour;
         public int CheckSalt;
 
@@ -143,17 +143,18 @@ namespace CitySim
         {
             if (((uint)e.Index % 3u) != (uint)(Hour % 3)) return;   // 내 위상만(3시간 주기)
 
-            // 헬스케어 머티리얼라이즈 — 현재 건물 셀의 병원 오라(PoorHealthcare) 커버로 교체.
+            // 헬스케어 머티리얼라이즈 — 현재 건물 셀의 병원 오라(PoorHealthcare) 서비스 품질로 교체.
             //   가감이 아니라 통째 replace(드리프트 없음). 미커버/이동 중 = 0.
+            //   관리형 모델(2026-07-15): 비례 — healthcare = HealthcareMax × v(품질 permille/1000).
+            //   극단 동형: v=1 → HealthcareMax(구 '커버') / v=0 → 0(구 '미커버').
             float healthcare = 0f;
             Entity at = st.CurrentBuilding;
             if (at != Entity.Null && FpLookup.HasComponent(at))
             {
                 var fp = FpLookup[at];
-                if (Aura.TryGetValue(new int3(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y),
-                                     out ulong bits)
-                    && (bits & (ulong)NeedType.PoorHealthcare) != 0)
-                    healthcare = HealthcareMax;
+                int bit = math.tzcnt((ulong)NeedType.PoorHealthcare);
+                if (Aura.TryGetValue(new int4(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y, bit), out int pm))
+                    healthcare = HealthcareMax * (pm * 0.001f);
             }
             hc.Value = healthcare;
 

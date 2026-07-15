@@ -160,47 +160,58 @@ namespace CitySim
         /// <summary>오라 반경(셀).</summary>
         public int Radius;
 
-        /// <summary>정원(커버 인구 상한, v1.5 과밀 신호 2026-07-12). **해소를 게이트하지
-        /// 않는다**(커버=해소 불변) — 최근접-귀속 커버 인구가 이를 초과하면 이웃 지구
-        /// 증설 수요(AuraOverfullLog)만 발생. 0 이하 = 무제한(신호 없음, 옵트인).</summary>
-        public int Capacity;
+        /// <summary>근무자 1인당 담당 인원(관리형 서비스, 2026-07-15 유저 확정). 서비스 캐퍼(처리량)
+        /// a = **배정 근무자수(BuildingOccupancy.Current) × PerWorkerCoverage**. 순수 인원 기반(숙련 무관).
+        /// **0이면 무커버** — 오라 건물은 ProvidedJob(전문직)+WorkerSlots+이 값을 반드시 authoring해야
+        /// 커버가 발생한다(무근무=무커버 원칙).</summary>
+        public int PerWorkerCoverage;
+
+        /// <summary>서비스 품질 c(0~100, authored 고정값, 2026-07-15 유저 확정) — 이 건물이 제공하는
+        /// 값. 부하 b가 캐퍼 a를 안 넘으면 이 값 그대로, 넘으면 비율만큼 감소:
+        /// **d = Quality × min(1, a/b)**. 동종 겹치면 셀에서 합산(상한 100). 숙련은 지금 미반영
+        /// (언락 개념 — 미래). 0이면 무커버.</summary>
+        public int Quality;
     }
 
     /// <summary>
-    /// 오라 커버 맵 front 싱글톤(커버형 욕구 v1, 2026-07-12) — AuraCoverageSystem이
-    /// 게임 시간당 1회 백그라운드 잡으로 재구축(무효화 회피: Clear 후 전체 재그리기,
-    /// stamp 독트린과 동일) 후 발행. key = (owner, x, y) 실셀 — 소유자별 독립("공용
-    /// 공간 + owner별 상태" 관례). value = 그 셀에 닿는 오라 relief 비트합.
+    /// 오라 커버 맵 front 싱글톤(관리형 서비스 모델, 2026-07-15 유저 재설계 — 구 v1 비트맵
+    /// 대체). AuraCoverageSystem이 게임 시간당 1회 백그라운드 잡으로 재구축(무효화 회피:
+    /// Clear 후 전체 재그리기, stamp 독트린과 동일) 후 발행.
+    ///   · key   = int4(owner, x, y, reliefBit) — 실셀 + relief 비트 인덱스(math.tzcnt).
+    ///             소유자별 독립("공용 공간 + owner별 상태" 관례), relief 종류별 독립 채널.
+    ///   · value = **서비스 품질 permille**(0~1000 = 0~1.0). 그 셀에 닿는 동종 오라들의
+    ///             `d = k·c·a/b` **합산**(상한 1000 = full). 구 "비트 존재(비스택)" → **양적 합산**.
+    /// 소비: 욕구별 relief 시스템이 v=permille/1000을 읽어 **비례 완화**(v<1이면 부분 서비스).
+    ///   d 산출은 AuraCoverageSystem 참조(a=근무자×담당, b=범위 내 건물 캐퍼 합, c=숙련품질, k=팩션).
     /// 독자(욕구 해소·수요 수집·배치 프리뷰)는 GetSingleton(RO)으로만 읽는다.
     /// </summary>
     public struct AuraCoverage : IComponentData
     {
-        public NativeHashMap<int3, ulong> Map;
+        public NativeHashMap<int4, int> Map;   // int4(owner,x,y,reliefBit) → 품질 permille(0~1000)
         public uint Version;
     }
 
     /// <summary>
-    /// 오라 과밀 창 싱글톤(v1.5 과밀 신호, 2026-07-12) — AuraCoverageSystem이 시간당
-    /// 재작성(Clear 후 재채움)하는 **지속 플래그**. key = DemandSample.Key 동형
-    /// (owner, 수요셀x, 수요셀y, needBit) — 값은 무의미(1). DemandAggregation이 매초
-    /// 드레인하되 **클리어하지 않는다**(LogisticsMissLog와 달리 소유권이 발행자에 있음):
-    /// 존재하는 동안 셀당 1샘플/초 → 기존 임계·쿨다운·재기준선 기계가 그대로 소비.
-    /// 부하가 정원 밑으로 내려가거나 목표 지구에 오라가 서면 다음 재작성에서 자연 소멸.
-    /// </summary>
-    public struct AuraOverfullLog : IComponentData
-    {
-        public NativeHashMap<int4, byte> Window;
-    }
-
-    /// <summary>
-    /// 오라 시설 부하 front 싱글톤(v1.5 표시용, 2026-07-12) — AuraCoverageSystem이
-    /// 시간당 발행. key = 시설 엔티티, value = (커버 인구(최근접 귀속), 정원).
-    /// 독자 = AuraLoadHud(F6 연동 머리 위 라벨). 죽은 엔티티 항목은 다음 발행까지
-    /// 잔존할 수 있음 — 독자가 Exists 가드.
+    /// 오라 시설 부하 front 싱글톤(관리형, 2026-07-16) — AuraCoverageSystem이 시간당 발행.
+    /// key = 시설 엔티티, value = **(감당중 b, 감당가능 a)**: b = 범위 내 건물 캐퍼 합,
+    /// a = 배정 근무자수 × 담당인원. 독자 = AuraLoadHud(F6 머리 위 라벨). 죽은 엔티티 항목은
+    /// 다음 발행까지 잔존할 수 있음 — 독자가 Exists 가드.
     /// </summary>
     public struct AuraLoadMap : IComponentData
     {
         public NativeHashMap<Entity, int2> Map;
+        public uint Version;
+    }
+
+    /// <summary>
+    /// 오라 건물 가동률 front 싱글톤(관리형 숙련 성장, 2026-07-15) — AuraCoverageSystem이 시간당 발행.
+    /// key = 오라 건물 엔티티, value = **가동률 min(1, b/a)**(부하 b ÷ 캐퍼 a, 상한 1). 오라직 근무자의
+    /// **숙련 성장률 배수**로 소비(CitizenMovementSystem 퇴근 분기 — 바쁜 시설일수록 빨리 성장,
+    /// 한가하면 천천히). 초과(b>a)면 근무자는 상한까지만 = 가동률 1. 맵에 없는 직장 = 비-오라직(배수 1).
+    /// </summary>
+    public struct AuraUtilization : IComponentData
+    {
+        public NativeHashMap<Entity, float> Map;
         public uint Version;
     }
 }

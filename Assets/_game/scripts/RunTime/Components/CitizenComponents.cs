@@ -214,6 +214,7 @@ namespace CitySim
         Unemployed = 0,
         Farmer, Miner, Builder, Engineer, Merchant,
         Doctor, Teacher, Researcher, Artist, Administrator, Soldier,
+        Officer,   // 경찰(치안 오라) — 관리형 서비스 전문직(2026-07-15). 새 서비스는 여기 append(서수 안정).
     }
 
     public struct JobData : IComponentData
@@ -235,8 +236,10 @@ namespace CitySim
     // ──────────────────────────────────────────────────────────────────────────
     public struct CitizenSkills : IComponentData
     {
-        /// <summary>JobType 값 수(Unemployed 포함) — enum과 일치 유지.</summary>
-        public const int JobCount = 12;
+        /// <summary>JobType 값 수(Unemployed 포함) — enum과 일치 유지. Officer 추가(2026-07-15) → 13.
+        /// FixedList64Bytes&lt;float&gt; 용량 15+라 여유. 구세이브(12칸) 시민은 Get(Officer=12)이 bounds
+        /// 밖→0 반환(신참 base 0.5 기여), Add도 no-op — 크래시 없음(숙련만 미성장).</summary>
+        public const int JobCount = 13;
 
         /// <summary>인덱스 = (int)JobType, 값 0~100.</summary>
         public FixedList64Bytes<float> Values;
@@ -295,6 +298,7 @@ namespace CitySim
             JobType.Merchant      => new Window { Open = 8,  Close = 24, Shifts = 2 },  // 식당
             JobType.Administrator => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 창고 24h
             JobType.Doctor        => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 병원 24h(2026-07-13)
+            JobType.Officer       => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 경찰 24h(2026-07-15)
             _                     => new Window { Open = defOpen, Close = defClose, Shifts = 1 },
         };
 
@@ -304,6 +308,7 @@ namespace CitySim
             JobType.Merchant      => 2,
             JobType.Administrator => 3,
             JobType.Doctor        => 3,   // 병원 24h(2026-07-13)
+            JobType.Officer       => 3,   // 경찰 24h(2026-07-15)
             _                     => 1,
         };
     }
@@ -366,6 +371,7 @@ namespace CitySim
             JobType.Artist        => 0.8f * a.CreativityN   + 0.2f * a.DexterityN,
             JobType.Administrator => 0.5f * a.IntelligenceN + 0.5f * a.SociabilityN,
             JobType.Soldier       => 0.6f * a.PhysiqueN     + 0.4f * a.ResilienceN,
+            JobType.Officer       => 0.5f * a.PhysiqueN     + 0.5f * a.ResilienceN,   // 경찰(2026-07-15, 튜닝 가능)
             _                     => 0.5f,
         };
 
