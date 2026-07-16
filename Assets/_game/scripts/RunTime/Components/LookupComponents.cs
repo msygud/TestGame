@@ -81,6 +81,12 @@ namespace CitySim
         /// **도달 가드**(앵커에서 반경 밖 배치 금지 — 못 덮는 오라 연쇄 차단)에 사용
         /// (커버형 욕구 v1, 2026-07-12).</summary>
         public NativeHashMap<int, int> AuraKeys;
+
+        /// <summary>MainKey → 근무 정원(프리팹 WorkplaceBuilding+BuildingOccupancy.Capacity 파생,
+        /// 2026-07-17 노동 게이트). AI 수요 건설이 "무직 노동력 ≥ 정원"일 때만 그 건물을 후보로 —
+        /// 일할 사람 없는 도시가 무근무 건물만 늘리는 역전 차단(인구 주도 성장). 무인 건물
+        /// (공원 등, WorkplaceBuilding 없음)은 미등록 = 게이트 없음.</summary>
+        public NativeHashMap<int, int> WorkerNeeds;
     }
 
     // ══════════════════════════════════════════════════════════════════════════

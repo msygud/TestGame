@@ -107,10 +107,12 @@ MonoBehaviour:
   ProvidedJob: 10
   WorkerSlots: 6
   ReliefRaw: 0
-  SupplyMaxDist: 15
+  SupplyMaxDist: 5
   VisitorSlots: 0
   AuraReliefRaw: 0
   AuraRadius: 0
+  AuraPerWorkerCoverage: 100
+  AuraQuality: 80
   ProductionOutput: 0
   Stocks:
   - Commodity: 1
@@ -122,5 +124,5 @@ MonoBehaviour:
     Capacity: 200
     Initial: 0
   IsWarehouse: 1
-  WarehouseStampMaxDist: 30
+  WarehouseStampMaxDist: 20
   MaxHealth: 0

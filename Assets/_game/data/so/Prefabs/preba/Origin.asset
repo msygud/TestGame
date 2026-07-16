@@ -533,7 +533,7 @@ MonoBehaviour:
     Category: 1
     Usage: -1
     Prefab: {fileID: 4842039231314385917, guid: 29d51c6611c4eeb4b89c02a60f4dee31, type: 3}
-    Size: {x: 2, y: 2}
+    Size: {x: 4, y: 2}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
@@ -550,7 +550,7 @@ MonoBehaviour:
     Category: 1
     Usage: -1
     Prefab: {fileID: 5582211663413722490, guid: e58311b8a29dad94baf1c7cc533503dc, type: 3}
-    Size: {x: 2, y: 2}
+    Size: {x: 2, y: 4}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
@@ -567,7 +567,7 @@ MonoBehaviour:
     Category: 1
     Usage: -1
     Prefab: {fileID: 7101352272596805819, guid: 135578afae5bd864e9563b85efcb7a63, type: 3}
-    Size: {x: 2, y: 3}
+    Size: {x: 3, y: 3}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
@@ -601,7 +601,7 @@ MonoBehaviour:
     Category: 1
     Usage: -1
     Prefab: {fileID: 3231845200399232809, guid: 17cc0418731da4843a87bc5d294aa0aa, type: 3}
-    Size: {x: 2, y: 2}
+    Size: {x: 4, y: 4}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
@@ -701,8 +701,8 @@ MonoBehaviour:
     Offset: {x: 1, y: 0}
     Dir: 4
   - MainKey: 1005
-    Offset: {x: 2, y: 0}
-    Dir: 4
+    Offset: {x: 2, y: 4}
+    Dir: 1
   - MainKey: 1006
     Offset: {x: 2, y: 4}
     Dir: 1

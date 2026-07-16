@@ -165,7 +165,36 @@ namespace CitySim
     {
         public int Stored;
         public int Capacity;
+
+        /// <summary>인구 비례 비축 목표(P2, 2026-07-17) = min(Capacity, 거주 인구 × 품목 계수).
+        /// LogisticsPoolSystem이 시간당 재계산. 생산 시작 게이트(ProductionSystem)와 생산자 신설
+        /// 억제(AiCityGrowth)의 기준 — **용량이 아니라 이 값**. 구 용량 앵커는 커버 확장(창고 신설)
+        /// 마다 비축 천장이 래칫돼 생산이 도시 면적을 따라 무한히 노동·부지를 흡수(무한 생산 함정,
+        /// 유저 2026-07-17). 인구가 늘면 목표가 따라 올라 생산 자동 재개(자기 조절).</summary>
+        public int Target;
+
         public readonly int Free => Capacity - Stored;
+    }
+
+    /// <summary>
+    /// 인구 비례 비축 정책(P2, 2026-07-17) — "비축의 앵커는 창고 수가 아니라 인구".
+    /// 전쟁물자(MRP)는 미래에 품목 case로 별도 앵커(군 규모)를 추가 — 이 스위치가 그 골격.
+    /// Burst-safe 정적 스위치(RecipeDefs 패턴).
+    /// </summary>
+    public static class StockPolicy
+    {
+        // ⚠ 밸런스 상수(v1 임시): 1인당 목표 재고(단위 볼륨). "N일치 소비" 근사 —
+        //   Meal 사슬(Grain→Flour→Meal) 상류일수록 버퍼 크게(공급 지연 흡수).
+        public static int PerCapita(Commodity c) => c switch
+        {
+            Commodity.Grain => 3,
+            Commodity.Flour => 2,
+            _               => 2,   // 새 품목 기본값 — 도입 시 case 추가
+        };
+
+        /// <summary>풀 비축 목표 — 용량 상한 클램프(창고가 모자라면 용량까지만).</summary>
+        public static int Target(Commodity c, int population, int capacity)
+            => math.min(capacity, population * PerCapita(c));
     }
 
     /// <summary>풀 흐름 창(성장 틱마다 소비·클리어) — Out=실제 유출, In=실제 유입. **물리 흐름만**

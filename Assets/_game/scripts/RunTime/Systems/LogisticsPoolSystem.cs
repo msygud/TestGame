@@ -74,6 +74,18 @@ namespace CitySim
 
             var pool = SystemAPI.GetSingleton<LogisticsPool>();
 
+            // ── 거주 인구(owner별) — 비축 목표의 앵커(P2, 2026-07-17). 주택 점유율 게이트
+            //   (AiCityGrowth)와 동일 기준: 순수 주택(ResidenceBuilding, 비직장)의 Occupancy.Current
+            //   합. 시간당 1회 메인 패스(수백 채)라 비용 무시. ──
+            var pop = new NativeArray<int>(StampLayers.MaxPlayers, Allocator.Temp);
+            foreach (var (occ, fp) in
+                     SystemAPI.Query<RefRO<BuildingOccupancy>, RefRO<BuildingFootprint>>()
+                         .WithAll<ResidenceBuilding>().WithNone<WorkplaceBuilding>())
+            {
+                int o = fp.ValueRO.OwnerLocalId;
+                if ((uint)o < StampLayers.MaxPlayers) pop[o] += occ.ValueRO.Current;
+            }
+
             // ── 창고 Store 용량 합산 (owner,commodity) ──
             var cap = new NativeHashMap<int2, int>(64, Allocator.Temp);
             foreach (var (wh, entity) in
@@ -102,6 +114,9 @@ namespace CitySim
                 cap.TryGetValue(k, out int newCap);        // 창고 사라졌으면 0
                 cell.Capacity = newCap;
                 if (cell.Stored > newCap) cell.Stored = newCap;   // 용량 축소 → 초과분 소실
+                // 인구 비례 목표 재계산(P2) — 인구·용량이 바뀌면 시간당 자동 추종.
+                cell.Target = (uint)k.x < StampLayers.MaxPlayers
+                    ? StockPolicy.Target((Commodity)k.y, pop[k.x], newCap) : 0;
 
                 if (cell.Capacity == 0 && cell.Stored == 0)
                     pool.Cells.Remove(k);                  // 빈 셀 정리(맵 비대 방지)
@@ -111,12 +126,22 @@ namespace CitySim
             }
             keys.Dispose();
 
-            // ── 신규 (owner,commodity): Stored=0, Capacity=합 ──
+            // ── 신규 (owner,commodity): Stored=0, Capacity=합, Target=인구 비례 ──
             var newKeys = cap.GetKeyArray(Allocator.Temp);
             for (int i = 0; i < newKeys.Length; i++)
-                pool.Cells[newKeys[i]] = new PoolCell { Stored = 0, Capacity = cap[newKeys[i]] };
+            {
+                var k = newKeys[i];
+                pool.Cells[k] = new PoolCell
+                {
+                    Stored   = 0,
+                    Capacity = cap[k],
+                    Target   = (uint)k.x < StampLayers.MaxPlayers
+                        ? StockPolicy.Target((Commodity)k.y, pop[k.x], cap[k]) : 0,
+                };
+            }
             newKeys.Dispose();
 
+            pop.Dispose();
             cap.Dispose();
         }
     }

@@ -214,4 +214,19 @@ namespace CitySim
         public NativeHashMap<Entity, float> Map;
         public uint Version;
     }
+
+    /// <summary>
+    /// 오라 과부하 감사 창(3안, 2026-07-16) — AuraCoverageSystem이 시간당 기록하는 "지속
+    /// 과부하" 신호. 겹침이 pm≥ServiceAdequate를 유지하면 d<1 불평(시민 채널)이 침묵하는
+    /// 사각지대(시설 파괴로 이웃 부하 폭증 / 밀도 성장의 후발 과부하)를 부하 b/a로 직접 감지.
+    ///   · key   = int4(owner, 수요셀x, 수요셀y, reliefBit) — 과부하 시설 origin의 수요셀.
+    ///   · value = 초과 인원(b−a, 시설별 합산·상한) — 시민 채널의 "재실 인원 비례"와 동등 가중.
+    /// DemandAggregationSystem이 초당 드레인 → **Cause=Full(만석=증설)** 샘플로 변환 후 Clear
+    /// (플래그 창 — LogisticsMissLog 동형, 둘 다 메인에서만 접근). Full 경로는 실측(2026-07-16)
+    /// 확인대로 커버 안에 착지(증설)하고, 폐쇄 도심은 재개발 escalation이 자리를 낸다.
+    /// </summary>
+    public struct AuraOverloadLog : IComponentData
+    {
+        public NativeHashMap<int4, int> Window;
+    }
 }

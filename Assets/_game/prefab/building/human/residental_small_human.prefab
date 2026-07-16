@@ -104,6 +104,8 @@ MonoBehaviour:
   VisitorSlots: 0
   AuraReliefRaw: 0
   AuraRadius: 0
+  AuraPerWorkerCoverage: 100
+  AuraQuality: 80
   ProductionOutput: 0
   Stocks: []
   IsWarehouse: 0

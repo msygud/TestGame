@@ -27,8 +27,10 @@ namespace CitySim
     //    · AuraCoverage(셀→품질 permille, 동종 합산) — SafetySystem 등이 비례 완화.
     //    · AuraLoadMap(시설→(감당중 b, 감당가능 a)) — AuraLoadHud(F6) 표시.
     //    · AuraUtilization(시설→가동률 min(1,b/a)) — CitizenMovementSystem 오라직 숙련 성장률.
-    //  증설 수요는 시설 과밀 신호가 아니라 **d<1 불평 시민**(DemandAggregation.CollectSafetyDemandJob)
+    //  증설 수요는 시설 과밀 신호가 아니라 **d<1 불평 시민**(DemandAggregation.CollectAuraDemandJob)
     //  이 담당(2026-07-16 통일) — 구 AuraOverfullLog/CountAuraLoadJob/정원 은퇴.
+    //    + **과부하 감사(3안, 2026-07-16)**: 겹침이 pm≥적정을 유지해 불평이 침묵하는 사각지대
+    //      (시설 파괴·후발 밀도 과부하)만 b/a 지속 초과 → AuraOverloadLog(Cause=Full 증설)로 보완.
     // ══════════════════════════════════════════════════════════════════════════
     [UpdateInGroup(typeof(SimulationSystemGroup))]
     public partial struct AuraCoverageSystem : ISystem
@@ -60,9 +62,18 @@ namespace CitySim
         NativeList<BldCap>           _bld;    // 런별 건물 캐퍼 스냅샷(관리형 부하 b 입력)
         NativeHashMap<Entity, float> _util;   // 백 버퍼: 오라 건물 → 가동률 min(1,b/a)(숙련 성장률)
         NativeHashMap<Entity, int>   _load;   // 백 버퍼: 오라 건물 → 감당중 b(범위 내 건물 캐퍼 합)
+        NativeHashMap<Entity, int>   _overHours; // 과부하 감사: 시설 → 연속 과부하 발행 횟수(≈시간)
         JobHandle _handle;
         bool      _running;
         bool      _everBuilt;
+
+        // ⚠ 밸런스 상수(과부하 감사 3안 v1, 2026-07-16):
+        //   과부하 = b/a > Num/Den(=1.5배)가 Sustain회 발행(≈게임시간) 연속 — 교대·배치 직후
+        //   과도기 노이즈 흡수(hysteresis). 초과 인원 상한 = 시설·시간당 200 —
+        //   AiCityGrowth.DemandActThreshold(20 델타) 대비 첫 발행에 트리거 가능한 규모.
+        const int OverloadNum = 3, OverloadDen = 2;   // b·Den > a·Num ⇔ b/a > 1.5
+        const int OverloadSustainHours = 3;
+        const int OverloadSampleCap    = 200;
 
         public void OnCreate(ref SystemState state)
         {
@@ -70,6 +81,7 @@ namespace CitySim
             _back = new NativeHashMap<int4, int>(1024, Allocator.Persistent);
             _util = new NativeHashMap<Entity, float>(64, Allocator.Persistent);
             _load = new NativeHashMap<Entity, int>(64, Allocator.Persistent);
+            _overHours = new NativeHashMap<Entity, int>(64, Allocator.Persistent);
 
             if (!SystemAPI.HasSingleton<AuraCoverage>())
             {
@@ -98,6 +110,14 @@ namespace CitySim
                     Version = 0,
                 });
             }
+            if (!SystemAPI.HasSingleton<AuraOverloadLog>())
+            {
+                var e = state.EntityManager.CreateEntity(typeof(AuraOverloadLog));
+                state.EntityManager.SetComponentData(e, new AuraOverloadLog
+                {
+                    Window = new NativeHashMap<int4, int>(32, Allocator.Persistent),
+                });
+            }
         }
 
         public void OnDestroy(ref SystemState state)
@@ -111,6 +131,7 @@ namespace CitySim
             if (_back.IsCreated) _back.Dispose();
             if (_util.IsCreated) _util.Dispose();
             if (_load.IsCreated) _load.Dispose();
+            if (_overHours.IsCreated) _overHours.Dispose();
             if (SystemAPI.HasSingleton<AuraCoverage>())
             {
                 var ac = SystemAPI.GetSingleton<AuraCoverage>();
@@ -126,6 +147,11 @@ namespace CitySim
                 var u = SystemAPI.GetSingleton<AuraUtilization>();
                 if (u.Map.IsCreated) u.Map.Dispose();
             }
+            if (SystemAPI.HasSingleton<AuraOverloadLog>())
+            {
+                var ol = SystemAPI.GetSingleton<AuraOverloadLog>();
+                if (ol.Window.IsCreated) ol.Window.Dispose();
+            }
         }
 
         public void OnUpdate(ref SystemState state)
@@ -137,7 +163,7 @@ namespace CitySim
                 _handle.Complete();
 
                 // 발행 전 전체 잡 동기화(확립 패턴 — 재개발과 동일 사유): front 맵을 **원시
-                //   컨테이너로 캡처**한 리더 잡(SafetyTickJob·CollectSafetyDemandJob)은 잡 쿼리에
+                //   컨테이너로 캡처**한 리더 잡(SafetyTickJob·CollectAuraDemandJob)은 잡 쿼리에
                 //   AuraCoverage 타입이 없어 컴포넌트 의존성 추적을 벗어난다 → GetSingletonRW로도
                 //   완료가 강제되지 않음(실측 InvalidOperationException, 2026-07-12). 발행은
                 //   게임 시간당 1회라 전체 동기화 비용은 무시 가능.
@@ -172,6 +198,52 @@ namespace CitySim
                     utilMap.Map[ukv.Keys[i]] = ukv.Values[i];
                 ukv.Dispose();
                 utilMap.Version++;
+
+                // ── 과부하 감사(3안, 2026-07-16): 지속 과부하 시설 → 증설 수요 로그 ──
+                //   겹침이 pm≥ServiceAdequate를 유지하면 d<1 불평(시민 채널)이 침묵하는 사각지대
+                //   (파괴로 이웃 부하 폭증 / 밀도 성장의 후발 과부하)를 부하 b/a로 직접 감지.
+                //   b/a > 임계가 Sustain회(≈게임시간) 연속이면 초과 인원(b−a)을 AuraOverloadLog에
+                //   기록 → DemandAggregation이 Cause=Full(증설)로 드레인. a=0(무근무)은 제외 —
+                //   커버 자체가 없어(pm=0) 시민 NoCoverage 채널이 직접 잡는다.
+                //   ★자기종결 = 셀 d★: b는 기하 부하(반경 내 캐퍼 합, 백업 모델 = 비분담)라 증설로
+                //   안 줄어든다 — b/a만 보면 영구 발화(난립). 그래서 origin 셀의 **합산 d가 이 시설의
+                //   authored 품질에 이미 도달**(이웃 오라가 열화를 흡수)이면 발화 억제. 신설 1채가
+                //   셀 d를 회복시켜 감사를 멈춘다(attempts/재개발 캡은 최후 백스톱).
+                ref var overLog = ref SystemAPI.GetSingletonRW<AuraOverloadLog>().ValueRW;
+                for (int i = 0; i < _srcs.Length; i++)
+                {
+                    var src = _srcs[i];
+                    long a = (long)src.WorkerCount * src.PerWorker;
+                    _load.TryGetValue(src.Ent, out int bLoad);
+                    bool over = a > 0 && (long)bLoad * OverloadDen > a * OverloadNum;
+                    if (!over) { _overHours.Remove(src.Ent); continue; }
+
+                    _overHours.TryGetValue(src.Ent, out int h);
+                    _overHours[src.Ent] = ++h;
+                    if (h < OverloadSustainHours) continue;   // hysteresis — 과도기 노이즈 흡수
+
+                    // 자기종결: origin 셀 합산 d ≥ 이 시설의 authored 품질 → 증설 불필요(억제).
+                    int reliefBit = math.tzcnt(src.Relief);
+                    _back.TryGetValue(new int4(src.Owner, src.Origin.x, src.Origin.y, reliefBit),
+                                      out int pmHere);
+                    if (pmHere >= math.min(1000, src.Quality * 10)) continue;
+
+                    int2 dc   = DemandGrid.ToCell(src.Origin);
+                    var  okey = new int4(src.Owner, dc.x, dc.y, reliefBit);
+                    int excess = (int)math.min(bLoad - a, OverloadSampleCap);
+                    overLog.Window.TryGetValue(okey, out int curN);
+                    overLog.Window[okey] = math.min(curN + excess, OverloadSampleCap);
+                }
+                // 사라진 시설(파괴·점령)의 잔존 카운터 청소 — 엔티티 재사용 오염 방지.
+                if (_overHours.Count > 0)
+                {
+                    var alive = new NativeHashSet<Entity>(_srcs.Length, Allocator.Temp);
+                    for (int i = 0; i < _srcs.Length; i++) alive.Add(_srcs[i].Ent);
+                    var hk = _overHours.GetKeyArray(Allocator.Temp);
+                    for (int i = 0; i < hk.Length; i++)
+                        if (!alive.Contains(hk[i])) _overHours.Remove(hk[i]);
+                    hk.Dispose(); alive.Dispose();
+                }
 
                 _srcs.Dispose();
                 _bld.Dispose();
@@ -303,7 +375,11 @@ namespace CitySim
                     if (a <= 0 || src.Quality <= 0) dp = 0;                        // 무근무·미authoring → 무커버
                     else if (load <= 0) dp = math.min(1000, src.Quality * 10);     // 부하 없음 → full(Quality)
                     else dp = (int)math.clamp(src.Quality * 10f * math.min(1f, (float)a / load), 0f, 1000f);
-                    if (dp <= 0) continue;
+                    // dp=0(무근무·품질0)도 **값 0 엔트리로 원형을 남긴다**(잠재 커버, 2026-07-17):
+                    //   시민 수요 채널이 "시설 없음(NoCoverage=신설)"과 "시설 있는데 무서비스
+                    //   (Unstaffed=고용 소관, 비건설)"를 구분하는 근거 — 무근무 병원 옆에 병원을
+                    //   무한 증설하던 폭주 차단. 병합식(cur+0)이 기존 양수를 보존하고 부재만 0으로
+                    //   채우므로 소비자(비례 완화·HUD pm>0 게이트)는 무영향.
                     int reliefBit = math.tzcnt(src.Relief);
 
                     int2 lo = src.Origin - new int2(r, r);

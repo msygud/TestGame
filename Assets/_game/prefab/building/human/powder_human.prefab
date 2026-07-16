@@ -105,12 +105,14 @@ MonoBehaviour:
   Kind: 0
   Capacity: 1
   ProvidedJob: 4
-  WorkerSlots: 4
+  WorkerSlots: 8
   ReliefRaw: 0
   SupplyMaxDist: 15
   VisitorSlots: 0
   AuraReliefRaw: 0
   AuraRadius: 0
+  AuraPerWorkerCoverage: 100
+  AuraQuality: 80
   ProductionOutput: 2
   Stocks:
   - Commodity: 1

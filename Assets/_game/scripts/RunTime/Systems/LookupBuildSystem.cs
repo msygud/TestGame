@@ -79,6 +79,7 @@ namespace CitySim
             var capability = new NativeHashMap<int, ulong>(128, Allocator.Temp);
             var production = new NativeHashMap<int, int>(128, Allocator.Temp);   // MainKey → (int)Commodity
             var auraKeys   = new NativeHashMap<int, int>(16, Allocator.Persistent);   // 오라 키→반경(③④와 동거)
+            var workerNeeds = new NativeHashMap<int, int>(32, Allocator.Persistent);  // 키→근무 정원(노동 게이트)
             int warehouseKey = 0;                                                 // WarehouseTag 보유 최소 키
             foreach (var kv in lookup.Table)
             {
@@ -93,6 +94,11 @@ namespace CitySim
                     relief |= (ulong)auraCap.Relief;
                     auraKeys.TryAdd(mainKey, auraCap.Radius);
                 }
+                // 근무 정원 파생(노동 게이트, 2026-07-17) — 유인 건물만(무인 = 미등록).
+                if (em.HasComponent<WorkplaceBuilding>(kv.Value)
+                    && em.HasComponent<BuildingOccupancy>(kv.Value))
+                    workerNeeds.TryAdd(mainKey,
+                        em.GetComponentData<BuildingOccupancy>(kv.Value).Capacity);
                 capability.TryAdd(mainKey, relief);
 
                 // 다지기 ③·④ 파생 원천: 생산 출력 / 창고 여부(능력 컴포넌트).
@@ -142,18 +148,23 @@ namespace CitySim
             {
                 var pe = em.CreateEntity(typeof(ProducerLookup));
                 em.SetComponentData(pe, new ProducerLookup
-                { Table = producerTable, WarehouseMainKey = warehouseKey, AuraKeys = auraKeys });
+                {
+                    Table = producerTable, WarehouseMainKey = warehouseKey,
+                    AuraKeys = auraKeys, WorkerNeeds = workerNeeds,
+                });
             }
             else if (prefabsChanged)
             {
                 ref var pl = ref SystemAPI.GetSingletonRW<ProducerLookup>().ValueRW;
-                if (pl.Table.IsCreated)    pl.Table.Dispose();
-                if (pl.AuraKeys.IsCreated) pl.AuraKeys.Dispose();
+                if (pl.Table.IsCreated)       pl.Table.Dispose();
+                if (pl.AuraKeys.IsCreated)    pl.AuraKeys.Dispose();
+                if (pl.WorkerNeeds.IsCreated) pl.WorkerNeeds.Dispose();
                 pl.Table            = producerTable;
                 pl.WarehouseMainKey = warehouseKey;
                 pl.AuraKeys         = auraKeys;
+                pl.WorkerNeeds      = workerNeeds;
             }
-            else { producerTable.Dispose(); auraKeys.Dispose(); }   // 팩션만 추가된 갱신 — 기존 유지
+            else { producerTable.Dispose(); auraKeys.Dispose(); workerNeeds.Dispose(); }   // 팩션만 추가된 갱신 — 기존 유지
 
             // ── 3-a) 재파생 시 기존 팩션 L2 재구성(테이블 교체, 누수 없음) ──
             int rebuilt = 0;
@@ -207,8 +218,9 @@ namespace CitySim
             if (SystemAPI.HasSingleton<ProducerLookup>())
             {
                 var pl = SystemAPI.GetSingleton<ProducerLookup>();
-                if (pl.Table.IsCreated)    pl.Table.Dispose();
-                if (pl.AuraKeys.IsCreated) pl.AuraKeys.Dispose();
+                if (pl.Table.IsCreated)       pl.Table.Dispose();
+                if (pl.AuraKeys.IsCreated)    pl.AuraKeys.Dispose();
+                if (pl.WorkerNeeds.IsCreated) pl.WorkerNeeds.Dispose();
             }
         }
 

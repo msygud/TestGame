@@ -153,7 +153,10 @@ namespace CitySim
             {
                 var colA = CAura; colA.a = 0.22f;
                 foreach (var kv in auraCov.Map)
+                {
+                    if (kv.Value <= 0) continue;   // 잠재 커버(무근무 0 엔트리, 2026-07-17) — 실서비스만 표시
                     AddCell(new int2(kv.Key.y, kv.Key.z), cs, 0.042f, colA);
+                }
             }
 
             foreach (var kv in road)

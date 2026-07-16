@@ -53,16 +53,16 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CitySim.Authoring.BuildingAuthoring
   Kind: 0
-  Capacity: 1
+  Capacity: 0
   ProvidedJob: 6
-  WorkerSlots: 50
+  WorkerSlots: 30
   ReliefRaw: 524288
-  SupplyMaxDist: 15
-  VisitorSlots: 100
+  SupplyMaxDist: 17
+  VisitorSlots: 30
   AuraReliefRaw: 512
-  AuraRadius: 30
+  AuraRadius: 20
   AuraPerWorkerCoverage: 50
-  AuraQuality: 100
+  AuraQuality: 60
   ProductionOutput: 0
   Stocks: []
   IsWarehouse: 0

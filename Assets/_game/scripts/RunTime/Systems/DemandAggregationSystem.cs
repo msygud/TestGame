@@ -106,8 +106,18 @@ namespace CitySim
                 missLog.Window.Clear();
             }
 
-            // (구 v1.5 오라 과밀 신호 AuraOverfullLog 드레인 은퇴 — 2026-07-16 관리형 통일:
-            //   증설 수요는 이제 CollectSafetyDemandJob이 d<1 불평 시민을 현재 셀에 직접 샘플한다.)
+            // 오라 과부하 감사 창(3안, 2026-07-16): AuraCoverageSystem이 시간당 기록한 지속
+            //   과부하(시설 셀, relief) → 초과 인원. **Cause=Full(만석=증설)**로 변환 — d<1 불평
+            //   채널이 겹침(pm≥적정) 탓에 침묵하는 사각지대(시설 파괴·후발 밀도 과부하) 보완.
+            //   Full 수요는 실측(2026-07-16)대로 커버 안에 착지(증설)하고, 폐쇄 도심은 재개발
+            //   escalation이 자리를 낸다. 초과 인원만큼 큐잉 = 시민 채널의 재실 비례와 동등 가중.
+            if (SystemAPI.TryGetSingleton<AuraOverloadLog>(out var overLog) && overLog.Window.IsCreated)
+            {
+                foreach (var kv in overLog.Window)
+                    for (int i = 0; i < kv.Value; i++)
+                        _keys.Enqueue(new DemandSample { Key = kv.Key, Cause = 1 });
+                overLog.Window.Clear();
+            }
 
             var collectH = new CollectDemandJob
             {
@@ -116,13 +126,15 @@ namespace CitySim
                 Samples  = _keys.AsParallelWriter(),
             }.ScheduleParallel(state.Dependency);
 
-            // 커버형 욕구 채널(치안, 관리형 d<1 불평 2026-07-16): 추구/방문 파이프라인을 안 타므로 위
-            //   CollectDemandJob(미충족=Pursuing 기반)이 못 본다 — **현재 셀의 서비스 품질 d가 적정
-            //   미만인 시민**을 그 셀에 직접 샘플(present-based 자연 중화). 커버 좋으면(d≥ServiceAdequate)
-            //   무샘플 → AI가 안 지음(품질·반경·근무자 올리면 d↑ → 미달 셀↓ → 건설 수↓). 오라 front
-            //   맵 [ReadOnly] 캡처(발행측 CompleteAllTrackedJobs로 안전 — AuraCoverageSystem 참조).
+            // 커버형(관리형 오라) 수요 채널(d<1 불평 2026-07-16, 제네릭화 — 치안+헬스케어): 추구/방문
+            //   파이프라인을 안 타므로 위 CollectDemandJob(미충족=Pursuing 기반)이 못 본다 — **현재 셀의
+            //   서비스 품질 d가 적정 미만인 시민**을 그 셀에 직접 샘플(present-based 자연 중화). 커버
+            //   좋으면(d≥ServiceAdequate) 무샘플 → AI가 안 지음(품질·반경·근무자 올리면 건설 수↓).
+            //   ※ 헬스케어 합류(2026-07-16 유저 실측 픽스): 병원 전멸/구멍 시 헬스케어=0인데 아무 수요도
+            //   없던 비대칭(치안만 배선) 제거 — 이제 병원도 경찰처럼 커버 구멍이 재건을 부른다(재개발 포함).
+            //   오라 front 맵 [ReadOnly] 캡처(발행측 CompleteAllTrackedJobs로 안전 — AuraCoverageSystem 참조).
             if (SystemAPI.TryGetSingleton<AuraCoverage>(out var aura) && aura.Map.IsCreated)
-                collectH = new CollectSafetyDemandJob
+                collectH = new CollectAuraDemandJob
                 {
                     FpLookup = SystemAPI.GetComponentLookup<BuildingFootprint>(true),
                     Aura     = aura.Map,
@@ -193,15 +205,18 @@ namespace CitySim
     // (구 CollectSupplyDemandJob은 2b에서 메인스레드 수집으로 이관 — OnUpdate 인라인 + SupplyHasWarehouseCoverage.
     //  이유: 연결 수요가 stamp를 읽는데 백그라운드 폴링 잡이 라이브 stamp를 들면 StampRebuild 쓰기와 충돌.)
 
-    // ── ①-b 커버형 욕구(치안) 수집 — "현재 위치 미커버 + 불안" 시민 → NoCoverage 샘플 ──
+    // ── ①-b 커버형(관리형 오라) 수요 수집 — "현재 위치 서비스 미달" 시민 → NoCoverage 샘플 ──
     //   판정 위치 = 현재 건물(2026-07-12 유저 재설계, SafetySystem과 동일 기준): 집 고정
-    //   판정은 커버 수요를 주거지로만 쏠리게 함 — 직장에서 불안한 시민은 **직장 셀**에
-    //   수요를 남겨 경찰서가 상업·산업 지구에도 선다. 커버면 샘플 없음(해소 진행 중).
+    //   판정은 커버 수요를 주거지로만 쏠리게 함 — 직장에서 미달인 시민은 **직장 셀**에
+    //   수요를 남겨 시설이 상업·산업 지구에도 선다. 커버면 샘플 없음(해소 진행 중).
     //   이동 중(CurrentBuilding=Null)은 위치 특정 불가라 제외.
     //   셀당 1샘플/초 가중 = 시민·물류 채널과 동등. 임계/블랙리스트/재기준선 기계 재사용.
+    //   제네릭(2026-07-16): 치안 하드코딩 → 관리형 서비스 비트 목록(치안+헬스케어). 새 관리형
+    //   서비스(행정·소방·환경) = 아래 한 줄 추가. 게이트 WithAll(CitizenSafety)은 "휴먼 시민"
+    //   대용(팩션 비대칭 도입 시 서비스별 보유 컴포넌트로 분기 검토).
     [BurstCompile]
     [WithAll(typeof(CitizenTag), typeof(CitizenSafety))]
-    public partial struct CollectSafetyDemandJob : IJobEntity
+    public partial struct CollectAuraDemandJob : IJobEntity
     {
         [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
         [ReadOnly] public NativeHashMap<int4, int> Aura;   // int4(owner,x,y,reliefBit)→품질 permille
@@ -214,7 +229,7 @@ namespace CitySim
 
         void Execute(in CitizenState st)
         {
-            // d<1 불평(유저 모델): 지금 있는 건물 셀의 치안 서비스 품질 d가 적정 미만이면 그 셀에 샘플.
+            // d<1 불평(유저 모델): 지금 있는 건물 셀의 서비스 품질 d가 적정 미만이면 그 셀에 샘플.
             //   present-based(재실 인원 비례 = 자연 중화). d≥적정이면 무샘플 → **커버된 셀은 수요 0**
             //   (구 IsActive 게이트의 팬텀 — 커버 셀 도착 시 잔여 불안이 샘플되던 문제 — 제거).
             //   WHERE = 시민 현재 셀, 자기종결(증설→커버↑→미달 셀↓→수요↓).
@@ -222,15 +237,28 @@ namespace CitySim
             if (at == Entity.Null || !FpLookup.HasComponent(at)) return;
             var fp = FpLookup[at];
 
-            int bit = math.tzcnt((ulong)NeedType.HighCrime);
-            Aura.TryGetValue(new int4(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y, bit), out int pm);
+            // 관리형 서비스 비트 목록 — 새 서비스 = 한 줄(비트가 L2 자동 파생으로 해석 가능해야:
+            //   프리팹 AuraSupplier.Relief에 그 비트가 있으면 자동).
+            SampleIfInadequate(in fp, NeedType.HighCrime);        // 치안(경찰)
+            SampleIfInadequate(in fp, NeedType.PoorHealthcare);   // 헬스케어(병원 오라, 2026-07-16 합류)
+        }
+
+        void SampleIfInadequate(in BuildingFootprint fp, NeedType service)
+        {
+            int bit = math.tzcnt((ulong)service);
+            bool present = Aura.TryGetValue(
+                new int4(fp.OwnerLocalId, fp.Origin.x, fp.Origin.y, bit), out int pm);
             if (pm >= ServiceAdequate) return;   // 적정 이상 커버 → 불평 없음(팬텀 방지·밸런스 반영)
 
+            // 사유 분기(2026-07-17, 무근무 병원 폭주 픽스): 엔트리 존재(잠재 커버 = 시설이 반경
+            //   안에 있음) + 미달 = **Unstaffed**(무근무·무품질 — remedy는 고용, 건설 아님 →
+            //   빌드 트리거 제외, F12 가시화만). 엔트리 부재 = 진짜 시설 없음 = NoCoverage(신설).
+            //   구분 없으면 무근무 시설 옆에 같은 시설이 무한 증설된다(신설도 무근무 → 재귀).
             int2 dcell = DemandGrid.ToCell(fp.Origin);
             Samples.Enqueue(new DemandSample
             {
                 Key   = new int4(fp.OwnerLocalId, dcell.x, dcell.y, bit),
-                Cause = 0,   // NoCoverage — 신설/증설 수요(WHERE = 시민의 현재 위치)
+                Cause = (byte)(present ? 3 : 0),   // 3=Unstaffed(비건설) / 0=NoCoverage(신설)
             });
         }
     }

@@ -86,6 +86,12 @@ namespace CitySim
         //   주택을 철거해 구멍을 낸 횟수. (owner,셀,res)당 RedevelopCap 한도(thrash 방지). 세션 지속.
         NativeHashMap<int4, int> _redevelopAttempts;
 
+        // 재개발 홀드(2026-07-16): 철거로 비운 창 내부 셀 → 만료 게임시각. 도로 철거는 RoadSystem
+        //   위임(다음 틱 반영)이라, 그 사이 주택 채우기(DevelopParcels)가 빈터를 선점하면 thrash —
+        //   홀드 셀은 주택이 건너뛰고 **수요 건물 배치는 면제**(비운 목적 그대로). 세션 지속.
+        NativeHashMap<int2, double> _redevelopHold;
+        NativeHashSet<int2>         _holdSnap;   // 런별 비만료 스냅샷(GrowthJob [ReadOnly])
+
         // (owner,resId) → 풀 경로(commodity) 증설 쿨다운 만료 게임시각(P v2). 새 생산자의 효과
         //   (고용→생산→풀 유입)가 흐름 창에 반영되기까지 재증설 금지 — 기준선 개념이 없는 풀 전용.
         NativeHashMap<int2, double> _poolCooldown;
@@ -113,6 +119,7 @@ namespace CitySim
             _demandAttempts = new NativeHashMap<int4, int>(64, Allocator.Persistent);
             _cellSeen = new NativeHashMap<int4, int>(256, Allocator.Persistent);
             _redevelopAttempts = new NativeHashMap<int4, int>(64, Allocator.Persistent);
+            _redevelopHold = new NativeHashMap<int2, double>(64, Allocator.Persistent);
             _demandRebaselineAt = new NativeHashMap<int2, double>(64, Allocator.Persistent);
             _poolCooldown = new NativeHashMap<int2, double>(64, Allocator.Persistent);
             _pendingWarehouse = new NativeHashMap<int, int2>(8, Allocator.Persistent);
@@ -144,6 +151,7 @@ namespace CitySim
             if (_demandAttempts.IsCreated) _demandAttempts.Dispose();
             if (_cellSeen.IsCreated) _cellSeen.Dispose();
             if (_redevelopAttempts.IsCreated) _redevelopAttempts.Dispose();
+            if (_redevelopHold.IsCreated) _redevelopHold.Dispose();
             if (_demandRebaselineAt.IsCreated) _demandRebaselineAt.Dispose();
             if (_poolCooldown.IsCreated) _poolCooldown.Dispose();
             if (_pendingWarehouse.IsCreated) _pendingWarehouse.Dispose();
@@ -302,6 +310,15 @@ namespace CitySim
             bool haveDistricts = SystemAPI.TryGetSingleton<DistrictTable>(out var dtable)
                                  && dtable.Stats.IsCreated;
 
+            // 무직 노동력(owner별) — 노동 게이트 입력(2026-07-17): 고용 대기(JobSeekerTag) 시민 수.
+            //   수요 건설은 정원을 채울 노동력이 있을 때만 후보 — "일할 사람 없는데 부수 건물만
+            //   늘림"(무근무 건물 양산) 역전 차단 = 인구 주도 성장. 집 대기자도 포함(곧 노동력).
+            var unemployed = new NativeArray<int>(8, Allocator.Temp);
+            foreach (var (jobRO, ownerSh) in
+                     SystemAPI.Query<RefRO<JobData>, OwnerShared>()
+                              .WithAll<CitizenTag, JobSeekerTag>())
+                if ((uint)ownerSh.LocalId < 8) unemployed[ownerSh.LocalId]++;
+
             if (SystemAPI.TryGetSingleton<DemandField>(out var demandField) && demandField.Stats.IsCreated)
             {
                 NeedLookupL2 l2 = default; bool haveL2 = false;
@@ -309,7 +326,7 @@ namespace CitySim
                 { l2 = lk.ValueRO; haveL2 = true; break; }
 
                 // L2 없어도(재베이크 전) 하드코딩 폴백이 돌도록 항상 호출.
-                var redevelopReqs = new NativeList<int3>(8, Allocator.Temp);
+                var redevelopReqs = new NativeList<int4>(8, Allocator.Temp);   // (owner,x,y, 목표크기 sx<<8|sy)
                 bool havePool = SystemAPI.TryGetSingleton<LogisticsPool>(out var lpool);
                 // 생산/창고 파생 결정 테이블(다지기 ③·④) — 없으면(초기화 전) 하드코딩 폴백.
                 bool haveProducer = SystemAPI.TryGetSingleton<ProducerLookup>(out var prodLookup)
@@ -318,7 +335,7 @@ namespace CitySim
                     in warehouseCells, ref redevelopReqs,
                     clock.TotalSeconds, clock.SecondsPerDay / 24f, havePool, lpool,
                     haveProducer, prodLookup,
-                    in dtable, haveDistricts, in teams);
+                    in dtable, haveDistricts, in teams, in unemployed);
 
                 // 철거-후-건설 실행(메인, SnapshotJob 전 → 같은 틱 스냅샷에 구멍 반영):
                 //   요청 target 근처 최근접 **주택**을 철거(셀 즉시 해제 + destroy + StampDirty) → 스냅샷에
@@ -338,14 +355,27 @@ namespace CitySim
                     var gm     = hasGm ? SystemAPI.GetSingleton<GridMap>() : default;
                     var rdEcb  = new EntityCommandBuffer(Allocator.Temp);
 
+                    // 같은 틱 복수 요청이 같은 주택을 겹쳐 철거하지 않게(ECB 이중 Destroy 방지).
+                    var razed = new NativeHashSet<Entity>(16, Allocator.Temp);
                     for (int r = 0; r < redevelopReqs.Length; r++)
                     {
                         var req    = redevelopReqs[r];
                         int rOwner = req.x;
                         int2 tgt   = new int2(req.y, req.z);
+                        int2 need  = new int2(req.w >> 8, req.w & 0xFF);
+                        if (need.x <= 0 || need.y <= 0) need = new int2(2, 2);   // 방어(크기 미상)
 
-                        Entity best = Entity.Null; int2 bestOrigin = default, bestEff = default;
-                        long bestD = long.MaxValue;
+                        // ── 크기 인지 면적 철거(2026-07-16, 유저 실측 픽스) ──
+                        //   구 "최근접 주택 1채"는 목표 footprint를 안 봐서, 목표가 주택(최소 크기)보다
+                        //   크면 구멍이 항상 부족 — 집만 부수고 못 짓는 낭비 루프(RedevelopCap 소진 →
+                        //   블랙리스트 → 영구 실패). 전투 밀당 후 "주택만 남는" 원인.
+                        //   픽스 = 목표 크기(회전 미정 → max변 정사각) + 여유 1칸 창을 tgt 중심으로 잡고,
+                        //   창과 교차하는 **모든** 주택 철거 → 같은 틱 인테리어 배치가 fit 가능한 구멍 확보.
+                        //   도로는 그대로(입구 접면 보존). 거주민은 DeadReferenceReclaim 재하우징(누수 없음).
+                        int half = (math.max(need.x, need.y) + 1) / 2 + 1;
+                        int2 wlo = tgt - half, whi = tgt + half;
+
+                        int cleared = 0;
                         // WithNone<WorkplaceBuilding>(2026-07-12): 거주+고용 동시 보유는 정상 경로에
                         //   없음(authoring이 경고) — 과거 맨 우클릭 오태그(Test.cs)로 ResidenceBuilding이
                         //   붙은 창고·식당·생산자를 재개발이 "주택"으로 오인해 철거하던 구멍 봉인.
@@ -356,37 +386,89 @@ namespace CitySim
                                      .WithEntityAccess())
                         {
                             var bf = bfRO.ValueRO;
-                            if (bf.OwnerLocalId != rOwner) continue;
+                            if (bf.OwnerLocalId != rOwner || razed.Contains(e)) continue;
                             int2 eff = EntranceOps.RotateSize(bf.Size, bf.RotSteps);
-                            int2 c   = bf.Origin + eff / 2;
-                            long dx = c.x - tgt.x, dy = c.y - tgt.y;
-                            long d  = dx * dx + dy * dy;
-                            if (d < bestD) { bestD = d; best = e; bestOrigin = bf.Origin; bestEff = eff; }
+                            // 창-footprint AABB 교차 — 안 겹치면 스킵.
+                            if (bf.Origin.x > whi.x || bf.Origin.x + eff.x - 1 < wlo.x ||
+                                bf.Origin.y > whi.y || bf.Origin.y + eff.y - 1 < wlo.y) continue;
+
+                            for (int dx = 0; dx < eff.x; dx++)
+                            for (int dz = 0; dz < eff.y; dz++)
+                            {
+                                int2 cell = bf.Origin + new int2(dx, dz);
+                                occ.Remove(cell);
+                                if (hasGm) gm.BuildingCells.Remove(cell);
+                            }
+                            rdEcb.DestroyEntity(e);
+                            razed.Add(e);
+                            cleared++;
                         }
 
-                        const long RedevelopRangeSq = 32 * 32;   // 너무 먼 주택은 철거해도 헛일 → 스킵
-                        if (best == Entity.Null || bestD > RedevelopRangeSq) continue;
-
-                        for (int dx = 0; dx < bestEff.x; dx++)
-                        for (int dz = 0; dz < bestEff.y; dz++)
+                        // ── 창 내부 도로 철거(2026-07-16, 유저: 주택 구획 4×4 링이 그보다 큰
+                        //   시설의 fit을 영구 차단) ── 경계 링은 보존(생존 이웃 입구 접면 + 새 건물
+                        //   입구 프런티지). 자기 도로만(남의 도로 불가침) + 생존 건물과 접한 도로 셀
+                        //   보존(입구 상실 방지 — 창 내 주택은 이미 gm에서 제거돼 자동 통과). 철거는
+                        //   RoadSystem 위임(Forced RemoveRoadCommand — footprint·이웃 비트·stamp 정리,
+                        //   전투 정리 BuildingDeathCleanup과 동일 경로) → RoadLayer 반영은 명령 처리 후
+                        //   = 이번 틱 배치는 못 쓰고 **다음 결정 틱**에 fit. 그 공백의 주택 선점은
+                        //   아래 재개발 홀드가 차단.
+                        var roads = layers.RoadLayer;
+                        var roadDone = new NativeHashSet<int2>(16, Allocator.Temp);   // footprint 중복 방지
+                        int roadCut = 0;
+                        for (int y = wlo.y + 1; y <= whi.y - 1; y++)
+                        for (int x = wlo.x + 1; x <= whi.x - 1; x++)
                         {
-                            int2 cell = bestOrigin + new int2(dx, dz);
-                            occ.Remove(cell);
-                            if (hasGm) gm.BuildingCells.Remove(cell);
+                            int2 c = new int2(x, y);
+                            if (!roads.TryGetValue(c, out var rc)) continue;
+                            if (rc.OwnerLocalId != rOwner) continue;
+                            if (roadDone.Contains(rc.FootprintOrigin)) continue;
+                            bool adjBld = hasGm &&
+                                (gm.BuildingCells.ContainsKey(c + new int2( 1, 0))
+                               || gm.BuildingCells.ContainsKey(c + new int2(-1, 0))
+                               || gm.BuildingCells.ContainsKey(c + new int2( 0, 1))
+                               || gm.BuildingCells.ContainsKey(c + new int2( 0,-1)));
+                            if (adjBld) continue;   // 생존 건물의 (잠재) 입구 도로 — 보존
+                            roadDone.Add(rc.FootprintOrigin);
+                            var rce = rdEcb.CreateEntity();
+                            rdEcb.AddComponent(rce, new RemoveRoadCommand
+                            { Cell = rc.FootprintOrigin, OwnerLocalId = -1, Forced = 1 });
+                            roadCut++;
                         }
-                        rdEcb.DestroyEntity(best);
-                        var de = rdEcb.CreateEntity();
-                        rdEcb.AddComponent(de, new StampDirtyEvent { OwnerLocalId = rOwner });
+                        roadDone.Dispose();
+
+                        // ── 재개발 홀드: 비운 창 내부를 만료 시각까지 예약 — 주택 채우기가 건너뛰고
+                        //   수요 건물 배치는 면제(같은 틱 + 도로 반영 후 다음 틱 모두 보호). ──
+                        if (cleared > 0 || roadCut > 0)
+                        {
+                            double holdUntil = clock.TotalSeconds
+                                + RedevelopHoldHours * (clock.SecondsPerDay / 24f);
+                            for (int y = wlo.y + 1; y <= whi.y - 1; y++)
+                            for (int x = wlo.x + 1; x <= whi.x - 1; x++)
+                                _redevelopHold[new int2(x, y)] = holdUntil;
+                        }
+
                         // 파괴 원인 추적(2026-07-11): 재개발은 주택(ResidenceBuilding)만 — 창고가 사라지면
-                        //   이 로그가 아니라 [Capture]/[Raze] 쪽이다.
-                        Debug.Log($"[CityAI] P{rOwner} 재개발 철거(주택) origin={bestOrigin} target={tgt}");
+                        //   이 로그가 아니라 [Capture]/[Raze] 쪽이다. 불발(창 내 주택 0 = 비주택 점유·빈터)은
+                        //   관찰 로그 — 반복되면 가치 계층(주택 외 철거) 검토 신호.
+                        if (cleared > 0 || roadCut > 0)
+                        {
+                            var de = rdEcb.CreateEntity();
+                            rdEcb.AddComponent(de, new StampDirtyEvent { OwnerLocalId = rOwner });
+                            Debug.Log($"[CityAI] P{rOwner} 재개발 철거(주택 {cleared}채 + 도로 {roadCut},"
+                                + $" 목표 {need.x}x{need.y}+여유 창) target={tgt}");
+                        }
+                        else
+                            Debug.Log($"[CityAI] P{rOwner} 재개발 불발: target={tgt} 창 내 주택·도로 0"
+                                + $" (목표 {need.x}x{need.y} — 비주택 점유?)");
                     }
+                    razed.Dispose();
 
                     rdEcb.Playback(state.EntityManager);
                     rdEcb.Dispose();
                 }
                 redevelopReqs.Dispose();
             }
+            unemployed.Dispose();
 
             warehouseCells.Dispose();
 
@@ -414,6 +496,19 @@ namespace CitySim
                 Out            = _districts,
             }.Schedule(copyH);
 
+            // 재개발 홀드 스냅샷(비만료만) — GrowthJob 주택 채우기(DevelopParcels)가 이 셀을
+            //   건너뜀(도로 철거 반영 지연 + 주택 선점 레이스 차단). 수요 건물 배치는 면제.
+            //   만료 항목은 같은 패스에서 청소(저빈도 DayChanged라 메인 비용 무시).
+            {
+                var expired = new NativeList<int2>(8, Allocator.Temp);
+                foreach (var kv in _redevelopHold)
+                    if (kv.Value <= clock.TotalSeconds) expired.Add(kv.Key);
+                for (int i = 0; i < expired.Length; i++) _redevelopHold.Remove(expired[i]);
+                expired.Dispose();
+            }
+            _holdSnap = new NativeHashSet<int2>(math.max(16, _redevelopHold.Count), Allocator.Persistent);
+            foreach (var kv in _redevelopHold) _holdSnap.Add(kv.Key);
+
             _growthHandle = new GrowthJob
             {
                 Snap         = _snap,
@@ -427,6 +522,7 @@ namespace CitySim
                 WhDistricts  = _whDistricts,
                 SupDistricts = _supDistricts,
                 AuraDistricts= _auraDistricts,
+                HoldCells    = _holdSnap,
                 TargetOut    = _targetOut,
                 OptA         = optA,
                 OptB         = optB,
@@ -514,6 +610,7 @@ namespace CitySim
             _whDistricts.Dispose();
             _supDistricts.Dispose();
             _auraDistricts.Dispose();
+            _holdSnap.Dispose();
             _targetOut.Dispose();
             _roadOut.Dispose();
             _bldOut.Dispose();
@@ -557,10 +654,11 @@ namespace CitySim
         //   ※ WHERE(수요셀)는 v1 미사용(WHAT-only). 아무 팩션 L2든 공통 매핑(FactionFlags=0) 보유.
         void ResolveDemandOptions(in DemandField df, NeedLookupL2 l2, bool haveL2,
             in PrefabMetaLookup metaLookup, in EntranceLookup entranceLookup,
-            in NativeList<int3> warehouseCells, ref NativeList<int3> redevelopReqs,
+            in NativeList<int3> warehouseCells, ref NativeList<int4> redevelopReqs,
             double now, float hourSeconds, bool havePool, LogisticsPool lpool,
             bool haveProducer, ProducerLookup prodLookup,
-            in DistrictTable dtable, bool haveDistricts, in TeamTable teamTable)
+            in DistrictTable dtable, bool haveDistricts, in TeamTable teamTable,
+            in NativeArray<int> unemployed)
         {
             var stats = df.Stats;
 
@@ -653,10 +751,12 @@ namespace CitySim
                     int delta = e.Value.Sum - last;
                     if (delta < DemandActThreshold) continue;      // 임계 미만은 후보 아님
 
-                    // 양적 미스(commodity) 후보 억제: 풀 재고비율 ≥80%면 결핍 신호는 잔상 → 건너뜀.
+                    // 양적 미스(commodity) 후보 억제: 재고가 **인구 목표**(P2, 2026-07-17 앵커 교체
+                    //   — 구 용량 80%)의 80% 이상이면 결핍 신호는 잔상 → 건너뜀. Target=0(인구 0)은
+                    //   게이트 안 함(부트스트랩 보호).
                     if (havePool && DemandResource.IsCommodity(res)
                         && lpool.Cells.TryGetValue(new int2(owner, (int)DemandResource.ToCommodity(res)), out var pc)
-                        && pc.Capacity > 0 && pc.Stored * 5 >= pc.Capacity * 4)
+                        && pc.Target > 0 && pc.Stored * 5 >= pc.Target * 4)
                         continue;
 
                     // 창고는 전용 레인으로 분리 — 수요 슬롯 tier 경쟁에서 제외(2026-07-11).
@@ -700,9 +800,13 @@ namespace CitySim
                         //   경쟁에서 이겨 팀의 수요 슬롯을 영구 점유(식당·생산자 수요 아사)할 수
                         //   있다. 프리팹 등록(L2 자동 파생) 즉시 자동 활성.
                         uint nm = 1u << res;
-                        bool resolvable = (haveL2 && LookupHelper.TryGetMainKey(nm, l2, out int rk) && rk > 0)
-                                          || HardcodedNeedMainKey(res) > 0;
-                        if (!resolvable) continue;
+                        int candKey = haveL2 && LookupHelper.TryGetMainKey(nm, l2, out int rk) && rk > 0
+                            ? rk : HardcodedNeedMainKey(res);
+                        if (candKey <= 0) continue;
+                        // 노동 게이트(2026-07-17): 정원을 채울 무직 노동력이 없으면 이번 틱 후보 아님
+                        //   (수요 유지 — 인구가 자라면 자동 재개, attempts 미증가 = 블랙리스트 무오염).
+                        if (LaborBlocked(candKey, owner, haveProducer, in prodLookup, in unemployed))
+                            continue;
 
                         int bestNc2 = 0; int2 pick2 = default;
                         foreach (var s in stats)
@@ -720,6 +824,17 @@ namespace CitySim
                         }
                         if (bestNc2 <= 0) continue;   // 전 셀 블랙리스트 — 침묵(로그 은퇴 2026-07-12)
                         domCell = pick2;
+                    }
+
+                    // 노동 게이트(commodity, 2026-07-17): 생산자 정원 대비 무직 부족이면 후보 제외 —
+                    //   무근무 생산자 양산(생산지 부족 오진) 재귀 차단. 욕구 채널과 동일 원칙.
+                    if (DemandResource.IsCommodity(res))
+                    {
+                        var cc = DemandResource.ToCommodity(res);
+                        int pKey = haveProducer && prodLookup.Table.TryGetValue((int)cc, out int pk)
+                            ? pk : HardcodedCommodityProducer(cc);
+                        if (LaborBlocked(pKey, owner, haveProducer, in prodLookup, in unemployed))
+                            continue;
                     }
 
                     int tier = ResourceTier(res);
@@ -758,7 +873,8 @@ namespace CitySim
                             _redevelopAttempts.TryGetValue(wakey, out int wredev);
                             if (wattempts >= RedevelopEscalate && wredev < RedevelopCap)
                             {
-                                redevelopReqs.Add(new int3(owner, whAnchor.x, whAnchor.y));
+                                redevelopReqs.Add(new int4(owner, whAnchor.x, whAnchor.y,
+                                    (wopt.Size.x << 8) | wopt.Size.y));   // 목표 footprint 동봉(크기 인지 철거)
                                 _redevelopAttempts[wakey] = wredev + 1;
                                 _demandAttempts[wakey]    = 0;
                             }
@@ -795,10 +911,16 @@ namespace CitySim
                         if (f.Value.In >= d) continue;             // 공급이 소비를 따라감 → 증설 불필요
                         lpool.Cells.TryGetValue(f.Key, out var pcell);
                         if (pcell.Stored >= d * PoolTargetFactor) continue;   // 목표재고(버퍼) 충분
-                        if (pcell.Capacity > 0 && pcell.Stored * 5 >= pcell.Capacity * 4) continue; // ≥80%
+                        // 인구 목표 80% 이상 = 비축 충분(P2, 2026-07-17 앵커 교체 — 구 용량 80%).
+                        if (pcell.Target > 0 && pcell.Stored * 5 >= pcell.Target * 4) continue;
                         int fres = DemandResource.ForCommodity((Commodity)f.Key.y);
                         if (_poolCooldown.TryGetValue(new int2(owner, fres), out double pu) && now < pu)
                             continue;                              // 직전 증설 효과 반영 대기
+                        // 노동 게이트(풀 흐름, 2026-07-17): 무직 부족이면 선제 증설도 보류(동일 원칙).
+                        int flowKey = haveProducer && prodLookup.Table.TryGetValue(f.Key.y, out int fpk)
+                            ? fpk : HardcodedCommodityProducer((Commodity)f.Key.y);
+                        if (LaborBlocked(flowKey, owner, haveProducer, in prodLookup, in unemployed))
+                            continue;
                         int ftier = ResourceTier(fres);
                         if (ftier < poolTier || (ftier == poolTier && d - f.Value.In > poolD - poolIn))
                         { poolTier = ftier; poolRes = fres; poolD = d; poolIn = f.Value.In; poolStored = pcell.Stored; }
@@ -911,13 +1033,15 @@ namespace CitySim
                 _demandAttempts[akey] = attemptsNow;
 
                 // 철거-후-건설 에스컬레이션: 인테리어+프런티어를 RedevelopEscalate회 시도해도 수요가 안 꺼지면
-                //   = 꽉 찬 도심(수요 근처에 빈 구획 없음) → whereCell 근처 주택 1채 철거 요청. 철거로 생긴
+                //   = 꽉 찬 도심(수요 근처에 빈 구획 없음) → whereCell 중심 **목표 크기+여유 창** 안의 주택
+                //   전부 철거 요청(2026-07-16 크기 인지 — 구 1채는 목표>주택이면 영구 fit 실패). 철거로 생긴
                 //   구멍을 같은 틱 GrowthJob 인테리어 배치가 채운다. thrash 가드: (owner,셀,res)당 RedevelopCap
                 //   한도 + 철거 시 attempts 리셋(새 구멍에 재배치 기회 → 블랙리스트에 안 걸림).
                 _redevelopAttempts.TryGetValue(akey, out int redev);
                 if (attemptsNow >= RedevelopEscalate && redev < RedevelopCap)
                 {
-                    redevelopReqs.Add(new int3(owner, whereCell.x, whereCell.y));
+                    redevelopReqs.Add(new int4(owner, whereCell.x, whereCell.y,
+                        (opt.Size.x << 8) | opt.Size.y));   // 목표 footprint 동봉(크기 인지 철거)
                     _redevelopAttempts[akey] = redev + 1;
                     _demandAttempts[akey]    = 0;
                 }
@@ -954,6 +1078,11 @@ namespace CitySim
         //   RedevelopCap      = (owner,셀,res)당 최대 철거 횟수(thrash 상한 — 도시 공동화 방지).
         const int RedevelopEscalate = 2;
         const int RedevelopCap      = 2;
+
+        // 재개발 홀드 유지 시간(게임시간, 2026-07-16) — 도로 철거(RoadSystem 위임) 반영 + 다음
+        //   결정 틱(DayChanged)의 수요 건물 배치까지 주택 선점을 막는 창. 결정 틱이 하루 1회 +
+        //   쿨다운 12h 재기준선 1틱을 고려해 3일. ⚠ 밸런스: 너무 길면 빈터 방치, 짧으면 thrash.
+        const float RedevelopHoldHours = 72f;
 
         // 지구 전략 평가(2026-07-11) — 확장 목표 지구 점수 = Room(개발 여지) + 자원·인접 가중
         //   ± 경쟁항(이웃 지구의 적 확장 프런트 × 가중). 가중 음수 = 회피(기본, 국경 churn 억제),
@@ -1100,6 +1229,20 @@ namespace CitySim
         //   프리팹에 BuildingAuthoring Relief가 채워지면 L2 행이 자동 생성돼 이 폴백은 침묵.
         //   전 건물 베이크 확인 후 삭제 예정.
         static int HardcodedNeedMainKey(int needBit) => needBit == 0 ? 1002 : 0;   // Hunger → restarant_h_small(1002)
+
+        // ── 노동 게이트(2026-07-17): 이 MainKey 건물(유인)의 근무 정원을 채울 무직 노동력이
+        //   부족하면 true(수요 후보 제외). 부분 충원도 기능하므로(StaffEffect 스칼라·오라 a=
+        //   근무자수×담당) 임계 = 정원/LaborGateDivisor(⚠ 밸런스, 최소 1). 무인 건물·미파생
+        //   (WorkerNeeds 미등록) = 게이트 없음. "일할 사람 없는데 부수 건물만" 역전 차단의 본체 —
+        //   무직이 생기면(이민·실직) 자동 재개, 수요는 그동안 계속 누적(사라지지 않음). ──
+        const int LaborGateDivisor = 4;
+        static bool LaborBlocked(int mainKey, int owner, bool haveProducer,
+            in ProducerLookup prodLookup, in NativeArray<int> unemployed)
+            => haveProducer && mainKey > 0
+               && prodLookup.WorkerNeeds.IsCreated
+               && prodLookup.WorkerNeeds.TryGetValue(mainKey, out int need)
+               && (uint)owner < 8
+               && unemployed[owner] < math.max(1, need / LaborGateDivisor);
 
         // ⚠ 미베이크 폴백(다지기 ③ 이후) — 정식 경로 = ProducerLookup(능력 ProductionJob.RecipeOutput
         //   파생). 프리팹 베이크 확인 후 삭제 예정.
@@ -1332,6 +1475,7 @@ namespace CitySim
             [ReadOnly] public NativeHashSet<int3>     WhDistricts;  // (owner,dx,dy) 창고 보유 지구(슬롯 판정)
             [ReadOnly] public NativeHashSet<int3>     SupDistricts; // (owner,dx,dy) 공급자 보유 지구(슬롯 판정)
             [ReadOnly] public NativeHashSet<int3>     AuraDistricts;// (owner,dx,dy) 오라 보유 지구(슬롯 판정)
+            [ReadOnly] public NativeHashSet<int2>     HoldCells;   // 재개발 홀드 셀 — 주택 채우기만 건너뜀
             public NativeArray<int3> TargetOut;                      // 팀별 확장 목표 지구(x,y,score) — 발행/로그용
             public BuildOption  OptA, OptB;
             public GrowthConfig Cfg;
@@ -1453,7 +1597,7 @@ namespace CitySim
                     bool wantHousing = Teams[t].WantHousing;
                     bool worked = wantHousing && DevelopParcels(in Snap, in grid, owner, in OptA, in OptB,
                         in outside, encLo, encHi, in TeamsTable, EnemyBuffer, in baseReached,
-                        in WhDistricts, in SupDistricts,
+                        in WhDistricts, in SupDistricts, in HoldCells,
                         budget, ref claimed, ref BldOut, ref rng);
 
                     // 2) 갇힌 구획 없음 & 수요 건물도 안 지었으면 → 바깥 확장 1회(중복 프런티어 방지).
@@ -2183,6 +2327,7 @@ namespace CitySim
             in NativeHashSet<int2> outside, int2 encLo, int2 encHi, in TeamTable teams, int enemyBuffer,
             in NativeHashSet<int2> baseReached,
             in NativeHashSet<int3> whDistricts, in NativeHashSet<int3> supDistricts,
+            in NativeHashSet<int2> hold,
             int budget, ref NativeHashSet<int2> claimed, ref NativeList<PlaceBuildingRequest> bldOut,
             ref Unity.Mathematics.Random rng)
         {
@@ -2195,6 +2340,7 @@ namespace CitySim
             {
                 int2 c = new int2(x, z);
                 if (outside.Contains(c)) continue;
+                if (hold.Contains(c)) continue;   // 재개발 홀드(수요 건물용 예약) — 주택 선점 금지
                 if (!CellBuildable(c, in layers)) continue;                 // 도로/건물/자원/맵밖 제외
                 if (NearEnemyOrContested(in layers, c, owner, in teams, enemyBuffer)) continue;
                 if (layers.WaterCells.Contains(c)) continue;

@@ -52,8 +52,14 @@ namespace CitySim
             _prevTotalSeconds = clock.TotalSeconds;
             if (dt <= 0f) return;
 
-            foreach (var (job, entity) in
-                     SystemAPI.Query<RefRW<ProductionJob>>().WithEntityAccess())
+            // 인구 비례 비축 게이트 입력(P2, 2026-07-17) — 풀 셀 Target(LogisticsPoolSystem이
+            //   시간당 재계산). 풀 없음(부트스트랩)이면 게이트 없음.
+            bool havePool = SystemAPI.TryGetSingleton<LogisticsPool>(out var pool)
+                            && pool.Cells.IsCreated;
+
+            foreach (var (job, fp, entity) in
+                     SystemAPI.Query<RefRW<ProductionJob>, RefRO<BuildingFootprint>>()
+                              .WithEntityAccess())
             {
                 var recipe = RecipeDefs.Get(job.ValueRO.RecipeOutput);
                 if (recipe.BaseDuration <= 0f) continue; // 레시피 없음
@@ -70,6 +76,16 @@ namespace CitySim
 
                 if (j.Progress < 0f)
                 {
+                    // ── 인구 비례 비축 게이트(P2, 2026-07-17): 풀 재고 ≥ Target이면 새 사이클
+                    //   시작 안 함(유휴). 소비로 재고가 빠지거나 인구가 늘어 Target이 오르면 자동
+                    //   재개 — 비축의 앵커를 용량(창고 수·래칫)에서 인구로 교정(무한 생산 함정 차단).
+                    //   풀 셀 없음(창고 전무 부트스트랩·Final 품목 = 풀 미경유) → 게이트 없음
+                    //   (로컬 수급은 기존 출력 포화 클램프가 전담).
+                    if (havePool && pool.Cells.TryGetValue(
+                            LogisticsPool.Key(fp.ValueRO.OwnerLocalId, recipe.Output), out var pc)
+                        && pc.Stored >= pc.Target)
+                        continue;
+
                     // ── 대기: 일꾼이 있고(staff>0) 재료가 충분하면 제작 시작 ──
                     //   무인(노동력 집계 0)이면 시작하지 않음 — 안 하면 재료만 차감된 채
                     //   진행 0에서 동결(재료 잠김). 진행 중 무인화는 동결 후 재개(허용).

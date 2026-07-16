@@ -123,4 +123,16 @@ MonoBehaviour:
   Kind: 1
   Capacity: 20
   ProvidedJob: 0
-  Influence: 5
+  WorkerSlots: 0
+  ReliefRaw: 0
+  SupplyMaxDist: 15
+  VisitorSlots: 0
+  AuraReliefRaw: 0
+  AuraRadius: 0
+  AuraPerWorkerCoverage: 100
+  AuraQuality: 80
+  ProductionOutput: 0
+  Stocks: []
+  IsWarehouse: 0
+  WarehouseStampMaxDist: 30
+  MaxHealth: 0
