@@ -133,6 +133,12 @@ namespace CitySim
     {
         public int2 Min;   // 좌하단 셀(포함)
         public int2 Max;   // 우상단 셀(포함)
+
+        /// <summary>1 = 인간 유저의 수동 철거(2026-07-17 유저 확정): 자원은 전량 파괴
+        /// (StockInheritance 원장 미기록 — AI 재개발과 달리 승계 없음)하되, 철거 주택의
+        /// 거주민은 DisplacedCitizen 목록에 올려 UI에서 유지/해산을 부분 선택하게 한다.
+        /// 0(AI·시스템 발행) = 목록 미작성(거주민은 UnassignedTag 재하우징 큐로만).</summary>
+        public byte Human;
     }
 
     /// <summary>도로 업그레이드 명령 (2차선 → 4차선). 단발성.</summary>

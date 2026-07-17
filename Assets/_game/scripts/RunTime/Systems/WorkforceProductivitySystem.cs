@@ -84,7 +84,7 @@ namespace CitySim
         //   컨디션 계수 = 직업별 가중 욕구 만족도(JobAptitude.ConditionFactor —
         //   육체직은 포만 민감, 지식직은 피로·치안 민감). "어떤 욕구를 채울지"가 노동
         //   구성에 따라 전략이 되는 축(2026-07-07 유저 설계).
-        //   ※ 합의 골격(2026-07-12): 욕구 원천(Hunger/CitizenSafety)을 룩업하지 않는다 —
+        //   ※ 합의 골격(2026-07-12): 욕구 원천(Hunger/CitizenCivic)을 룩업하지 않는다 —
         //     ConditionUpdateSystem이 느슨한 주기로 투영한 **CitizenConditions 스냅샷만**
         //     청크-선형으로 읽음(룩업 0, 팩션 무관 — 구 Hunger 쿼리 요구 은퇴).
         [BurstCompile]

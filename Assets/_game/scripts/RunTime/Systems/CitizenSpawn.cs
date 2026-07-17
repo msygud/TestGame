@@ -92,10 +92,11 @@ namespace CitySim
                 Threshold = 0.6f,
             });
 
-            // 치안(커버형 욕구 v1, 2026-07-12) — 방문 없음: 집이 오라(경찰서류) 커버 밖이면
-            //   서서히 증가(SafetySystem). 기본 Rate 0.0005/게임초 = 미커버 방치 시 ~1.2 게임일에
-            //   임계(0.6) 도달 → 수요 샘플 시작. Hunger 뒤에 추가(needRng 소비 순서 보존).
-            ecb.AddComponent(e, new CitizenSafety
+            // 공무불만(2026-07-17 통합 — 구 치안 CitizenSafety 자리·난수 소비 동일 = 기존
+            //   Boredom 이후 산포 불변): 현재 위치의 관리형 서비스 커버 가중합(치안·소방·
+            //   환경·행정)이 목표를 정함(CivicSystem). Rate 0.0005/게임초 = 전면 미커버 방치
+            //   시 ~1.2 게임일에 임계(0.6) 도달.
+            ecb.AddComponent(e, new CitizenCivic
             {
                 Level     = needRng.NextFloat(0f, 0.3f),
                 Rate      = 0.0005f * needRng.NextFloat(0.85f, 1.15f),
@@ -127,6 +128,15 @@ namespace CitySim
             ecb.AddComponent<DiseasedTag>(e);
             ecb.SetComponentEnabled<DiseasedTag>(e, false);
             ecb.AddComponent(e, new CitizenHealthcare { Value = 0f });
+
+            // 교육(체류형, 2026-07-17 — 학교 방문·체류 해소, Boredom 동형). 관리형 오라
+            //   서비스(환경·행정·소방)는 개별 컴포넌트 없음 — 위 CitizenCivic 하나로 통합.
+            ecb.AddComponent(e, new CitizenEducation
+            {
+                Level     = needRng.NextFloat(0f, 0.3f),
+                Rate      = 0.0006f * needRng.NextFloat(0.85f, 1.15f),   // 방치 ~1.2게임일에 임계
+                Threshold = 0.6f,
+            });
 
             // 콜드: 직업 + 직업별 숙련(고용 2차 — 직업이 바뀌어도 각 숙련 보존)
             ecb.AddComponent(e, new JobData { Job = req.InitialJob });

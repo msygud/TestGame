@@ -117,7 +117,7 @@ MonoBehaviour:
   Stocks:
   - Commodity: 1
     Role: 1
-    Capacity: 40
+    Capacity: 80
     Initial: 0
   IsWarehouse: 0
   WarehouseStampMaxDist: 30

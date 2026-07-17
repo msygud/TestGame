@@ -3444,7 +3444,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1a5415c6536d154449d191160dafd801, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Test
-  PopPerCell: 1.2
+  PopPerCell: 0.7
   MaxRadius: 64
   DwellGameHours: 1
   RequireFullFootprint: 1

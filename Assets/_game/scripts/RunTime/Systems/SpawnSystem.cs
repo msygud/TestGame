@@ -56,10 +56,30 @@ namespace CitySim
                                              //   이동 내내 점유(ServiceDeskJob) — 실질 상한은 "동시 이동+식사
                                              //   파이프라인". 10은 UNMET 백로그 주범(2026-07-10 실측) → 30.
 
+        public void OnCreate(ref SystemState state)
+        {
+            // 재고 승계 원장(가치 계층, 2026-07-17) — 싱글톤 수명주기 패턴.
+            if (SystemAPI.HasSingleton<StockInheritance>()) return;
+            var e = state.EntityManager.CreateEntity(typeof(StockInheritance));
+            state.EntityManager.SetComponentData(e, new StockInheritance
+            {
+                Ledger = new NativeHashMap<int3, int>(64, Allocator.Persistent),
+            });
+        }
+
+        public void OnDestroy(ref SystemState state)
+        {
+            if (!SystemAPI.HasSingleton<StockInheritance>()) return;
+            var s = SystemAPI.GetSingleton<StockInheritance>();
+            if (s.Ledger.IsCreated) s.Ledger.Dispose();
+        }
+
         public void OnUpdate(ref SystemState state)
         {
             if (!SystemAPI.HasSingleton<PrefabLookup>()) return;
             var lookup = SystemAPI.GetSingleton<PrefabLookup>();
+            bool haveInherit = SystemAPI.TryGetSingleton<StockInheritance>(out var inherit)
+                               && inherit.Ledger.IsCreated;
 
             // 건물 기본 체력(균일, 임시) — 전투로 파괴 가능하게 부여. SpawnConfig 싱글톤(밸런스).
             //   TODO: 프리팹별 값이 필요하면 BuildingAuthoring 베이킹으로 이전(능력=컴포넌트 원칙).
@@ -152,6 +172,31 @@ namespace CitySim
                         ecb.SetComponent(instance, wt);
                     }
 
+                    // ── 재고 승계(가치 계층, 2026-07-17): AI 재개발로 철거된 동종(owner+MainKey)
+                    //   생산시설의 재고를 새 인스턴스가 이어받는다. 프리팹 buffer에 승계분을 더한
+                    //   사본으로 교체(SetBuffer — Instantiate 복사분 덮음). 용량 초과분은 원장 잔류.
+                    //   원장에 이 (owner,mk) 항목이 없으면 무비용(ContainsKey 스캔만).
+                    if (bakedEconomy && haveInherit)
+                    {
+                        var src = em.GetBuffer<StockEntry>(prefab);
+                        bool anyPending = false;
+                        for (int i = 0; i < src.Length; i++)
+                            if (inherit.Ledger.ContainsKey(StockInheritance.Key(
+                                    req.ValueRO.OwnerLocalId, mk, src[i].Commodity)))
+                            { anyPending = true; break; }
+                        if (anyPending)
+                        {
+                            var dst = ecb.SetBuffer<StockEntry>(instance);
+                            for (int i = 0; i < src.Length; i++)
+                            {
+                                var entry = src[i];
+                                entry.Current += inherit.Take(req.ValueRO.OwnerLocalId, mk,
+                                    entry.Commodity, entry.Capacity - entry.Current);
+                                dst.Add(entry);
+                            }
+                        }
+                    }
+
                     // ── 레거시 스텁(프리팹 미베이크 폴백) — BuildingAuthoring 값을 채우면
                     //   위 baked 플래그가 서고 이 블록은 자동 은퇴. 키당 1회 경고로 가시화.
                     if (!bakedSupplier && req.ValueRO.IsSupplier)
@@ -171,17 +216,22 @@ namespace CitySim
                             && (req.ValueRO.Relief & NeedType.Hunger) != NeedType.None)
                         {
                             var stock = ecb.AddBuffer<StockEntry>(instance);
+                            // 재고 승계(레거시 경로도 동일 — baked 경로 주석 참조).
+                            int own = req.ValueRO.OwnerLocalId;
+                            int mealInit = MealInitialStock + (haveInherit
+                                ? inherit.Take(own, mk, Commodity.Meal, MealStockCapacity - MealInitialStock) : 0);
                             stock.Add(new StockEntry
                             {
                                 Commodity = Commodity.Meal,
-                                Current   = MealInitialStock,
+                                Current   = mealInit,
                                 Capacity  = MealStockCapacity,
                                 Role      = StockRole.LocalFinal,
                             });
                             stock.Add(new StockEntry
                             {
                                 Commodity = Commodity.Flour,
-                                Current   = 0,
+                                Current   = haveInherit
+                                    ? inherit.Take(own, mk, Commodity.Flour, FlourStockCapacity) : 0,
                                 Capacity  = FlourStockCapacity,
                                 Role      = StockRole.Input,
                             });
@@ -198,7 +248,9 @@ namespace CitySim
                             var stock = ecb.AddBuffer<StockEntry>(instance);
                             stock.Add(new StockEntry
                             {
-                                Commodity = Commodity.Grain, Current = 0,
+                                Commodity = Commodity.Grain,
+                                Current   = haveInherit
+                                    ? inherit.Take(req.ValueRO.OwnerLocalId, mk, Commodity.Grain, ProducerStockCap) : 0,
                                 Capacity  = ProducerStockCap, Role = StockRole.Output,
                             });
                             ecb.AddComponent(instance, ProductionJob.Make(Commodity.Grain));
@@ -212,12 +264,16 @@ namespace CitySim
                             var stock = ecb.AddBuffer<StockEntry>(instance);
                             stock.Add(new StockEntry
                             {
-                                Commodity = Commodity.Grain, Current = 0,
+                                Commodity = Commodity.Grain,
+                                Current   = haveInherit
+                                    ? inherit.Take(req.ValueRO.OwnerLocalId, mk, Commodity.Grain, ProducerStockCap) : 0,
                                 Capacity  = ProducerStockCap, Role = StockRole.Input,
                             });
                             stock.Add(new StockEntry
                             {
-                                Commodity = Commodity.Flour, Current = 0,
+                                Commodity = Commodity.Flour,
+                                Current   = haveInherit
+                                    ? inherit.Take(req.ValueRO.OwnerLocalId, mk, Commodity.Flour, ProducerStockCap) : 0,
                                 Capacity  = ProducerStockCap, Role = StockRole.Output,
                             });
                             ecb.AddComponent(instance, ProductionJob.Make(Commodity.Flour));

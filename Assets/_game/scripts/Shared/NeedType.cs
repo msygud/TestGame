@@ -34,10 +34,11 @@ namespace CitySim
         // ── 도시 인프라 (bits 8~15) ────────────────────────────────
         PoorTransport   = 1uL << 8,  // 교통 불편
         PoorHealthcare  = 1uL << 9,  // 의료 부족
-        PoorSanitation  = 1uL << 10, // 위생/쓰레기 처리 부족
+        PoorSanitation  = 1uL << 10, // 위생/쓰레기 처리 부족 — 환경 오라(2026-07-17 관리형 합류)
         PoorWater       = 1uL << 11, // 수도 부족
         PoorPower       = 1uL << 12, // 전력 부족
-        // bits 13~15 예약
+        PoorAdministration = 1uL << 13, // 행정 서비스 부족 — 행정 오라(2026-07-17 관리형 합류)
+        // bits 14~15 예약
 
         // ── 치안 / 재난 (bits 16~23) ───────────────────────────────
         HighCrime       = 1uL << 16, // 치안 불안

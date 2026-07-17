@@ -211,11 +211,11 @@ namespace CitySim
     //   수요를 남겨 시설이 상업·산업 지구에도 선다. 커버면 샘플 없음(해소 진행 중).
     //   이동 중(CurrentBuilding=Null)은 위치 특정 불가라 제외.
     //   셀당 1샘플/초 가중 = 시민·물류 채널과 동등. 임계/블랙리스트/재기준선 기계 재사용.
-    //   제네릭(2026-07-16): 치안 하드코딩 → 관리형 서비스 비트 목록(치안+헬스케어). 새 관리형
-    //   서비스(행정·소방·환경) = 아래 한 줄 추가. 게이트 WithAll(CitizenSafety)은 "휴먼 시민"
-    //   대용(팩션 비대칭 도입 시 서비스별 보유 컴포넌트로 분기 검토).
+    //   제네릭(2026-07-16): 치안 하드코딩 → 관리형 서비스 비트 목록. 새 관리형 서비스 =
+    //   아래 한 줄 추가. 게이트 WithAll(CitizenCivic)은 "휴먼 시민" 대용(2026-07-17 공무불만
+    //   통합 — 진단은 시민 값이 아니라 셀의 비트별 지도에서 파생, 시민은 재실 가중치만).
     [BurstCompile]
-    [WithAll(typeof(CitizenTag), typeof(CitizenSafety))]
+    [WithAll(typeof(CitizenTag), typeof(CitizenCivic))]
     public partial struct CollectAuraDemandJob : IJobEntity
     {
         [ReadOnly] public ComponentLookup<BuildingFootprint> FpLookup;
@@ -239,8 +239,11 @@ namespace CitySim
 
             // 관리형 서비스 비트 목록 — 새 서비스 = 한 줄(비트가 L2 자동 파생으로 해석 가능해야:
             //   프리팹 AuraSupplier.Relief에 그 비트가 있으면 자동).
-            SampleIfInadequate(in fp, NeedType.HighCrime);        // 치안(경찰)
-            SampleIfInadequate(in fp, NeedType.PoorHealthcare);   // 헬스케어(병원 오라, 2026-07-16 합류)
+            SampleIfInadequate(in fp, NeedType.HighCrime);          // 치안(경찰)
+            SampleIfInadequate(in fp, NeedType.PoorHealthcare);     // 헬스케어(병원 오라, 2026-07-16 합류)
+            SampleIfInadequate(in fp, NeedType.PoorSanitation);     // 환경(청소국, 2026-07-17 합류)
+            SampleIfInadequate(in fp, NeedType.PoorAdministration); // 행정(관공서, 2026-07-17 합류)
+            SampleIfInadequate(in fp, NeedType.Fire);               // 소방(소방서, 2026-07-17 합류)
         }
 
         void SampleIfInadequate(in BuildingFootprint fp, NeedType service)
@@ -272,6 +275,7 @@ namespace CitySim
         public static bool IsOpen(int needBit, int hour) => needBit switch
         {
             0 => hour >= 8 && hour < 24,   // Hunger — 식당 영업 8~24
+            5 => hour >= 8 && hour < 16,   // LowEducation — 학교 8~16(Teacher 근무창 일치, 2026-07-17)
             _ => true,                      // 기타(상시 — 서비스 창 도입 시 case 추가)
         };
     }

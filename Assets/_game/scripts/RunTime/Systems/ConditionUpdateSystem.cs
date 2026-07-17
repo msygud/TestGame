@@ -12,7 +12,7 @@ namespace CitySim
     //  휴식의 가치가 별도 보상 없이 자동 발생 — 쥐어짜기(긴 근무) vs 여유의 트레이드오프.
     //
     //  동역학(Energy — 매 프레임) + **욕구 투영(느슨한 주기 ~1초, 2026-07-12 합의 골격)**:
-    //  소비자(생산·미래 전투)는 원천 욕구(Hunger/CitizenSafety)를 룩업하지 않는다 —
+    //  소비자(생산·미래 전투)는 원천 욕구(Hunger/CitizenCivic)를 룩업하지 않는다 —
     //  여기서 만족도를 CitizenConditions 스냅샷에 복사하고 소비자는 그것만 청크-선형
     //  으로 읽는다(룩업 0). 팩션 비대칭도 여기서 흡수(욕구 미보유 = 중립 1).
     //  새 욕구 추가 = 투영 잡 1개(소비자 무수정). Morale·Stress·Health는 해당 시스템이
@@ -65,17 +65,19 @@ namespace CitySim
             => cond.Satiety = math.saturate(1f - hunger.Level);
     }
 
+    // 안심도 원천 = 공무불만(CitizenCivic — 치안·소방·환경·행정 가중합, 2026-07-17 통합.
+    //   구 CitizenSafety 단독 투영 대체 — 축 이름(Safety)과 소비자는 그대로).
     [BurstCompile]
     [WithAll(typeof(CitizenTag))]
     public partial struct SyncSafetyJob : IJobEntity
     {
-        void Execute(ref CitizenConditions cond, in CitizenSafety safety)
-            => cond.Safety = math.saturate(1f - safety.Level);
+        void Execute(ref CitizenConditions cond, in CitizenCivic civic)
+            => cond.Safety = math.saturate(1f - civic.Level);
     }
 
     [BurstCompile]
     [WithAll(typeof(CitizenTag))]
-    [WithNone(typeof(CitizenSafety))]
+    [WithNone(typeof(CitizenCivic))]
     public partial struct DefaultSafetyJob : IJobEntity
     {
         void Execute(ref CitizenConditions cond) => cond.Safety = 1f;

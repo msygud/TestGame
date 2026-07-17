@@ -378,8 +378,11 @@ namespace CitySim
             if (em.HasComponent<AuraSupplier>(e))
             {
                 var a = em.GetComponentData<AuraSupplier>(e);
-                if ((a.Relief & NeedType.HighCrime) != NeedType.None)      return "Police";
-                if ((a.Relief & NeedType.PoorHealthcare) != NeedType.None) return "Hospital";
+                if ((a.Relief & NeedType.HighCrime) != NeedType.None)          return "Police";
+                if ((a.Relief & NeedType.PoorHealthcare) != NeedType.None)     return "Hospital";
+                if ((a.Relief & NeedType.PoorSanitation) != NeedType.None)     return "Sanitation";
+                if ((a.Relief & NeedType.PoorAdministration) != NeedType.None) return "CityHall";
+                if ((a.Relief & NeedType.Fire) != NeedType.None)               return "FireStation";
             }
             if (em.HasComponent<StampSupplier>(e))
             {
@@ -387,6 +390,7 @@ namespace CitySim
                 if ((ss.Relief & NeedType.Hunger) != NeedType.None)           return "Restaurant";
                 if ((ss.Relief & NeedType.Disease) != NeedType.None)          return "Hospital";
                 if ((ss.Relief & NeedType.LowEntertainment) != NeedType.None) return "Park";
+                if ((ss.Relief & NeedType.LowEducation) != NeedType.None)     return "School";
                 return "Service";
             }
             if (em.HasComponent<ResidenceBuilding>(e)) return "House";
@@ -395,11 +399,13 @@ namespace CitySim
                 var wp = em.GetComponentData<WorkplaceBuilding>(e);
                 return wp.ProvidedJob switch
                 {
-                    JobType.Farmer   => "Farm",
-                    JobType.Engineer => "Mill",
-                    JobType.Merchant => "Restaurant",
-                    JobType.Doctor   => "Hospital",
-                    _                => "Workplace",
+                    JobType.Farmer       => "Farm",
+                    JobType.Engineer     => "Mill",
+                    JobType.Merchant     => "Restaurant",
+                    JobType.Doctor       => "Hospital",
+                    JobType.Teacher      => "School",
+                    JobType.CivilServant => "PublicService",   // 서비스 종류는 위 AuraSupplier 분기가 판별
+                    _                    => "Workplace",
                 };
             }
             return "Building";
@@ -421,11 +427,15 @@ namespace CitySim
         // NeedType(단일/복합 비트) → 짧은 표시명. 복합이면 첫 매칭.
         static string ReliefName(NeedType r)
         {
-            if ((r & NeedType.Hunger) != NeedType.None)           return "food";
-            if ((r & NeedType.LowEntertainment) != NeedType.None) return "fun";
-            if ((r & NeedType.Disease) != NeedType.None)          return "disease";
-            if ((r & NeedType.HighCrime) != NeedType.None)        return "safety";
-            if ((r & NeedType.PoorHealthcare) != NeedType.None)   return "health";
+            if ((r & NeedType.Hunger) != NeedType.None)             return "food";
+            if ((r & NeedType.LowEntertainment) != NeedType.None)   return "fun";
+            if ((r & NeedType.Disease) != NeedType.None)            return "disease";
+            if ((r & NeedType.HighCrime) != NeedType.None)          return "safety";
+            if ((r & NeedType.PoorHealthcare) != NeedType.None)     return "health";
+            if ((r & NeedType.PoorSanitation) != NeedType.None)     return "sanitation";
+            if ((r & NeedType.PoorAdministration) != NeedType.None) return "admin";
+            if ((r & NeedType.Fire) != NeedType.None)               return "fire";
+            if ((r & NeedType.LowEducation) != NeedType.None)       return "education";
             if (r == NeedType.None) return "none";
             return "#" + ((ulong)r).ToString();
         }

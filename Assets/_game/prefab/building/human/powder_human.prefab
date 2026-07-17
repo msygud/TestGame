@@ -117,7 +117,7 @@ MonoBehaviour:
   Stocks:
   - Commodity: 1
     Role: 0
-    Capacity: 40
+    Capacity: 80
     Initial: 0
   - Commodity: 2
     Role: 1

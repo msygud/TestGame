@@ -5,6 +5,120 @@
 
 ---
 
+## ❓ 다음 주제 (2026-07-18 논의만, 구현 0) — 자원 접근: 전초기지(Outpost) 모델
+> **유저**: "자원 문제로 가고 싶다 — 도시와 떨어져 있는데 어떻게 접근?" → 3단계 제안(합의 대기):
+>   1단계 채취 골격(Ore Commodity + 광산 = 무입력 생산 변형: footprint 아래 ResourceCell 필수·
+>   Amount 소모·고갈 유휴, 물류는 기존 풀 — 전초 창고가 논리 풀에 즉시 합류) →
+>   2단계 AI 접근(결핍 채널 Ore → ResourceLayer 스캔 → **Destination Road 라우터**(2026-06-23,
+>   원래 이 용도로 예정된 미완 항목)로 연결 → 창고-먼저 패턴 재사용) →
+>   3단계 전략화(현 풀=텔레포트·캐리어=비주얼 → 도로 연결 군집별 풀 분리 + 실체 호송 = 보급선
+>   습격 게임플레이, MRP 전쟁물자와 동시 설계).
+> **⬜ 미결정 3건(다음 세션 첫 질문)**: ① 보급 모델 — 전역 풀 유지(1~2단계 권장) vs 군집 분리
+>   즉시 ② 전초 노동 — 통근(권장, 기계 0) vs 전초 주택(미니 정착지 — 공무 커버·이민 동반)
+>   ③ 첫 자원 — Ore(전쟁물자 사슬 Ore→Ingot→무기) vs 건설재(Stone/Wood + 건설 비용 도입).
+> 근거 확인 완료: ResourceCell{TypeId, Amount} 존재 / RoadPathRequest·FindRoadPath·RoadPathSystem
+>   가동 가능(1×1 전용) / CellBuildable이 자원 위 건설 차단 중(채취 건물은 예외 필요).
+
+## 🟢 (2026-07-18) BuildingAuthoring 정리 — Kind 드롭다운 은퇴 + 용어 중립화 (✅ dotnet 빌드 클린)
+> **유저 지적 3건 반영**: ① 거주에 Kind 드롭다운 불필요 ② "환자=방문자" 용어 비일관 ③ 나열식
+>   레이아웃 = 상호배타 아님이 의도인데 배타 스위치(Kind)가 모순.
+> ① Kind 드롭다운 → **`IsResidence` 체크박스 + `ResidentSlots`**(FormerlySerializedAs("Capacity") —
+>   기존 주택 정원 값 무손실). 레거시 Kind 필드는 [HideInInspector]로 잔류: OnValidate가 열람 시
+>   자동 이관(+재저장 로그), Baker 폴백(`IsResidence || Kind==Residence`)이 미재저장 프리팹 커버 —
+>   전 프리팹 재저장 확인 후 enum째 삭제 예정.
+> ② `VisitorSlots` → **`ServiceSlots`(이용 정원)**(FormerlySerializedAs — 데이터 무손실): 식당 좌석·
+>   병원 병상·공원/학교 수용의 중립 통칭. 런타임 VisitorOccupancy(예약 기계)는 그대로 — authoring
+>   표기만 중립화.
+> ③ 직교 섹션 = 의도임을 헤더 주석에 명문화. **유일한 실제 배타 = 거주 vs 고용**(같은
+>   BuildingOccupancy 정원 카운트 공유 — 거주 우선 경고 유지). 섹션 헤더를 "방문형 서비스(도로
+>   stamp 도달)" / "오라형 서비스(반경 커버)"로 정리 + 비트값 예시(Disease=524288 등) 툴팁 추가.
+> 프리팹 영향: 값 무손실(FormerlySerializedAs). 주택 프리팹은 인스펙터에서 한 번 열어 저장하면
+>   이관 완료(안 해도 Baker 폴백으로 동작 동일).
+> **후속(같은 날, 유저 2건)**: ① 병원 방문=상태 해제 vs 나머지=욕구 해소 공존 — **정합 확인**(비트=
+>   시스템 간 통화, 욕구/상태 구분은 시민 측 라우팅 소관·공급 기계 공유). 드롭다운에서 DiseaseCare로
+>   명명해 구분 가시화. ② ulong 비트 직접 입력 은퇴 → **enum 드롭다운**: `VisitService`(Hunger/
+>   Entertainment/Education/DiseaseCare) + `AuraService`(Safety/Healthcare/Sanitation/Administration/
+>   Fire), Baker가 NeedType 비트로 변환(ServiceEnumOps). 레거시 ReliefRaw/AuraReliefRaw는
+>   [HideInInspector] 잔류 — OnValidate 자동 이관(+재저장 로그) + 마스크 프로퍼티 raw 폴백(미재저장
+>   프리팹 무손실). 복수 비트 공급자 필요 시 enum 배열 확장(현재 전 건물 단일 비트).
+
+## 🟢 (역사, 2026-07-17 밤) — 공무 통합: CivilServant 단일 직종 + 공무불만 단일 경험 축 (✅ dotnet 빌드 클린)
+> **유저 확정**: "나라 주관 일은 직업 하나로, 서비스 만족도는 가중합해 시민의 '공무불만' 하나로"
+>   (난잡함 방지). 치안 포함 흡수 ✅ / 병원·학교는 Doctor·Teacher 유지 ✅.
+> **핵심 원칙(합의)**: **불만 = 결과 축, 진단 = 지도 축.** "무엇이 부족한가"는 시민 값이 아니라
+>   CollectAuraDemandJob이 셀의 **비트별** 오라 지도에서 직접 파생(시민 = 재실 가중치) —
+>   그래서 시민 축을 하나로 뭉쳐도 서비스별 수요·건설 진단은 무손실.
+> **직업**: `Officer`(서수 12) → **`CivilServant` 개명**(구 세이브 경찰 숙련 자연 승계) — 치안·환경·
+>   행정·소방 오라 전부 이 직종(24h 3교대). 어제 추가한 Firefighter·Cleaner 은퇴(에디터 미사용 상태
+>   회수) → JobCount 13 복귀(FixedList 상한 여유 회복). 관공서도 Administrator 아닌 CivilServant
+>   (Administrator = 창고 물류직으로 순화). 프리팹 authored 값 12(구 Officer)는 그대로 유효.
+> **욕구**: `CitizenSafety` + (어제) 오라 3종 컴포넌트 → **`CitizenCivic` 하나로 대체**.
+>   `CivicSystem`(신규, SafetySystem·AuraNeedSystems 파일 은퇴): 현재 건물 셀의 서비스별 커버
+>   가중합 V = .40치안+.25소방+.20환경+.15행정(⚠v1 밸런스) → 목표 Level=1−V(비대칭·TestRateScale 20 계승).
+>   컨디션 투영: CitizenConditions.Safety = 1−Civic.Level(축 이름·소비자 무수정, DefaultSafetyJob
+>   WithNone도 Civic으로 — 구세이브 시민(Civic 없음)은 중립 1). 수요 게이트 WithAll도 Civic 교체.
+>   스폰: 구 CitizenSafety 자리에서 같은 난수 소비(산포 불변), 오라 3종 부착 삭제.
+>   **새 오라 서비스 추가 비용 = CivicSystem 가중치 한 줄 + 수요 비트 한 줄**(직업 0, 컴포넌트 0).
+> **학교(교육)는 통합 무관**: 방문·추구형이라 개별 유지(CitizenEducation·EducationSystem·Teacher).
+> ⚠ 사고 기록: PowerShell 일괄 치환이 4파일 한글 주석 인코딩 파손 → git 복원 + Edit 재적용으로 복구
+>   (.cs 텍스트 치환은 반드시 Edit 도구로 — 교훈).
+> **검증 포인트**: F11 시민 없음(civic은 컨디션 Safety로 관찰) / 경찰 프리팹 근무 정상(서수 12 승계) /
+>   미커버 F12에 서비스별 수요 여전히 분리 표시 / 구세이브 시민 Safety=1 중립.
+
+## 🟢 (역사, 2026-07-17 저녁) — 오라 3종(환경·행정·소방) + 방문형 학교 (✅ dotnet 빌드 클린 / ⚠ 프리팹 미제작 = 에디터 선행 필요, 직업·욕구 부분은 위 '밤' 통합으로 대체)
+> **유저 지시**: 오라 타입으로 환경·행정·소방 각 1종 + 방문형 학교. 관리형 모델의 "새 서비스 = 복제"
+>   경로 검증 — **공통 d 기계(AuraCoverage·수요·배치) 무수정** 약속 이행 확인.
+> **욕구 비트**: 환경=`PoorSanitation`(10, 기존) / 행정=`PoorAdministration`(13, **신설**) / 소방=`Fire`(17, 기존)
+>   / 학교=`LowEducation`(5, 기존).
+> **오라 3종** (SafetySystem 동형 복제 — AuraNeedSystems.cs 신규 1파일에 3시스템):
+>   `CitizenSanitation`/`CitizenAdministration`/`CitizenFireSafety` 컴포넌트(모양 규약) + 틱 잡 3개
+>   (현재 건물 셀 d → 목표 Level=1−v, 비대칭). 수요 = CollectAuraDemandJob 비트 목록 3줄 추가(약속대로
+>   "한 줄"). 스폰 부착(기존 needRng 소비점 뒤 — 산포 불변, Rate: 환경.0005/행정.0003/소방.0004 ⚠v1).
+>   ⚠ TestRateScale 20 유지(치안과 동일) — 밸런싱 #1에서 일괄 복원.
+> **학교** (BoredomSystem 동형 복제 — EducationSystem.cs): `CitizenEducation`(체류형, Rate .0006) +
+>   틱/체류해소 잡 + `EducationUrgencyJob`(NeedDecision) + NeedDwell 2게임시간 + NeedServiceHours
+>   bit5=8~16시(Teacher 근무창 일치).
+> **직업**: `Firefighter`·`Cleaner` 신설(24h 3교대, 적성·컨디션 가중 육체직) — **JobCount 15 =
+>   FixedList64Bytes 용량 상한 도달**(다음 직업부터 Values를 FixedList128Bytes로 확장 필요 ⚠).
+>   행정 오라 = `Administrator` 재사용(창고와 직종·숙련 공유 — 의도), 학교 = `Teacher`(기존, 창 8~16 신설).
+> **HUD**: F11 ClassifyType(Sanitation/CityHall/FireStation/School) + ReliefName(sanitation/admin/fire/education).
+> **⬜ 에디터 선행(프리팹 4종 — BuildingAuthoring, L2 자동 파생이라 코드 무수정)**:
+>   · 청소국: AuraReliefRaw=1024(bit10), AuraRadius, PerWorkerCoverage, Quality, ProvidedJob=CivilServant, WorkerSlots
+>   · 관공서: AuraReliefRaw=8192(bit13), 동일 골격, ProvidedJob=CivilServant
+>   · 소방서: AuraReliefRaw=131072(bit17), 동일 골격, ProvidedJob=CivilServant
+>   (⚠ '밤' 통합 반영 — 오라 직종은 전부 CivilServant, 구 Cleaner/Administrator/Firefighter 지침 폐기)
+>   · 학교: ReliefRaw=32(bit5, StampSupplier=방문), SupplyMaxDist, VisitorSlots(좌석), ProvidedJob=Teacher, WorkerSlots
+>   + GamePrefabRegistry 등록(Building MainKey 구역). 프리팹 등록 즉시 AI 수요·배치 자동 활성(치안 선례).
+> **검증 포인트**: 미커버 지역 F12에 sanitation/admin/fire 수요 → 신설 → F6 커버 / 학교 등하교(8~16시,
+>   최대 2h 체류·조기 하교) / F11 라벨 / 구세이브 시민(신규 욕구 컴포 없음)은 해당 시스템 쿼리 미매칭 = 무해.
+
+## 🟢 현재 프론티어 (2026-07-17 오후) — 재개발 가치 계층 + 재고/거주민 승계 (✅ dotnet 빌드 클린 / ⚠ 에디터 실측 대기)
+> **발단(유저)**: "인구주도 성장이 재건축을 방해하는가? 잘 안 보인다" → **적중**: `LaborBlocked`의
+>   `continue`가 attempts 부기·재개발 escalation **앞**이라 무직<정원/4 동안 재건축이 아예 트리거 불가.
+>   최악 = 꽉 찬 완전고용 도시(주택 증설 불가→이민 0→무직 0)에서 전 유인 채널 영구 침묵 = 재건축 데드락.
+> **유저 확정 설계 = 철거 가치 계층**: 치안·병원(오라) > 생산시설 > 주택, 창고·오라 불가침.
+>   ① **오라 재개발 = 주택+생산시설(ProductionJob — 농장·제분소·식당) 철거** — 부지+노동 동시 확보
+>   (실직→JobSeekerTag→오라 고용 = 노동 게이트가 잠근 매듭을 철거가 푼다). 비오라 재개발 = 주택만(기존).
+>   redevelopReqs.w bit16 = 오라 클래스 표시.
+>   ② **오라 채널 노동 게이트 면제**(candAura) — 게이트가 후보를 떨구면 escalation 도달 불가라 필수 전제.
+>   무근무 오라는 Unstaffed(비건설)이라 재귀 없음.
+>   ③ **생산시설 재고 승계**: `StockInheritance` 싱글톤 원장(key=owner,MainKey,commodity — MainKey는
+>   RecipeOutput→ProducerLookup.Table 역참조). AI 재개발 철거가 Deposit, SpawnSystem이 동종 스폰 시
+>   Take(용량 클램프, 초과분 원장 잔류. baked SetBuffer + 레거시 식당/농장/제분소 경로 모두). 수명주기
+>   = SpawnSystem OnCreate/OnDestroy. **인간 수동 철거·전투 파괴는 미기록 = 자원 전량 소실(유저 확정)**.
+>   ④ **주택 거주민 승계 = 기존 기계 재사용 확인**: 철거→DeadReferenceReclaim→UnassignedTag(예비자 큐)
+>   →새 주택 우선 입주, 이민이 대기자를 정원에서 차감(CitizenImmigrationSystem)해 이중 유입 없음 — 무코드.
+>   ⑤ **인간 철거 이재민 선택 UI**: `RazeAreaCommand.Human=1`(Test.cs Alt+클릭) → RazeSystem이 철거 주택
+>   거주민을 `DisplacedCitizen` 싱글톤 buffer에 등재 → `DisplacedCitizensDialog`(IMGUI, 영문) 부분 선택:
+>   Keep=목록 제거만(예비자 유지) / Dismiss=엔티티 파괴(근무 슬롯·방문 좌석 해제 동반 — 시민 파괴 유일
+>   경로 신설, 시민 불사는 시뮬 사망 금지 원칙이라 유저 명시 해산은 별개) → 빈 정원만큼 이민이 새 랜덤
+>   시민 재생성("다시 생성"의 실체). 파일: RoadComponents/CitizenComponents/RazeSystem/Test/UI 신규 1.
+> **검증 포인트(에디터)**: 완전고용 밀집 도심에서 경찰서·병원 수요 → 재개발 로그에 "생산시설 N채" 표시
+>   → 오라 착지 + 실직자 재고용 / 제분소 철거 후 동종 재건 시 재고 승계(F11 Stock) / Alt+클릭 주택 철거
+>   → 다이얼로그 표시·부분 해산 동작 / 비오라 재개발이 생산시설을 안 부수는지.
+> ⚠ 유보(설계 선택, 유저 확인 필요시): 식당을 '생산시설'(오라 철거 대상)에 포함(ProductionJob 보유 기준,
+>   07-16 가치 계층 스케치 "주택<식당·생산자"와 일치). 창고 재개발은 주택만(불가침 계층 유지).
+
 ## 🟢 현재 프론티어 (2026-07-17) — 무한 생산 함정 교정: 인구 앵커 비축(P2) (⚠ 컴파일 대기)
 > **유저 실측(희소 성장 테스트)**: 무근무 병원 폭주 픽스 ✅ 확인(과잉 건설 정지). 남은 함정 = **비축 앵커**:
 >   풀 만석 자체는 안정(push 수요 봉인·생산 클램프 — 계획 P)이지만, 커버 미스로 창고가 늘 때마다 풀 용량이

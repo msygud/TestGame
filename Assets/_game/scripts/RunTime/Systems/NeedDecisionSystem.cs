@@ -41,6 +41,7 @@ namespace CitySim
             // ① 욕구별 긴급도 후보 갱신 — 욕구 추가 시 여기 한 줄씩. (앓는 시민 제외)
             state.Dependency = new HungerUrgencyJob().ScheduleParallel(state.Dependency);
             state.Dependency = new BoredomUrgencyJob().ScheduleParallel(state.Dependency);
+            state.Dependency = new EducationUrgencyJob().ScheduleParallel(state.Dependency);
 
             // ② 공통 선택 — 후보 소비(재선택) + 리셋. (앓는 시민 제외)
             state.Dependency = new NeedSelectJob().ScheduleParallel(state.Dependency);
@@ -86,6 +87,26 @@ namespace CitySim
             if (urgency > needs.CandidateUrgency)
             {
                 needs.CandidateNeed    = NeedType.LowEntertainment;
+                needs.CandidateUrgency = urgency;
+            }
+        }
+    }
+
+    // ── ① [Education] 긴급도 후보 — 체류형 학교(2026-07-17). Boredom과 동형. ──
+    [BurstCompile]
+    [WithDisabled(typeof(DiseasedTag))]
+    public partial struct EducationUrgencyJob : IJobEntity
+    {
+        void Execute(ref CitizenNeeds needs, in CitizenEducation edu, in CitizenState st)
+        {
+            var act = st.Activity;
+            if (act != CitizenActivity.Idle && act != CitizenActivity.AtHome) return;
+
+            if (!edu.IsActive) return;
+            float urgency = edu.Level - edu.Threshold;
+            if (urgency > needs.CandidateUrgency)
+            {
+                needs.CandidateNeed    = NeedType.LowEducation;
                 needs.CandidateUrgency = urgency;
             }
         }

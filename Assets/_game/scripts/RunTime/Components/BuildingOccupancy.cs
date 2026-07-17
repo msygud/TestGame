@@ -149,7 +149,7 @@ namespace CitySim
     /// 오라형 욕구 공급 능력(2026-07-11 합의 — 커버형 욕구: 경찰서·관공서·광장류).
     /// 방문·좌석·재고·물류 없음: 반경 안 시민의 해당 욕구가 수동적으로 해소된다.
     /// 판정 = footprint 최근접 유클리드 제곱(dx²+dz² ≤ Radius², 정수 — float/√ 없음).
-    /// 소비: AuraCoverageSystem(맵 재빌드) → SafetySystem 등 욕구별 시스템(해소) +
+    /// 소비: AuraCoverageSystem(맵 재빌드) → CivicSystem(공무불만 가중합 해소) +
     /// DemandAggregation(미커버 수요 수집) + AI 배치(지구 슬롯 선호).
     /// </summary>
     public struct AuraSupplier : IComponentData

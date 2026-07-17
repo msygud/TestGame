@@ -532,8 +532,8 @@ MonoBehaviour:
     Name: resiental_h_small
     Category: 1
     Usage: -1
-    Prefab: {fileID: 4842039231314385917, guid: 29d51c6611c4eeb4b89c02a60f4dee31, type: 3}
-    Size: {x: 4, y: 2}
+    Prefab: {fileID: 1488769920748405796, guid: 6407e49e6f321a24a927b7b7d8a16863, type: 3}
+    Size: {x: 2, y: 2}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
@@ -549,8 +549,8 @@ MonoBehaviour:
     Name: resudental_h_middle
     Category: 1
     Usage: -1
-    Prefab: {fileID: 5582211663413722490, guid: e58311b8a29dad94baf1c7cc533503dc, type: 3}
-    Size: {x: 2, y: 4}
+    Prefab: {fileID: 91721129727602941, guid: 1d830d4fb236cb5468b08dc7b56269ab, type: 3}
+    Size: {x: 4, y: 4}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
@@ -567,7 +567,7 @@ MonoBehaviour:
     Category: 1
     Usage: -1
     Prefab: {fileID: 7101352272596805819, guid: 135578afae5bd864e9563b85efcb7a63, type: 3}
-    Size: {x: 3, y: 3}
+    Size: {x: 2, y: 2}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
@@ -617,8 +617,8 @@ MonoBehaviour:
     Name: stock_h
     Category: 1
     Usage: -1
-    Prefab: {fileID: 6239777722775948369, guid: 6802f30d03df90d42aeb57cfe9061b08, type: 3}
-    Size: {x: 5, y: 5}
+    Prefab: {fileID: 2025705759952746350, guid: 993f2f4b4a1e27c4a97f633fbbf09d8e, type: 3}
+    Size: {x: 8, y: 8}
     Offset: {x: 0, y: 0, z: 0}
     BuildableOn: 1
     RoadMask: 0
@@ -680,6 +680,91 @@ MonoBehaviour:
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 0
+  - MainKey: 0
+    VariantKey: 0
+    Name: clean
+    Category: 2
+    Usage: 0
+    Prefab: {fileID: 1100613735996123866, guid: 79db2dbd8c5bef245aed63acf261c375, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 1
+  - MainKey: 1009
+    VariantKey: 0
+    Name: clean_h_m
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 1100613735996123866, guid: 79db2dbd8c5bef245aed63acf261c375, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1010
+    VariantKey: 0
+    Name: firestation_h_l
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 584465963645379090, guid: 1b383b9c0c0e11d42b0ebd0ec170de5b, type: 3}
+    Size: {x: 5, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1011
+    VariantKey: 0
+    Name: office_h_m
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 427241161988127911, guid: d7b5b047f09118749bbb99ea8052b84d, type: 3}
+    Size: {x: 4, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1012
+    VariantKey: 0
+    Name: schooll_h_m
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 1106568866365558309, guid: 8869daae3a15a774386abc337c639a8e, type: 3}
+    Size: {x: 5, y: 4}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
   NeedMaps:
   - MainKey: 1002
     NeedMask: 1
@@ -689,8 +774,8 @@ MonoBehaviour:
     Offset: {x: 1, y: 0}
     Dir: 4
   - MainKey: 1001
-    Offset: {x: 1, y: 0}
-    Dir: 4
+    Offset: {x: 1, y: 3}
+    Dir: 1
   - MainKey: 1002
     Offset: {x: 1, y: 0}
     Dir: 4
@@ -701,7 +786,7 @@ MonoBehaviour:
     Offset: {x: 1, y: 0}
     Dir: 4
   - MainKey: 1005
-    Offset: {x: 2, y: 4}
+    Offset: {x: 3, y: 7}
     Dir: 1
   - MainKey: 1006
     Offset: {x: 2, y: 4}
@@ -711,4 +796,16 @@ MonoBehaviour:
     Dir: 8
   - MainKey: 1008
     Offset: {x: 3, y: 5}
+    Dir: 1
+  - MainKey: 1009
+    Offset: {x: 2, y: 3}
+    Dir: 1
+  - MainKey: 1010
+    Offset: {x: 0, y: 3}
+    Dir: 1
+  - MainKey: 1011
+    Offset: {x: 2, y: 3}
+    Dir: 1
+  - MainKey: 1012
+    Offset: {x: 2, y: 3}
     Dir: 1

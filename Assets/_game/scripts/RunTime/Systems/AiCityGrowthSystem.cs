@@ -326,7 +326,7 @@ namespace CitySim
                 { l2 = lk.ValueRO; haveL2 = true; break; }
 
                 // L2 없어도(재베이크 전) 하드코딩 폴백이 돌도록 항상 호출.
-                var redevelopReqs = new NativeList<int4>(8, Allocator.Temp);   // (owner,x,y, 목표크기 sx<<8|sy)
+                var redevelopReqs = new NativeList<int4>(8, Allocator.Temp);   // (owner,x,y, w=[bit16 오라클래스]|sx<<8|sy)
                 bool havePool = SystemAPI.TryGetSingleton<LogisticsPool>(out var lpool);
                 // 생산/창고 파생 결정 테이블(다지기 ③·④) — 없으면(초기화 전) 하드코딩 폴백.
                 bool haveProducer = SystemAPI.TryGetSingleton<ProducerLookup>(out var prodLookup)
@@ -338,10 +338,13 @@ namespace CitySim
                     in dtable, haveDistricts, in teams, in unemployed);
 
                 // 철거-후-건설 실행(메인, SnapshotJob 전 → 같은 틱 스냅샷에 구멍 반영):
-                //   요청 target 근처 최근접 **주택**을 철거(셀 즉시 해제 + destroy + StampDirty) → 스냅샷에
+                //   target 중심 창 안을 철거(셀 즉시 해제 + destroy + StampDirty) → 스냅샷에
                 //   구멍이 담겨 GrowthJob 인테리어 배치가 같은 틱에 채운다. thrash 가드는 ResolveDemandOptions.
-                //   주택만 철거(ResidenceBuilding 필터) — 서비스/창고는 대상 아님. 철거된 집 거주민은
-                //   DeadReferenceReclaim이 재하우징(누수 없음).
+                //   철거 가치 계층(2026-07-17 유저 확정): 비오라 요청=주택만 / **오라 요청=주택+생산시설**
+                //   (치안·병원 > 생산 > 주택 — 창고·오라는 불가침). 철거된 집 거주민은
+                //   DeadReferenceReclaim이 재하우징(예비자 큐 = UnassignedTag, 이민 회계가 차감 —
+                //   인구 무손실), 생산시설 재고는 StockInheritance 원장으로 승계, 실직자는
+                //   JobSeekerTag 재고용 큐(오라 근무 노동 공급).
                 if (redevelopReqs.Length > 0)
                 {
                     // 라이브 레이어 쓰기 전 **모든 잡 완료**: AiRoadJanitor의 SnapshotJob이 OccupancyLayer를
@@ -362,7 +365,11 @@ namespace CitySim
                         var req    = redevelopReqs[r];
                         int rOwner = req.x;
                         int2 tgt   = new int2(req.y, req.z);
-                        int2 need  = new int2(req.w >> 8, req.w & 0xFF);
+                        int2 need  = new int2((req.w >> 8) & 0xFF, req.w & 0xFF);
+                        // 가치 계층(2026-07-17 유저 확정): 오라형 요청(bit16)은 주택+**생산시설** 철거
+                        //   가능(치안·병원 > 생산 > 주택). 비오라(생산자·식당·창고)는 주택만.
+                        //   창고·오라는 계층 최상위 = 어느 재개발도 불가침.
+                        bool auraClass = (req.w & (1 << 16)) != 0;
                         if (need.x <= 0 || need.y <= 0) need = new int2(2, 2);   // 방어(크기 미상)
 
                         // ── 크기 인지 면적 철거(2026-07-16, 유저 실측 픽스) ──
@@ -402,6 +409,62 @@ namespace CitySim
                             rdEcb.DestroyEntity(e);
                             razed.Add(e);
                             cleared++;
+                        }
+
+                        // ── 가치 계층: 오라형 재개발은 창 내 **생산시설**(ProductionJob — 농장·
+                        //   제분소·식당)도 철거(2026-07-17 유저 확정). 이중 효과: ① 부지 확보
+                        //   ② 실직자 발생(DeadReferenceReclaim→JobSeekerTag) = 오라 근무 노동
+                        //   공급 — 완전고용 도시에서 노동 게이트가 잠근 매듭을 철거가 푼다.
+                        //   창고(WarehouseTag)·오라(AuraSupplier)는 불가침. 재고는 StockInheritance
+                        //   원장에 적립 — 같은 소유자가 동종(MainKey)을 다시 지으면 승계
+                        //   (SpawnSystem). 근무자는 시민 불사 원칙대로 실직 처리만(파괴 없음).
+                        int clearedProd = 0;
+                        if (auraClass)
+                        {
+                            bool haveInherit = SystemAPI.TryGetSingleton<StockInheritance>(out var inherit)
+                                               && inherit.Ledger.IsCreated;
+                            foreach (var (bfRO, pjRO, e) in
+                                     SystemAPI.Query<RefRO<BuildingFootprint>, RefRO<ProductionJob>>()
+                                         .WithNone<WarehouseTag, AuraSupplier>()
+                                         .WithEntityAccess())
+                            {
+                                var bf = bfRO.ValueRO;
+                                if (bf.OwnerLocalId != rOwner || razed.Contains(e)) continue;
+                                int2 eff = EntranceOps.RotateSize(bf.Size, bf.RotSteps);
+                                if (bf.Origin.x > whi.x || bf.Origin.x + eff.x - 1 < wlo.x ||
+                                    bf.Origin.y > whi.y || bf.Origin.y + eff.y - 1 < wlo.y) continue;
+
+                                // 재고 승계 적립: 이 건물의 MainKey는 생산 출력 품목의 역참조
+                                //   (commodity→생산자 파생 테이블 — 인스턴스에 키 미보유라 유일 경로).
+                                if (haveInherit && SystemAPI.HasBuffer<StockEntry>(e))
+                                {
+                                    var pjOut = pjRO.ValueRO.RecipeOutput;
+                                    int mkey  = haveProducer && prodLookup.Table.IsCreated
+                                                && prodLookup.Table.TryGetValue((int)pjOut, out int pmk)
+                                        ? pmk : HardcodedCommodityProducer(pjOut);
+                                    if (mkey <= 0 && pjOut == Commodity.Meal)
+                                        mkey = HardcodedNeedMainKey(0);   // 식당 폴백(Hunger 공급자)
+                                    if (mkey > 0)
+                                    {
+                                        var stockBuf = SystemAPI.GetBuffer<StockEntry>(e);
+                                        for (int si = 0; si < stockBuf.Length; si++)
+                                            inherit.Deposit(rOwner, mkey,
+                                                stockBuf[si].Commodity, stockBuf[si].Current);
+                                    }
+                                }
+
+                                for (int dx = 0; dx < eff.x; dx++)
+                                for (int dz = 0; dz < eff.y; dz++)
+                                {
+                                    int2 cell = bf.Origin + new int2(dx, dz);
+                                    occ.Remove(cell);
+                                    if (hasGm) gm.BuildingCells.Remove(cell);
+                                }
+                                rdEcb.DestroyEntity(e);
+                                razed.Add(e);
+                                clearedProd++;
+                            }
+                            cleared += clearedProd;
                         }
 
                         // ── 창 내부 도로 철거(2026-07-16, 유저: 주택 구획 4×4 링이 그보다 큰
@@ -447,19 +510,20 @@ namespace CitySim
                                 _redevelopHold[new int2(x, y)] = holdUntil;
                         }
 
-                        // 파괴 원인 추적(2026-07-11): 재개발은 주택(ResidenceBuilding)만 — 창고가 사라지면
-                        //   이 로그가 아니라 [Capture]/[Raze] 쪽이다. 불발(창 내 주택 0 = 비주택 점유·빈터)은
-                        //   관찰 로그 — 반복되면 가치 계층(주택 외 철거) 검토 신호.
+                        // 파괴 원인 추적(2026-07-11 → 2026-07-17 가치 계층): 재개발 = 주택 +
+                        //   (오라 요청이면) 생산시설. 창고·오라가 사라지면 이 로그가 아니라
+                        //   [Capture]/[Raze] 쪽이다. 불발(창 내 대상 0)은 관찰 로그.
                         if (cleared > 0 || roadCut > 0)
                         {
                             var de = rdEcb.CreateEntity();
                             rdEcb.AddComponent(de, new StampDirtyEvent { OwnerLocalId = rOwner });
-                            Debug.Log($"[CityAI] P{rOwner} 재개발 철거(주택 {cleared}채 + 도로 {roadCut},"
-                                + $" 목표 {need.x}x{need.y}+여유 창) target={tgt}");
+                            Debug.Log($"[CityAI] P{rOwner} 재개발 철거(주택 {cleared - clearedProd}채"
+                                + (auraClass ? $" + 생산시설 {clearedProd}채" : "")
+                                + $" + 도로 {roadCut}, 목표 {need.x}x{need.y}+여유 창) target={tgt}");
                         }
                         else
-                            Debug.Log($"[CityAI] P{rOwner} 재개발 불발: target={tgt} 창 내 주택·도로 0"
-                                + $" (목표 {need.x}x{need.y} — 비주택 점유?)");
+                            Debug.Log($"[CityAI] P{rOwner} 재개발 불발: target={tgt} 창 내 철거 대상 0"
+                                + $" (목표 {need.x}x{need.y}, 오라클래스={auraClass})");
                     }
                     razed.Dispose();
 
@@ -805,7 +869,15 @@ namespace CitySim
                         if (candKey <= 0) continue;
                         // 노동 게이트(2026-07-17): 정원을 채울 무직 노동력이 없으면 이번 틱 후보 아님
                         //   (수요 유지 — 인구가 자라면 자동 재개, attempts 미증가 = 블랙리스트 무오염).
-                        if (LaborBlocked(candKey, owner, haveProducer, in prodLookup, in unemployed))
+                        // ⚠ 오라형은 게이트 **면제**(가치 계층, 2026-07-17 유저 확정): 게이트가 후보를
+                        //   떨구면 attempts가 안 쌓여 재개발 escalation에 영영 못 도달 — 꽉 찬 완전고용
+                        //   도시(이민 0=무직 0)에서 치안·병원 확충이 데드락. 오라 재개발은 생산시설도
+                        //   철거(하단 가치 계층)하므로 **철거가 곧 노동 공급**(실직→JobSeekerTag→고용).
+                        //   무근무 오라는 Unstaffed(비건설) 분기라 무한 재귀 없음(07-17 픽스 전제).
+                        bool candAura = haveProducer && prodLookup.AuraKeys.IsCreated
+                                        && prodLookup.AuraKeys.ContainsKey(candKey);
+                        if (!candAura
+                            && LaborBlocked(candKey, owner, haveProducer, in prodLookup, in unemployed))
                             continue;
 
                         int bestNc2 = 0; int2 pick2 = default;
@@ -1040,8 +1112,10 @@ namespace CitySim
                 _redevelopAttempts.TryGetValue(akey, out int redev);
                 if (attemptsNow >= RedevelopEscalate && redev < RedevelopCap)
                 {
+                    // 가치 계층(2026-07-17 유저 확정): 오라형 요청은 bit16 표시 — 실행부가 주택에
+                    //   더해 **생산시설**도 철거(부지+노동 동시 확보). 비오라는 주택만.
                     redevelopReqs.Add(new int4(owner, whereCell.x, whereCell.y,
-                        (opt.Size.x << 8) | opt.Size.y));   // 목표 footprint 동봉(크기 인지 철거)
+                        (opt.IsAura ? 1 << 16 : 0) | (opt.Size.x << 8) | opt.Size.y));
                     _redevelopAttempts[akey] = redev + 1;
                     _demandAttempts[akey]    = 0;
                 }

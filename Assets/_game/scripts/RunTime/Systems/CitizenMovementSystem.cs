@@ -136,6 +136,8 @@ namespace CitySim
                ? 8.0 * secPerGameHour          // 입원 최대 8게임시간(완치 시 조기 퇴원)
              : (relief & NeedType.LowEntertainment) != NeedType.None
                ? 2.0 * secPerGameHour          // 공원 최대 2게임시간(해소 완료 시 조기 퇴장)
+             : (relief & NeedType.LowEducation) != NeedType.None
+               ? 2.0 * secPerGameHour          // 학교 최대 2게임시간(체류형 — 조기 하교, 2026-07-17)
                : 3.0;                          // 식사류(재화 양자) 고정
     }
 

@@ -197,6 +197,47 @@ namespace CitySim
             => math.min(capacity, population * PerCapita(c));
     }
 
+    /// <summary>
+    /// 재개발 철거 재고 승계 원장(가치 계층, 2026-07-17 유저 확정) — AI 재개발이 생산시설을
+    /// 철거하면 들고 있던 재고(StockEntry.Current)를 여기 기록해 두었다가, **같은 소유자가
+    /// 같은 생산시설(MainKey)을 다시 지을 때** SpawnSystem이 새 건물 재고로 승계한다
+    /// (용량 초과분은 원장에 잔류 — 다음 동종 건물이 마저 승계).
+    ///   · key   = int3(owner, MainKey, (int)commodity)  · value = 수량.
+    ///   · 쓰기: AiCityGrowthSystem 재개발 철거(메인, CompleteAllTrackedJobs 후).
+    ///   · 읽기·차감: SpawnSystem 건물 스폰(메인). 둘 다 메인 전용 — 잡 접근 금지.
+    ///   · **인간 유저 수동 철거(RazeSystem)·전투 파괴는 기록하지 않음** = 자원 전량 소실
+    ///     (유저 확정 — 승계는 AI 재개발의 보상 기제).
+    /// 수명주기: SpawnSystem OnCreate/OnDestroy.
+    /// </summary>
+    public struct StockInheritance : IComponentData
+    {
+        public NativeHashMap<int3, int> Ledger;
+
+        public static int3 Key(int owner, int mainKey, Commodity c)
+            => new int3(owner, mainKey, (int)c);
+
+        /// <summary>원장에서 최대 room만큼 꺼낸다(있는 만큼만). 꺼낸 양 반환. 메인 전용.</summary>
+        public int Take(int owner, int mainKey, Commodity c, int room)
+        {
+            if (room <= 0 || !Ledger.IsCreated) return 0;
+            var k = Key(owner, mainKey, c);
+            if (!Ledger.TryGetValue(k, out int have) || have <= 0) return 0;
+            int take = math.min(room, have);
+            if (take >= have) Ledger.Remove(k);
+            else Ledger[k] = have - take;
+            return take;
+        }
+
+        /// <summary>철거 재고 적립. 메인 전용.</summary>
+        public void Deposit(int owner, int mainKey, Commodity c, int amount)
+        {
+            if (amount <= 0 || !Ledger.IsCreated) return;
+            var k = Key(owner, mainKey, c);
+            Ledger.TryGetValue(k, out int have);
+            Ledger[k] = have + amount;
+        }
+    }
+
     /// <summary>풀 흐름 창(성장 틱마다 소비·클리어) — Out=실제 유출, In=실제 유입. **물리 흐름만**
     /// (2026-07-10 층 분리 합의): 미충족 요구(desire)는 풀 장부가 아니라 소비자의 결핍 신호 —
     /// 수요층(LogisticsMissLog→DemandField) 소관. 풀은 알아도 모른척.</summary>

@@ -18,13 +18,13 @@ namespace CitySim
     //  실행 모델("느슨함=백그라운드 잡"): 게임 시간당 1회(+최초) 소스를 메인에서 값
     //  복사 → Burst 잡이 back 맵을 Clear 후 전체 재그리기(무효화 회피 — stamp 독트린)
     //  → IsCompleted 폴링 → front(AuraCoverage 싱글톤)로 복사 발행 + Version++.
-    //  독자(SafetySystem·DemandAggregation·배치 프리뷰)는 front만 읽는다(GetSingleton RO
+    //  독자(CivicSystem·DemandAggregation·배치 프리뷰)는 front만 읽는다(GetSingleton RO
     //  → 발행측 GetSingletonRW와 프레임워크 의존성으로 상호 안전).
     //  비용: 시설 수 × 원 면적(반경 20 ≈ 1,300셀) — 시간당 1회라 사실상 0.
     //
     //  관리형 모델(2026-07-15~16): 셀값 = 서비스 품질 permille. d = Quality × min(1, a/b),
     //  a = 배정 근무자수 × 담당인원(PerWorkerCoverage), b = 범위 내 건물 캐퍼 합. 발행:
-    //    · AuraCoverage(셀→품질 permille, 동종 합산) — SafetySystem 등이 비례 완화.
+    //    · AuraCoverage(셀→품질 permille, 동종 합산) — CivicSystem(공무불만 가중합) 등이 비례 완화.
     //    · AuraLoadMap(시설→(감당중 b, 감당가능 a)) — AuraLoadHud(F6) 표시.
     //    · AuraUtilization(시설→가동률 min(1,b/a)) — CitizenMovementSystem 오라직 숙련 성장률.
     //  증설 수요는 시설 과밀 신호가 아니라 **d<1 불평 시민**(DemandAggregation.CollectAuraDemandJob)

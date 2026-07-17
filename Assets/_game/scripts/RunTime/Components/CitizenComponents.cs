@@ -60,7 +60,8 @@ namespace CitySim
         public float Stress;    // 스트레스 — 누적 미충족(높을수록 나쁨)
         public float Health;    // 신체건강 — 질병·노동 누적
         public float Loyalty;   // 충성도 — 도시 전반 만족(이주 결정)
-        public float Safety;    // 안심도 — 치안 반영(투영: 1−CitizenSafety.Level, 미보유=1)
+        public float Safety;    // 안심도 — 공공서비스 만족 반영(투영: 1−CitizenCivic.Level, 미보유=1.
+                                //   2026-07-17 치안 단독→공무불만 가중합으로 원천 교체, 축 이름 유지)
 
         public static CitizenConditions Healthy => new CitizenConditions
         {
@@ -120,18 +121,21 @@ namespace CitySim
     }
 
     /// <summary>
-    /// 치안 불안 욕구(NeedType.HighCrime) — **커버형 욕구의 첫 사례**(2026-07-12).
-    /// 방문·추구(Pursuing) 없음: 집이 오라(경찰서류 AuraSupplier) 커버 안이면 감소,
-    /// 밖이면 증가(SafetySystem). NeedDecision/ServiceSearch 파이프라인을 전혀 안 탄다 —
-    /// 수요는 "미커버 + 불안 시민"을 DemandAggregation이 직접 샘플(NoCoverage 채널).
-    /// v1 효과: 수요 신호 전용(AI가 경찰서류를 짓게 함). 사기·이민·생산성 연결은 후속.
+    /// 공무불만 — **모든 관리형 오라 서비스의 통합 경험 축**(2026-07-17 유저 확정,
+    /// 구 CitizenSafety(치안 단독)를 흡수·대체). 방문·추구 없음: 현재 위치 셀의 서비스별
+    /// 커버 vᵢ를 **가중합**(치안 .40/소방 .25/환경 .20/행정 .15 — CivicSystem)한 V가
+    /// 목표 Level(1−V)을 정한다. NeedDecision/ServiceSearch 파이프라인을 전혀 안 탄다.
+    /// **진단은 여기서 나오지 않는다**: "무엇이 부족한지"는 CollectAuraDemandJob이 셀의
+    /// 비트별 지도에서 직접 파생(불만=결과 축, 진단=지도 축 — 시민은 재실 가중치만 제공).
+    /// 컨디션 투영: CitizenConditions.Safety = 1−Level(축 이름 유지, 의미 = 공공서비스 만족).
+    /// 새 오라 서비스 추가 = CivicSystem 가중치 한 줄 + 수요 비트 한 줄(컴포넌트 불증식).
     /// 모양 규약(Level/Rate/Threshold + IsActive) 준수.
     /// </summary>
-    public struct CitizenSafety : IComponentData
+    public struct CitizenCivic : IComponentData
     {
-        public float Level;       // 0(안심) ~ 1(최악).
-        public float Rate;        // 게임초당 증가 속도(미커버 시). 커버 시 4배속 회복.
-        public float Threshold;   // 초과 = 불안(수요 샘플 대상).
+        public float Level;       // 0(만족) ~ 1(공무불만 최악).
+        public float Rate;        // 게임초당 증가 속도(서비스 부족분만큼).
+        public float Threshold;   // 초과 = 불만 활성.
 
         public readonly bool IsActive => Level > Threshold;
     }
@@ -150,6 +154,23 @@ namespace CitySim
         public float Level;       // 0(즐거움) ~ 1(최악).
         public float Rate;        // 게임초당 증가 속도. 체류 해소 = Rate × ReliefFactor(8배).
         public float Threshold;   // 초과 = 따분(추구 후보).
+
+        public readonly bool IsActive => Level > Threshold;
+    }
+
+    // ※ 관리형 오라 서비스(치안·환경·행정·소방)의 시민 경험은 **CitizenCivic 하나로 통합**
+    //   (2026-07-17 유저 확정 — 서비스별 개별 컴포넌트는 만들지 않는다. 공급·수요·배치는
+    //   비트별 유지). 서비스별 시민 반응 차별화가 필요해지는 서비스만 그때 분리.
+
+    /// <summary>교육 욕구 — NeedType.LowEducation, **체류형**(2026-07-17 유저 지시: 방문형
+    /// 학교). CitizenBoredom(공원)과 동형: stamp 탐색·이동·좌석(VisitorOccupancy) 공통
+    /// 파이프라인, 해소 = 학교 체류 시간 적분(EducationSystem). 교사 = Teacher(기존 직종).
+    /// 모양 규약 준수.</summary>
+    public struct CitizenEducation : IComponentData
+    {
+        public float Level;       // 0(충족) ~ 1(최악).
+        public float Rate;        // 게임초당 증가. 체류 해소 = Rate × ReliefFactor(8배).
+        public float Threshold;
 
         public readonly bool IsActive => Level > Threshold;
     }
@@ -214,7 +235,11 @@ namespace CitySim
         Unemployed = 0,
         Farmer, Miner, Builder, Engineer, Merchant,
         Doctor, Teacher, Researcher, Artist, Administrator, Soldier,
-        Officer,   // 경찰(치안 오라) — 관리형 서비스 전문직(2026-07-15). 새 서비스는 여기 append(서수 안정).
+        CivilServant,  // 공무원(서수 12 — 구 Officer 개명, 2026-07-17 유저 확정): **모든 관리형
+                       //   오라 서비스(치안·환경·행정·소방)의 통일 직종**. 구 세이브의 Officer
+                       //   숙련(같은 서수)이 공무 숙련으로 자연 승계. 새 오라 서비스 = 직업 추가
+                       //   없음. 방문형 전문직(Doctor·Teacher)은 별도 유지(근무창·기계가 직업 키).
+                       //   ⚠ 새 직업 추가 시 JobCount(FixedList64Bytes 상한 15) 확인.
     }
 
     public struct JobData : IComponentData
@@ -236,9 +261,11 @@ namespace CitySim
     // ──────────────────────────────────────────────────────────────────────────
     public struct CitizenSkills : IComponentData
     {
-        /// <summary>JobType 값 수(Unemployed 포함) — enum과 일치 유지. Officer 추가(2026-07-15) → 13.
-        /// FixedList64Bytes&lt;float&gt; 용량 15+라 여유. 구세이브(12칸) 시민은 Get(Officer=12)이 bounds
-        /// 밖→0 반환(신참 base 0.5 기여), Add도 no-op — 크래시 없음(숙련만 미성장).</summary>
+        /// <summary>JobType 값 수(Unemployed 포함) — enum과 일치 유지. CivilServant(구 Officer,
+        /// 서수 12 재사용) 포함 13. **FixedList64Bytes&lt;float&gt; 용량 상한 = 15** — 관리형 오라
+        /// 서비스는 CivilServant로 통일이라 직업이 안 늘지만, 새 직업군 도입 시 상한 확인.
+        /// 구세이브(적은 칸) 시민은 Get이 bounds 밖→0 반환(신참 base 0.5 기여), Add도 no-op —
+        /// 크래시 없음(숙련만 미성장).</summary>
         public const int JobCount = 13;
 
         /// <summary>인덱스 = (int)JobType, 값 0~100.</summary>
@@ -298,7 +325,8 @@ namespace CitySim
             JobType.Merchant      => new Window { Open = 8,  Close = 24, Shifts = 2 },  // 식당
             JobType.Administrator => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 창고 24h
             JobType.Doctor        => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 병원 24h(2026-07-13)
-            JobType.Officer       => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 경찰 24h(2026-07-15)
+            JobType.CivilServant  => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 공공서비스 24h(2026-07-17 통일)
+            JobType.Teacher       => new Window { Open = 8,  Close = 16, Shifts = 1 },  // 학교 주간(2026-07-17)
             _                     => new Window { Open = defOpen, Close = defClose, Shifts = 1 },
         };
 
@@ -308,7 +336,7 @@ namespace CitySim
             JobType.Merchant      => 2,
             JobType.Administrator => 3,
             JobType.Doctor        => 3,   // 병원 24h(2026-07-13)
-            JobType.Officer       => 3,   // 경찰 24h(2026-07-15)
+            JobType.CivilServant  => 3,   // 공공서비스 24h(2026-07-17 통일)
             _                     => 1,
         };
     }
@@ -324,7 +352,7 @@ namespace CitySim
         //  욕구 도입 시 자연 통합.
         // ──────────────────────────────────────────────────────────────────
         /// <summary>컨디션 계수(0.5~1.0): energy=피로 회복도, satiety=포만도(1−Hunger),
-        /// safety=안심도(1−CitizenSafety.Level, 미보유 팩션/구세이브 = 중립 1).</summary>
+        /// safety=안심도(1−CitizenCivic.Level — 공공서비스 만족, 미보유 팩션/구세이브 = 중립 1).</summary>
         public static float ConditionFactor(JobType job, float energy, float satiety, float safety)
         {
             // ⚠ 치안 가중 테스트 과장값(2026-07-12 유저 요청 "크게 차이 나도록") —
@@ -371,7 +399,7 @@ namespace CitySim
             JobType.Artist        => 0.8f * a.CreativityN   + 0.2f * a.DexterityN,
             JobType.Administrator => 0.5f * a.IntelligenceN + 0.5f * a.SociabilityN,
             JobType.Soldier       => 0.6f * a.PhysiqueN     + 0.4f * a.ResilienceN,
-            JobType.Officer       => 0.5f * a.PhysiqueN     + 0.5f * a.ResilienceN,   // 경찰(2026-07-15, 튜닝 가능)
+            JobType.CivilServant  => 0.5f * a.PhysiqueN     + 0.5f * a.ResilienceN,   // 공무(구 Officer 승계, 튜닝 가능)
             _                     => 0.5f,
         };
 
@@ -405,6 +433,21 @@ namespace CitySim
     /// 직장 소실 시 DeadReferenceReclaim이 재부착(재고용 큐 복귀).
     /// </summary>
     public struct JobSeekerTag : IComponentData { }
+
+    /// <summary>
+    /// 인간 유저 수동 철거로 집을 잃은 시민 목록(2026-07-17 유저 확정) — 싱글톤 엔티티의
+    /// DynamicBuffer. RazeSystem(Human=1 명령)이 철거 주택의 거주민을 등재, UI 다이얼로그
+    /// (DisplacedCitizensDialog)가 표시: 유지 선택(예비자 — UnassignedTag 재하우징 큐에 이미
+    /// 있음, 목록에서 제거만) / 해산(엔티티 파괴 — 빈 정원만큼 이민이 새 시민을 자연 재생성).
+    /// 부분 선택 가능. AI 재개발 철거는 등재하지 않음(전원 자동 예비자 = UnassignedTag 큐,
+    /// 이민 회계가 대기자를 정원에서 차감하므로 이중 유입 없음 — CitizenImmigrationSystem).
+    /// 시민 불사 원칙(사망 경로 금지)과의 관계: 이것은 시뮬레이션 사망이 아니라 유저의
+    /// 명시적 해산 선택 — 유일한 시민 소멸 경로.
+    /// </summary>
+    public struct DisplacedCitizen : IBufferElementData
+    {
+        public Entity Citizen;
+    }
 
     // ──────────────────────────────────────────────────────────────────────────
     //  동적 위치 + 상태머신

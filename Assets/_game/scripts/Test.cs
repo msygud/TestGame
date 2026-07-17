@@ -13,7 +13,7 @@ using UnityEngine.InputSystem;
 //   ⚠ Ctrl 게이트(2026-07-12): 맨 우클릭은 유닛 이동 명령과 겹쳐, 명령 중 커서 아래 건물
 //     (창고 포함)을 조용히 거주건물로 오태그 → 재개발 철거 대상이 되던 함정("창고 소멸"의
 //     유력 경로). 파괴(Alt+좌클릭)와 동일한 수식키 규약으로 봉인.
-//   ※ 프로덕션은 프리팹에 BuildingAuthoring(Kind=Residence, Capacity)로 베이크하는 게 정석.
+//   ※ 프로덕션은 프리팹에 BuildingAuthoring(IsResidence 체크, ResidentSlots)로 베이크하는 게 정석.
 //     우클릭 태깅은 프리팹 미설정 상태에서 영역 파이프라인을 즉시 검증하기 위한 테스트용.
 public class Test : MonoBehaviour
 {
@@ -173,7 +173,9 @@ public class Test : MonoBehaviour
         if (raze)
         {
             var e = em.CreateEntity();
-            em.AddComponentData(e, new RazeAreaCommand { Min = mn, Max = mx });
+            // Human=1: 유저 수동 철거 — 자원 전량 파괴 + 거주민은 DisplacedCitizen 목록
+            //   (유지/해산 부분 선택 UI, 2026-07-17).
+            em.AddComponentData(e, new RazeAreaCommand { Min = mn, Max = mx, Human = 1 });
             Debug.Log($"[Test] 건물 파괴 {mn} ~ {mx}");
             return;
         }
