@@ -275,7 +275,9 @@ namespace CitySim
         public static bool IsOpen(int needBit, int hour) => needBit switch
         {
             0 => hour >= 8 && hour < 24,   // Hunger — 식당 영업 8~24
-            5 => hour >= 8 && hour < 16,   // LowEducation — 학교 8~16(Teacher 근무창 일치, 2026-07-17)
+            5 => hour >= 8 && hour < 24,   // LowEducation — 학교 8~24(Teacher 근무창 일치, 2026-07-18 야간 확장:
+                                            //   구 8~16은 주간 근로자 근무창과 완전 겹침 → 취업 시민의 수요 샘플이
+                                            //   전량 폐기돼 학교가 영영 안 지어지는 구조적 결함이었음)
             _ => true,                      // 기타(상시 — 서비스 창 도입 시 case 추가)
         };
     }

@@ -131,6 +131,29 @@ namespace Game.Unit
         public int MaxSearchNodes;
     }
 
+    /// <summary>
+    /// 수상 유닛 태그(2026-07-19 해상 이동) — 이동 도메인 = 물.
+    ///   · 있음: 경로 차단 그리드가 "물 아닌 셀 = 차단"으로 반전(항해).
+    ///   · 없음(기본 = 지상): "물 셀 = 차단" — 지상 유닛의 도하 차단도 이 도입과 함께 활성.
+    /// 유조선·군함 공통 기반. 물 정보는 UnitWaterMask(지형 정적 → 맵 로드 후 1회 빌드).
+    /// </summary>
+    public struct NavalUnit : IComponentData { }
+
+    /// <summary>
+    /// 내비 그리드 해상도의 물 마스크 싱글톤(1=물). 지형은 맵 로드 시 고정이므로
+    /// UnitWaterMaskBuildSystem이 1회 빌드(지형 셀 수 변경 시 재빌드). 경로 차단
+    /// 그리드 빌드(UnitPathfinding.BuildBlockedGrid)가 도메인에 따라 소비.
+    /// 수명주기: UnitWaterMaskBuildSystem OnCreate/OnDestroy.
+    /// </summary>
+    public struct UnitWaterMask : IComponentData
+    {
+        public NativeArray<byte> Water;   // grid.Size.x * grid.Size.y, 1=물
+        public int2 Size;                 // 빌드 당시 grid.Size(불일치 = 미사용 가드)
+
+        public readonly bool IsUsable(int2 gridSize)
+            => Water.IsCreated && Size.Equals(gridSize);
+    }
+
     public enum UnitActivityKind : byte
     {
         Moving,

@@ -82,6 +82,14 @@ MonoBehaviour:
     Role: 2
     Capacity: 1000
     Initial: 0
+  - Commodity: 4
+    Role: 2
+    Capacity: 1000
+    Initial: 0
+  - Commodity: 5
+    Role: 2
+    Capacity: 1000
+    Initial: 0
   IsWarehouse: 1
   WarehouseStampMaxDist: 40
   MaxHealth: 0

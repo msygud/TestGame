@@ -13,7 +13,8 @@ namespace CitySim
     //    · 해소 = 학교에 머무는 동안 시간 비례 적분 감소(수업 = 시간이 양자).
     //    · 조기 퇴장: 다 풀리면(Level≤0) ActionEndTime을 지금으로 당김 — Movement는
     //      타이머 만료만 본다(욕구 무지 유지). 최대 체류는 NeedDwell 표(2게임시간).
-    //    · 영업시간 = NeedServiceHours(bit5, 8~16시) — Teacher 근무창(8~16)과 일치.
+    //    · 영업시간 = NeedServiceHours(bit5, 8~24시) — Teacher 근무창(8~24, 2교대)과 일치.
+    //      (2026-07-18 야간 확장: 구 8~16은 주간 근로자 근무창과 겹쳐 등교·수요 모두 불가)
     //  파이프라인: [이 시스템](증가→해소) → NeedDecision(EducationUrgencyJob) →
     //  ServiceSearch → Movement. 두 잡 모두 시민 컴포넌트만 접근(건물 룩업 0).
     // ══════════════════════════════════════════════════════════════════════════

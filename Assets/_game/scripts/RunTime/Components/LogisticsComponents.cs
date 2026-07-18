@@ -43,6 +43,13 @@ namespace CitySim
         Meal  = 3,   // 완성품
         // 완성품 등급 변종(예: MealQuality, MealElite)은 생산 단계에서 같은 패밀리
         // 별도 id로 추가.
+
+        // ── 전쟁물자 사슬(2026-07-19, 채취 골격) — 맵 ResourceCatalog TypeId(Iron=2,
+        //   Oil=7)와는 별개 축(지형 자원 ↔ 물류 품목). 채취 건물(ResourceExtractor)이
+        //   footprint 아래 ResourceCell을 소모해 생산. 다음 단계: IronOre→Ingot→무기,
+        //   Oil→Fuel(정제) 중간재.
+        IronOre = 4,   // 원재료 — 철광석(광산, 육상)
+        Oil     = 5,   // 원재료 — 원유(시추, 해상 → 항만 창고 경유)
     }
 
     /// <summary>품목 티어. 보관 라우팅과 입력 가능 여부를 결정.</summary>
@@ -96,6 +103,10 @@ namespace CitySim
                 case Commodity.Meal:
                     return new CommodityDef { Tier = CommodityTier.Final,
                         ReorderPct = 25, TargetPct = 90, DischargePct = 80 };
+                case Commodity.IronOre:
+                case Commodity.Oil:
+                    return new CommodityDef { Tier = CommodityTier.Raw,
+                        ReorderPct = 25, TargetPct = 90, DischargePct = 80 };
                 default:
                     return new CommodityDef { Tier = CommodityTier.Raw,
                         ReorderPct = 25, TargetPct = 90, DischargePct = 80 };
@@ -143,6 +154,12 @@ namespace CitySim
 
         /// <summary>stamp 도달 범위 상한(BFS 최대 도로 칸 수). 0 이하면 무제한.</summary>
         public int MaxDist;
+
+        /// <summary>항만 반경(셀, 유클리드 — 2026-07-19 해상 채취). 0 = 항만 아님.
+        /// 해상 공급자(OffshoreSupplier — 도로/stamp 없음)는 이 반경 안의 자기 창고가
+        /// 하나라도 있으면 풀 접속(OffshorePushSystem). 도로 BFS(MaxDist)와 직교 —
+        /// 같은 창고가 육상 stamp + 해상 반경을 겸할 수 있다(해안 항만 창고).</summary>
+        public int SeaRange;
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -189,6 +206,8 @@ namespace CitySim
         {
             Commodity.Grain => 3,
             Commodity.Flour => 2,
+            // 전쟁물자(IronOre·Oil): v1은 인구 앵커 기본값 재사용 — 소비자(제련·정제) 도입 전
+            //   무한 비축 차단이 목적. MRP 도입 시 군 규모 앵커 case로 교체(설계 골격 주석 참조).
             _               => 2,   // 새 품목 기본값 — 도입 시 case 추가
         };
 

@@ -326,7 +326,7 @@ namespace CitySim
             JobType.Administrator => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 창고 24h
             JobType.Doctor        => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 병원 24h(2026-07-13)
             JobType.CivilServant  => new Window { Open = 0,  Close = 24, Shifts = 3 },  // 공공서비스 24h(2026-07-17 통일)
-            JobType.Teacher       => new Window { Open = 8,  Close = 16, Shifts = 1 },  // 학교 주간(2026-07-17)
+            JobType.Teacher       => new Window { Open = 8,  Close = 24, Shifts = 2 },  // 학교 주+야간(2026-07-18 — 주간 근로자 등교 가능, 식당 패턴)
             _                     => new Window { Open = defOpen, Close = defClose, Shifts = 1 },
         };
 
@@ -337,6 +337,7 @@ namespace CitySim
             JobType.Administrator => 3,
             JobType.Doctor        => 3,   // 병원 24h(2026-07-13)
             JobType.CivilServant  => 3,   // 공공서비스 24h(2026-07-17 통일)
+            JobType.Teacher       => 2,   // 학교 8~24 2교대(2026-07-18)
             _                     => 1,
         };
     }

@@ -76,6 +76,7 @@ namespace CitySim
         NoRoadAccess   = 6,  // 입구가 도로에 닿지 않음 (RequireRoadAccess=true일 때만)
         ResourceBlocked = 7, // 채취 자원이 있는 셀 (자원은 보존 — 갈아엎지 않음)
         EnemyTerritory  = 8, // 다른 플레이어 영역 안 (Territory 게이트)
+        NoResource      = 9, // 채취 건물인데 footprint 아래 매칭 자원 셀이 없음 (2026-07-19)
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -125,12 +126,16 @@ namespace CitySim
 
             var ecb = new EntityCommandBuffer(Allocator.Temp);
 
+            // 채취 능력(2026-07-19) — 프리팹 엔티티의 같은 컴포넌트를 읽는다(능력=컴포넌트 원칙).
+            var extractorLookup = SystemAPI.GetComponentLookup<ResourceExtractor>(true);
+
             foreach (var (req, reqEntity) in
                 SystemAPI.Query<RefRO<PlaceBuildingRequest>>().WithEntityAccess())
             {
                 var r = req.ValueRO;
                 ProcessRequest(ref r, ref layers, prefabLookup, prefabMetaLookup,
-                    cellTypeLookup, entranceLookup, gridMap, gridSettings, roadKeyLookup, in teams, ecb);
+                    cellTypeLookup, entranceLookup, gridMap, gridSettings, roadKeyLookup, in teams,
+                    extractorLookup, ecb);
 
                 ecb.DestroyEntity(reqEntity);
             }
@@ -152,6 +157,7 @@ namespace CitySim
             GridSettings             settings,
             RoadKeyLookup            roadKeyLookup,
             in TeamTable             teams,
+            ComponentLookup<ResourceExtractor> extractorLookup,
             EntityCommandBuffer      ecb)
         {
             // ── 1. 메타 조회 ─────────────────────────────────────────
@@ -182,8 +188,12 @@ namespace CitySim
                 ? new int2(roadSize, roadSize)
                 : EntranceOps.RotateSize(meta.Size, rotSteps);
 
+            // 채취 건물(2026-07-19): 매칭 자원 셀 위 건설 허용(≥1셀 필수), 타 자원은 여전히 차단.
+            bool hasExtractor = extractorLookup.HasComponent(prefab);
+            int  extTypeId    = hasExtractor ? extractorLookup[prefab].ResourceTypeId : -1;
+
             var  fail = ValidateCells(req.Cell, size, meta.BuildableOn, req.OwnerLocalId,
-                ref layers, cellTypeLookup, in teams, out byte baseHeight);
+                ref layers, cellTypeLookup, in teams, hasExtractor, extTypeId, out byte baseHeight);
 
             if (fail != PlacementFailCode.None)
             {
@@ -247,10 +257,13 @@ namespace CitySim
             ref GridLayers    layers,
             CellTypeLookup    cellTypeLookup,
             in TeamTable      teams,
+            bool              hasExtractor,
+            int               extTypeId,
             out byte          baseHeight)
         {
             baseHeight = 0;
             bool firstCell = true;
+            bool onResource = false;   // 채취 건물: footprint 아래 매칭 자원 셀 ≥1 필수
 
             for (int dx = 0; dx < size.x; dx++)
             for (int dz = 0; dz < size.y; dz++)
@@ -267,8 +280,14 @@ namespace CitySim
                     return PlacementFailCode.Occupied;
 
                 // b2. 자원 확인 — 채취 자원 위에는 건설 불가 (ResourceLayer가 단일 소스).
+                //   예외(2026-07-19): 채취 건물은 자기 대상 TypeId 셀 위만 허용(그 자원을 캐러
+                //   온 것) — 다른 자원 셀은 여전히 차단(무관 자원 갈아엎기 방지).
                 if (layers.ResourceLayer.TryGetValue(cell, out var res) && res.Amount > 0)
-                    return PlacementFailCode.ResourceBlocked;
+                {
+                    if (!(hasExtractor && res.TypeId == extTypeId))
+                        return PlacementFailCode.ResourceBlocked;
+                    onResource = true;
+                }
 
                 // b3. 영역 확인 — 다른 팀 영역·경합지엔 신규 건설 불가 (Territory 게이트).
                 if (TerritoryOps.InEnemyTerritory(in layers.TerritoryLayer, cell, ownerLocalId, in teams)
@@ -292,6 +311,10 @@ namespace CitySim
                 else if (terrain.Height != baseHeight)
                     return PlacementFailCode.HeightMismatch;
             }
+
+            // 채취 건물: 캘 자원이 발밑에 하나도 없으면 배치 거부(고갈 유휴 건물 양산 방지).
+            if (hasExtractor && !onResource)
+                return PlacementFailCode.NoResource;
 
             return PlacementFailCode.None;
         }

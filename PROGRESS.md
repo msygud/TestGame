@@ -5,19 +5,81 @@
 
 ---
 
-## ❓ 다음 주제 (2026-07-18 논의만, 구현 0) — 자원 접근: 전초기지(Outpost) 모델
-> **유저**: "자원 문제로 가고 싶다 — 도시와 떨어져 있는데 어떻게 접근?" → 3단계 제안(합의 대기):
->   1단계 채취 골격(Ore Commodity + 광산 = 무입력 생산 변형: footprint 아래 ResourceCell 필수·
->   Amount 소모·고갈 유휴, 물류는 기존 풀 — 전초 창고가 논리 풀에 즉시 합류) →
->   2단계 AI 접근(결핍 채널 Ore → ResourceLayer 스캔 → **Destination Road 라우터**(2026-06-23,
->   원래 이 용도로 예정된 미완 항목)로 연결 → 창고-먼저 패턴 재사용) →
->   3단계 전략화(현 풀=텔레포트·캐리어=비주얼 → 도로 연결 군집별 풀 분리 + 실체 호송 = 보급선
->   습격 게임플레이, MRP 전쟁물자와 동시 설계).
-> **⬜ 미결정 3건(다음 세션 첫 질문)**: ① 보급 모델 — 전역 풀 유지(1~2단계 권장) vs 군집 분리
->   즉시 ② 전초 노동 — 통근(권장, 기계 0) vs 전초 주택(미니 정착지 — 공무 커버·이민 동반)
->   ③ 첫 자원 — Ore(전쟁물자 사슬 Ore→Ingot→무기) vs 건설재(Stone/Wood + 건설 비용 도입).
-> 근거 확인 완료: ResourceCell{TypeId, Amount} 존재 / RoadPathRequest·FindRoadPath·RoadPathSystem
->   가동 가능(1×1 전용) / CellBuildable이 자원 위 건설 차단 중(채취 건물은 예외 필요).
+## 🟢 현재 프론티어 (2026-07-19 후속) — 해상 이동 도메인 + 유조선 실체 운송 (✅ dotnet 빌드 클린 / ⚠ 에디터 선행 = 유조선 프리팹 + TankerPrefabAuthoring 배치)
+> **유저 확정**: "석유는 배로 운송 + 이참에 바다 위 움직임 구현(전투에서도 써야 하니)" →
+>   유조선·군함이 **같은 이동 기반**을 공유하도록 유닛 경로 기계에 물 도메인 통합.
+> **수상 도메인(Game.Unit)**: `NavalUnit` 태그(+NavalUnitAuthoring) = 물만 항해 / 지상(기본) =
+>   물 차단(도하 금지 — 이번에 함께 활성). 구현 = 차단 그리드 오버레이 한 겹
+>   (`UnitPathfinding.ApplyWaterDomain`): A*·직선 가시선·인근보행셀 전부 blocked만 보므로
+>   도메인이 전 기계에 일관 적용. 경로 캐시 키·차단 그리드 캐시 키에 도메인 분리.
+>   물 소스 = `UnitWaterMask` 싱글톤(나브 그리드 해상도, 1=물) — 지형 정적이라
+>   UnitWaterMaskBuildSystem이 1회 빌드(지형 셀 수 변경 시 재빌드). 마스크 미빌드 = 구 동작 폴백.
+>   ⚠ 알려진 한계: 선택 유닛 직접 명령(SelectedUnitMoveOrder)은 Direct(무경로)로 시작 —
+>   물 위반 시 스턱→리패스(MoveOrderRequest 경유)로 자연 복구. 유조선은 처음부터 A* 경유.
+> **유조선(실체 운송 — 육상 텔레포트와 달리 처음부터 물질)**: `OilTanker{HomePort,Phase,Cargo…}` +
+>   `TankerPrefabSingleton`(TankerPrefabAuthoring — 프리팹은 UnitAuthoring+NavalUnitAuthoring 필수).
+>   TankerSystem(메인, push 주기): 항만당 1척 자동 스폰(항만 인근 물 셀 나선 탐색) →
+>   Docked(반경 내 시추 Output>discharge 탐색) → ToRig(A* 항해, 게이트마다 이동 재발행=스턱 복구)
+>   → 적재(시추 재고 실차감) → ToPort → 하역(풀 deposit, 만석이면 잔량 유지 재시도) → Docked.
+>   **격침 = 화물 소실** — 보급선 습격의 물질 기반(전투 연결 준비 완료: CombatTargetMask.Naval 기존).
+>   OffshorePushSystem 텔레포트 배출은 TankerPrefabSingleton 존재 시 자동 은퇴(레거시 폴백 규약),
+>   미접속 miss 신호는 계속 그쪽 소관.
+> **⬜ 에디터 선행(추가)**: 유조선 프리팹(UnitAuthoring+NavalUnitAuthoring+메시) + SubScene에
+>   TankerPrefabAuthoring 배치(Capacity 40) / 시추 프리팹에 ObstacleFootprintAuthoring(선박 회피용)
+>   권장 / (기존) 광산·시추·항만·맵 도색 과제는 아래 항목 참조.
+> **검증 포인트**: 물 마스크 로그(맵 로드 후 1회) / 유조선이 항만 옆 물에 스폰 → 시추까지 물길로만
+>   항해(곶 우회) → 시추 Output 감소·풀 유입이 배 왕복 주기로 계단식 증가 / 지상 유닛에 물 건너
+>   이동 명령 → 우회 경로 or 해안 정지 / 유조선 프리팹 미배치 시 기존 텔레포트 유지.
+
+## 🟢 (2026-07-19) — 채취 1단계: 철(육상)·석유(해상) + 항만 창고 (✅ dotnet 빌드 클린 / ⚠ 에디터 선행 = 프리팹 2종·맵 도색)
+> **유저 확정(구 미결정 3건 해소)**: 전투 방향 — ① 보급 = **전역 풀 유지**(1~2단계) ② 노동 =
+>   **통근**(광산 Miner) + 시추는 **무인** ③ 첫 자원 = **철+석유 동시**(전쟁물자 사슬), 석유는
+>   바다 → **항만 창고**로 연결. (2·3단계: AI 접근·군집 분리/실체 호송은 후속.)
+> **품목**: Commodity.IronOre=4 / Oil=5 (Raw, 기본 임계). 무입력 레시피(None→×2/10s ⚠스텁).
+>   맵 자원 축은 별개: ResourceCatalog TypeId Iron=2, Oil=7 (기존 정의 재사용).
+>   PerCapita 기본 2 재사용(무한 비축 차단용 임시 앵커) — MRP 도입 시 군 규모 앵커로 교체.
+> **채취 능력** `ResourceExtractor{ResourceTypeId, AmountPerCycle}` (ExtractionComponents.cs, 프리팹
+>   컴포넌트 — BuildingAuthoring "채취" 섹션): 배치 = 매칭 자원 셀 위만 허용·≥1셀 필수
+>   (BuildingPlacement 예외 + NoResource=9 실패코드, 타 자원 셀은 여전히 차단), 생산 = 사이클
+>   시작 시 footprint 아래 가용량(라이브−pending) 확인·소모 확정, 고갈 = 유휴(재도색 자동 재개).
+> **레이어 쓰기 안전**: 소모는 `ResourceExtractLedger`(싱글톤, 메인 전용 — StockInheritance 패턴,
+>   수명주기 ProductionSystem)에 적립 → **HourChanged에 CompleteAllTrackedJobs 후 일괄 차감**
+>   (확립 패턴 — AI 폴링 스냅샷 잡과 충돌 회피, 시간당 1회 = 비용 무시. 독자에게 최대 1h 지연).
+> **해상 물류**: `OffshoreSupplier` 태그(무인 시추 — 도로/stamp 원리적 불가) + `WarehouseTag.SeaRange`
+>   (항만 반경, authoring WarehouseSeaRange — 0=항만 아님): **OffshorePushSystem**(신규, push와 동일
+>   게이트·규약)이 자기 항만 유클리드 반경 안이면 풀 배출, 밖이면 LogisticsMissLog(WarehouseId).
+>   기존 창고 프리팹(logis_h_l)에 IronOre/Oil Store 1000 칸 추가(풀 용량) — YAML 직접 편집.
+> **F11**: Port(SeaRange>0) / Extractor(자원명) 라벨.
+> **⬜ 에디터 선행(다음 세션)**:
+>   · 광산 프리팹: ProvidedJob=Miner, WorkerSlots, ProductionOutput=IronOre(4), ExtractResourceTypeId=2,
+>     ExtractAmountPerCycle, Stocks=[{IronOre, Output, 40}] + 레지스트리(BuildableOn=Land) + 입구 정의
+>   · 시추 프리팹: 무인(ProvidedJob=Unemployed), ProductionOutput=Oil(5), ExtractResourceTypeId=7,
+>     IsOffshore✓, Stocks=[{Oil, Output, 40}] + 레지스트리(**BuildableOn=Water**), 입구 없음
+>   · 항만: 기존 창고 변형 프리팹에 WarehouseSeaRange(예 25) — 해안 배치(육상 stamp 겸직)
+>   · 맵: MapEditor로 Iron(육상)·Oil(바다 셀) 자원 도색 / ⚠ ResourceCatalog에 Stone TypeId 6 중복
+>     항목 2개 — 정리 권장
+> **검증 포인트**: 광산을 철 자원 위 배치(자원 없는 곳 = NoResource 거부) → Miner 통근 → IronOre
+>   생산·창고 push → F11 Stock / 시추를 바다 유전 위 배치 → 무인 생산 → 항만 반경 안이면 풀 유입,
+>   밖이면 F12 창고 수요 / 1게임시간 후 자원 Amount 감소(디버그 오버레이) → 고갈 시 유휴.
+
+## (해소됨 2026-07-19 — 위 항목으로 대체) 구 "❓ 다음 주제: 자원 접근 전초기지 모델" 논의는 역사 기록만 유지:
+>   3단계 계획(채취 골격 → AI 접근(Destination Road 라우터) → 전략화(군집 풀·실체 호송)) 중
+>   1단계 구현 완료. 2단계(AI 결핍 채널 → ResourceLayer 스캔 → 도로 연결)·3단계는 미착수.
+
+## 🟢 (2026-07-18) 학교 미건설 픽스 — 야간 수업 확장 (✅ dotnet 빌드 클린 / ⚠ 에디터 실측 대기)
+> **유저 보고**: "교육 욕구가 없는지 학교가 안 지어진다" → 전 체인 추적 결과 욕구 배선은 전부 정상
+>   (스폰 부착·EducationTick/Urgency·L2 자동 파생·프리팹 school_h_m(MainKey 1012, VisitRelief=Education)
+>   ·레지스트리 등록 모두 확인). **원인 = 시간표 충돌**: 학교 영업 8~16 = 주간 근로자 근무창과 완전
+>   겹침 → ① 개장 중엔 시민이 AtWork(긴급도·수요 샘플 게이트 제외) ② 퇴근 후 추구는
+>   NeedServiceHours.IsOpen(bit5)가 전량 폐기 → 교육 수요를 낼 수 있는 시민 = 낮에 집에 있는
+>   무직자뿐 = 신호가 DemandActThreshold(20)·티어 경쟁·노동 게이트(무직≥2)를 못 넘음.
+>   지어져도 주간 근로자는 영원히 등교 불가(근무창=수업창)였음.
+> **픽스(식당 Merchant 8~24 2교대 패턴 재사용)**: ① JobSchedule.Profile Teacher = 8~24, 2교대
+>   ② ShiftCount Teacher = 2 ③ NeedServiceHours bit5 = 8~24 (staffing 일치 드리프트 규칙 준수).
+>   퇴근 시민(16~24)이 야간 수업으로 해소 + 그 시간대 미스가 수요로 집계 → AI 학교 건설 활성.
+> **검증 포인트(에디터)**: 저녁(16~24시) 시민이 학교 추구(F12 education 수요 발생) → AI 학교 신설
+>   → Teacher 2교대 고용 → 등교·체류(최대 2게임시간)·조기 하교 / 무직자는 주간에도 등교.
+> 파일: CitizenComponents.cs(JobSchedule), DemandAggregationSystem.cs(NeedServiceHours), EducationSystem.cs(주석).
 
 ## 🟢 (2026-07-18) BuildingAuthoring 정리 — Kind 드롭다운 은퇴 + 용어 중립화 (✅ dotnet 빌드 클린)
 > **유저 지적 3건 반영**: ① 거주에 Kind 드롭다운 불필요 ② "환자=방문자" 용어 비일관 ③ 나열식

@@ -69,6 +69,27 @@ namespace CitySim
                         OutputAmount = 10,
                         BaseDuration = 8f,
                     };
+                case Commodity.IronOre:
+                    // 무입력 채취(2026-07-19) — 재료는 footprint 아래 ResourceCell(Iron).
+                    //   가용량 게이트·소모는 ProductionSystem의 ResourceExtractor 분기가 담당.
+                    return new RecipeDef
+                    {
+                        Input        = Commodity.None,
+                        InputAmount  = 0,
+                        Output       = Commodity.IronOre,
+                        OutputAmount = 2,
+                        BaseDuration = 10f,  // ⚠ v1 스텁 — 제련 레시피 도입 때 균형
+                    };
+                case Commodity.Oil:
+                    // 무입력 채취(해상 시추) — 재료는 footprint 아래 ResourceCell(Oil).
+                    return new RecipeDef
+                    {
+                        Input        = Commodity.None,
+                        InputAmount  = 0,
+                        Output       = Commodity.Oil,
+                        OutputAmount = 2,
+                        BaseDuration = 10f,  // ⚠ v1 스텁 — 정제 레시피 도입 때 균형
+                    };
                 default:
                     return default;  // BaseDuration = 0 → 레시피 없음
             }

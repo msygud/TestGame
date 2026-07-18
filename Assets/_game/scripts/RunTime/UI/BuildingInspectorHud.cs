@@ -373,7 +373,15 @@ namespace CitySim
 
         static string ClassifyType(EntityManager em, Entity e)
         {
-            if (em.HasComponent<WarehouseTag>(e)) return "Warehouse";
+            if (em.HasComponent<WarehouseTag>(e))
+                return em.GetComponentData<WarehouseTag>(e).SeaRange > 0 ? "Port" : "Warehouse";
+            // 채취(2026-07-19) — TypeId는 ResourceCatalog 기준(Iron=2, Oil=7).
+            if (em.HasComponent<ResourceExtractor>(e))
+            {
+                int t = em.GetComponentData<ResourceExtractor>(e).ResourceTypeId;
+                var cat = ResourceCatalog.LoadRuntime();
+                return cat != null ? $"Extractor({cat.NameOf(t)})" : $"Extractor(#{t})";
+            }
             // 오라 공급자 우선(치안·의료 커버 시설 — 병원은 오라+방문 겸용이라 여기서 잡힘).
             if (em.HasComponent<AuraSupplier>(e))
             {

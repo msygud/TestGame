@@ -535,6 +535,13 @@ namespace Game.Unit
             var requestPathBuffers = SystemAPI.GetBufferLookup<MoveOrderPathWaypoint>(true);
             var ecb = new EntityCommandBuffer(Allocator.Temp);
             bool hasGrid = SystemAPI.TryGetSingleton<UnitNavigationGrid>(out var grid);
+            // 이동 도메인(2026-07-19 해상): NavalUnit = 물만 항해 / 지상(기본) = 물 차단.
+            //   물 마스크 미빌드(맵 미로드 등)면 구 동작(물 무시) 폴백.
+            var navalLookup = SystemAPI.GetComponentLookup<NavalUnit>(true);
+            UnitWaterMask waterMask = default;
+            bool hasWater = hasGrid
+                && SystemAPI.TryGetSingleton(out waterMask)
+                && waterMask.IsUsable(grid.Size);
             var obstacleQuery = SystemAPI.QueryBuilder()
                 .WithAll<ObstacleFootprint, LocalTransform>()
                 .Build();
@@ -575,11 +582,13 @@ namespace Game.Unit
                         footprints.HasComponent(unit))
                     {
                         float unitRadius = math.max(0.01f, footprints[unit].Radius);
+                        bool naval = navalLookup.HasComponent(unit);
                         var cacheKey = BuildPathCacheKey(
                             grid,
                             transforms[unit].Position,
                             request.ValueRO.Target,
-                            unitRadius);
+                            unitRadius,
+                            naval);
                         pathAttempted = true;
                         if (TryCopyCachedPath(cacheKey, pathCache, pathCachePoints, path, out pathFound, out reachedTarget))
                         {
@@ -605,6 +614,9 @@ namespace Game.Unit
                                     cacheKey.RadiusStep,
                                     obstacleTransforms,
                                     obstacleFootprints,
+                                    waterMask,
+                                    hasWater,
+                                    naval,
                                     blockedGridOffsets,
                                     blockedGridData);
                                 pathFound = UnitPathfinding.TryBuildPathWithBlockedGrid(
@@ -738,6 +750,7 @@ namespace Game.Unit
             public int2 StartCell;
             public int2 TargetCell;
             public int RadiusStep;
+            public byte Naval;   // 이동 도메인(2026-07-19) — 도메인 다르면 경로 재사용 금지
         }
 
         struct PathCacheEntry
@@ -749,13 +762,14 @@ namespace Game.Unit
             public byte ReachedTarget;
         }
 
-        static PathCacheKey BuildPathCacheKey(UnitNavigationGrid grid, float3 start, float3 target, float radius)
+        static PathCacheKey BuildPathCacheKey(UnitNavigationGrid grid, float3 start, float3 target, float radius, bool naval)
         {
             return new PathCacheKey
             {
                 StartCell = UnitPathfinding.WorldToCell(grid, start),
                 TargetCell = UnitPathfinding.WorldToCell(grid, target),
                 RadiusStep = (int)math.ceil(radius / PathCacheRadiusStep),
+                Naval = naval ? (byte)1 : (byte)0,
             };
         }
 
@@ -816,7 +830,8 @@ namespace Game.Unit
                    a.StartCell.y == b.StartCell.y &&
                    a.TargetCell.x == b.TargetCell.x &&
                    a.TargetCell.y == b.TargetCell.y &&
-                   a.RadiusStep == b.RadiusStep;
+                   a.RadiusStep == b.RadiusStep &&
+                   a.Naval == b.Naval;
         }
 
         static bool TryCopyRequestPath(
@@ -843,11 +858,15 @@ namespace Game.Unit
             int radiusStep,
             NativeArray<LocalTransform> obstacleTransforms,
             NativeArray<ObstacleFootprint> obstacleFootprints,
+            UnitWaterMask waterMask,
+            bool hasWater,
+            bool naval,
             NativeParallelHashMap<int, int> blockedGridOffsets,
             NativeList<byte> blockedGridData)
         {
             int cellCount = grid.Size.x * grid.Size.y;
-            if (blockedGridOffsets.TryGetValue(radiusStep, out int offset))
+            int cacheKey = radiusStep * 2 + (naval ? 1 : 0);   // 도메인별 캐시 분리(2026-07-19)
+            if (blockedGridOffsets.TryGetValue(cacheKey, out int offset))
                 return blockedGridData.AsArray().GetSubArray(offset, cellCount);
 
             offset = blockedGridData.Length;
@@ -862,7 +881,9 @@ namespace Game.Unit
                 obstacleTransforms,
                 obstacleFootprints,
                 blockedGrid);
-            blockedGridOffsets.Add(radiusStep, offset);
+            if (hasWater)
+                UnitPathfinding.ApplyWaterDomain(waterMask, naval, blockedGrid);
+            blockedGridOffsets.Add(cacheKey, offset);
             return blockedGrid;
         }
 
@@ -1017,6 +1038,30 @@ namespace Game.Unit
             return new int2(
                 (int)math.floor(local.x * inverseCellSize),
                 (int)math.floor(local.z * inverseCellSize));
+        }
+
+        /// <summary>
+        /// 이동 도메인 오버레이(2026-07-19 해상): 장애물 차단 그리드 위에 물 마스크를 겹친다.
+        ///   수상(naval) = 물 아닌 셀 차단(항해 전용) / 지상 = 물 셀 차단(도하 금지).
+        /// A*·직선 가시선·인근 보행 셀 탐색 전부 blocked 내용만 보므로 이 한 겹으로
+        /// 도메인이 전 경로 기계에 일관 적용된다.
+        /// </summary>
+        public static void ApplyWaterDomain(
+            UnitWaterMask waterMask,
+            bool naval,
+            NativeArray<byte> blocked)
+        {
+            int n = math.min(blocked.Length, waterMask.Water.Length);
+            if (naval)
+            {
+                for (int i = 0; i < n; i++)
+                    if (waterMask.Water[i] == 0) blocked[i] = 1;
+            }
+            else
+            {
+                for (int i = 0; i < n; i++)
+                    if (waterMask.Water[i] != 0) blocked[i] = 1;
+            }
         }
 
         public static void BuildBlockedGrid(

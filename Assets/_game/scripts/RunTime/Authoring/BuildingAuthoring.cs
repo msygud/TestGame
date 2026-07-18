@@ -193,6 +193,19 @@ namespace CitySim.Authoring
         [Tooltip("이 건물이 만드는 품목(RecipeDefs 키). None이 아니면 ProductionJob을 굽는다.")]
         public Commodity ProductionOutput = Commodity.None;
 
+        [Header("채취 (footprint 아래 맵 자원 소모 — 무입력 생산 변형)")]
+        [Tooltip("채취하는 맵 자원 TypeId(ResourceCatalog — Iron=2, Oil=7). -1 = 채취 건물 아님.\n" +
+                 "설정 시: 배치는 매칭 자원 셀 위만 허용(≥1셀 필수), 생산 사이클마다 아래 자원을 소모, " +
+                 "고갈되면 유휴. ProductionOutput(무입력 레시피)과 함께 설정할 것.")]
+        public int ExtractResourceTypeId = -1;
+
+        [Tooltip("생산 1사이클당 소모하는 자원량.")]
+        public int ExtractAmountPerCycle = 1;
+
+        [Tooltip("해상 공급자(수상 건물 — 도로·stamp 불가). 출력은 항만 창고(SeaRange) 반경으로 " +
+                 "풀 접속(OffshorePushSystem). 레지스트리 BuildableOn=Water와 함께 설정.")]
+        public bool IsOffshore = false;
+
         [Header("재고")]
         [Tooltip("재고 칸 구성 → DynamicBuffer<StockEntry>. 비면 안 굽음.")]
         public StockSpec[] Stocks;
@@ -203,6 +216,10 @@ namespace CitySim.Authoring
 
         [Tooltip("창고 stamp BFS 최대 도로 칸 수. 지구 피치(24)=커버 유도의 근거 값 30 권장.")]
         public int WarehouseStampMaxDist = 30;
+
+        [Tooltip("항만 반경(셀, 유클리드). 0 = 항만 아님. 해상 공급자(IsOffshore)가 이 반경 안에 " +
+                 "있으면 풀 접속 — 해안에 지어 바다 시추를 커버(도로 stamp와 직교, 겸직 가능).")]
+        public int WarehouseSeaRange = 0;
 
         [Header("전투")]
         [Tooltip("내구도(최대 체력). 0 이하면 SpawnConfig.BuildingDefaultHealth 폴백.")]
@@ -303,6 +320,21 @@ namespace CitySim.Authoring
                 if (a.ProductionOutput != Commodity.None)
                     AddComponent(e, ProductionJob.Make(a.ProductionOutput));
 
+                // ── 채취(2026-07-19) — 무입력 생산 변형: footprint 아래 맵 자원 소모 ──
+                if (a.ExtractResourceTypeId >= 0)
+                {
+                    AddComponent(e, new ResourceExtractor
+                    {
+                        ResourceTypeId = a.ExtractResourceTypeId,
+                        AmountPerCycle = math.max(1, a.ExtractAmountPerCycle),
+                    });
+                    if (a.ProductionOutput == Commodity.None)
+                        Debug.LogWarning($"[BuildingAuthoring] {a.name}: 채취 설정인데 " +
+                                         "ProductionOutput=None — 생산 사이클이 없어 아무것도 안 캔다.");
+                }
+                if (a.IsOffshore)
+                    AddComponent<OffshoreSupplier>(e);
+
                 // ── 재고 ──
                 if (a.Stocks != null && a.Stocks.Length > 0)
                 {
@@ -324,7 +356,11 @@ namespace CitySim.Authoring
                 // ── 창고 — owner는 스폰 주입(-1 표식) ──
                 if (a.IsWarehouse)
                     AddComponent(e, new WarehouseTag
-                    { OwnerLocalId = -1, MaxDist = math.max(0, a.WarehouseStampMaxDist) });
+                    {
+                        OwnerLocalId = -1,
+                        MaxDist      = math.max(0, a.WarehouseStampMaxDist),
+                        SeaRange     = math.max(0, a.WarehouseSeaRange),
+                    });
 
                 // ── 내구(값만 — 전투 컴포넌트 부착 골격은 SpawnSystem 공통 코드) ──
                 if (a.MaxHealth > 0f)
