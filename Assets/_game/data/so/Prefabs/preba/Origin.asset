@@ -765,6 +765,57 @@ MonoBehaviour:
     SupplyMaxDist: 0
     DlcKey: 0
     IsDeleted: 0
+  - MainKey: 1013
+    VariantKey: 0
+    Name: harbour_h_m
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 6099348877072115806, guid: 1b32154e489c47641bd74325aebd8484, type: 3}
+    Size: {x: 3, y: 6}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 2
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1014
+    VariantKey: 0
+    Name: mine_h_s
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 302246852796381866, guid: 60ec7a5382fbe954b99caf0198ea0e41, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 1
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
+  - MainKey: 1015
+    VariantKey: 0
+    Name: oil_h_s
+    Category: 1
+    Usage: -1
+    Prefab: {fileID: 1510682932661436974, guid: 15d7ba7148a18ee4bb23a8e42d40f2be, type: 3}
+    Size: {x: 1, y: 1}
+    Offset: {x: 0, y: 0, z: 0}
+    BuildableOn: 2
+    RoadMask: 0
+    MultiCountPerCell: 5
+    MultiItemSize: 0.5
+    IsSupplier: 0
+    ReliefRaw: 0
+    SupplyMaxDist: 0
+    DlcKey: 0
+    IsDeleted: 0
   NeedMaps:
   - MainKey: 1002
     NeedMask: 1
@@ -809,3 +860,9 @@ MonoBehaviour:
   - MainKey: 1012
     Offset: {x: 2, y: 3}
     Dir: 1
+  - MainKey: 1013
+    Offset: {x: 1, y: 0}
+    Dir: 4
+  - MainKey: 1014
+    Offset: {x: 0, y: 0}
+    Dir: 4

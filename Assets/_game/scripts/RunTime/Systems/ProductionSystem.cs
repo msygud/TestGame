@@ -121,9 +121,12 @@ namespace CitySim
                     //   재개 — 비축의 앵커를 용량(창고 수·래칫)에서 인구로 교정(무한 생산 함정 차단).
                     //   풀 셀 없음(창고 전무 부트스트랩·Final 품목 = 풀 미경유) → 게이트 없음
                     //   (로컬 수급은 기존 출력 포화 클램프가 전담).
+                    //   Target=0(소유자 인구 0 — 테스트 배치·초기) → 게이트 안 함(부트스트랩 보호,
+                    //   2026-07-19: AiCityGrowth 수요 억제 게이트와 동일 규약. 이게 없으면
+                    //   Stored 0 ≥ Target 0이 참이라 무인구 소유자의 채취·생산이 영영 시작 불가).
                     if (havePool && pool.Cells.TryGetValue(
                             LogisticsPool.Key(fp.ValueRO.OwnerLocalId, recipe.Output), out var pc)
-                        && pc.Stored >= pc.Target)
+                        && pc.Target > 0 && pc.Stored >= pc.Target)
                         continue;
 
                     // ── 대기: 일꾼이 있고(staff>0) 재료가 충분하면 제작 시작 ──

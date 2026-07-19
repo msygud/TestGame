@@ -155,10 +155,11 @@ namespace CitySim
         /// <summary>stamp 도달 범위 상한(BFS 최대 도로 칸 수). 0 이하면 무제한.</summary>
         public int MaxDist;
 
-        /// <summary>항만 반경(셀, 유클리드 — 2026-07-19 해상 채취). 0 = 항만 아님.
-        /// 해상 공급자(OffshoreSupplier — 도로/stamp 없음)는 이 반경 안의 자기 창고가
-        /// 하나라도 있으면 풀 접속(OffshorePushSystem). 도로 BFS(MaxDist)와 직교 —
-        /// 같은 창고가 육상 stamp + 해상 반경을 겸할 수 있다(해안 항만 창고).</summary>
+        /// <summary>항만 표식(2026-07-19). 0 = 항만 아님, >0 = 항만: 유조선 1척 스폰 +
+        /// 해상 물류 허브(TankerSystem). 유조선 운항은 **거리 무관**(왕복 시간 = 자연 비용,
+        /// 하드 반경은 이중 규제 — 유저 확정) — 이 값이 반경으로 소비되는 곳은 유조선 프리팹
+        /// 미제작 시 텔레포트 폴백(OffshorePushSystem)뿐. 도로 BFS(MaxDist)와 직교 —
+        /// 같은 창고가 육상 stamp + 항만을 겸할 수 있다(해안 항만 창고).</summary>
         public int SeaRange;
     }
 

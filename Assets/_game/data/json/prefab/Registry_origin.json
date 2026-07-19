@@ -34,6 +34,7 @@
     {"mainKey":1009,"variantKey":0,"name":"clean_h_m","category":1},
     {"mainKey":1010,"variantKey":0,"name":"firestation_h_l","category":1},
     {"mainKey":1011,"variantKey":0,"name":"office_h_m","category":1},
-    {"mainKey":1012,"variantKey":0,"name":"schooll_h_m","category":1}
+    {"mainKey":1012,"variantKey":0,"name":"schooll_h_m","category":1},
+    {"mainKey":1013,"variantKey":0,"name":"harbour_h_m","category":1}
   ]
 }

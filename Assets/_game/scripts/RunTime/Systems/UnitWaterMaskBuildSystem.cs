@@ -44,10 +44,14 @@ namespace CitySim
             var layers = SystemAPI.GetSingleton<GridLayers>();
             if (!layers.TerrainLayer.IsCreated) return;
             int terrainCount = layers.TerrainLayer.Count;
-            if (terrainCount == 0 || terrainCount == _builtTerrainCount) return;
-            _builtTerrainCount = terrainCount;
+            if (terrainCount == 0) return;
 
-            var grid     = SystemAPI.GetSingleton<UnitNavigationGrid>();
+            var grid = SystemAPI.GetSingleton<UnitNavigationGrid>();
+            // 재빌드 조건: 지형 변경(맵 교체) 또는 그리드 크기 변경(서브씬 리베이크) —
+            //   크기 불일치 마스크는 IsUsable=false로 어차피 미사용(도메인 미적용) 상태.
+            if (terrainCount == _builtTerrainCount
+                && SystemAPI.GetSingleton<UnitWaterMask>().IsUsable(grid.Size)) return;
+            _builtTerrainCount = terrainCount;
             var settings = SystemAPI.GetSingleton<GridSettings>();
             var cellType = SystemAPI.GetSingleton<CellTypeLookup>();
             int cellCount = grid.Size.x * grid.Size.y;

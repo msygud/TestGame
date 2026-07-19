@@ -57,7 +57,7 @@ MonoBehaviour:
   Kind: 0
   IsResidence: 0
   ResidentSlots: 0
-  ProvidedJob: 10
+  ProvidedJob: 7
   WorkerSlots: 10
   VisitRelief: 3
   ReliefRaw: 0
@@ -72,14 +72,10 @@ MonoBehaviour:
   ExtractResourceTypeId: -1
   ExtractAmountPerCycle: 1
   IsOffshore: 0
-  Stocks:
-  - Commodity: 5
-    Role: 2
-    Capacity: 1000
-    Initial: 0
-  IsWarehouse: 1
+  Stocks: []
+  IsWarehouse: 0
   WarehouseStampMaxDist: 30
-  WarehouseSeaRange: 25
+  WarehouseSeaRange: 0
   MaxHealth: 0
 --- !u!1001 &380658225618633347
 PrefabInstance:

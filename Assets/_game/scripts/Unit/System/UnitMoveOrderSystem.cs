@@ -524,6 +524,12 @@ namespace Game.Unit
 
         public void OnUpdate(ref SystemState state)
         {
+            // 메인스레드 ComponentLookup 읽기/쓰기(아래 targets[unit]= 등) 전에 앞서 스케줄된
+            //   이동 잡(UnitMovementArbiterJob 등 UnitMoveTarget RW)을 완료해야 한다 —
+            //   미완료 접근은 InvalidOperationException(2026-07-19 유저 실측). 요청이 있는
+            //   프레임에만 도는 시스템이라 동기화 비용은 국소적.
+            state.CompleteDependency();
+
             var targets = SystemAPI.GetComponentLookup<UnitMoveTarget>(false);
             var motions = SystemAPI.GetComponentLookup<UnitMotionState>(false);
             var transforms = SystemAPI.GetComponentLookup<LocalTransform>(true);
@@ -568,6 +574,7 @@ namespace Game.Unit
                     bool pathFound = false;
                     bool reachedTarget = false;
                     bool pathAttempted = false;
+                    bool naval = navalLookup.HasComponent(unit);
                     var path = new NativeList<float3>(Allocator.Temp);
 
                     if (TryCopyRequestPath(requestEntity, requestPathBuffers, path))
@@ -579,10 +586,14 @@ namespace Game.Unit
                     else if (request.ValueRO.SkipPathfinding == 0 &&
                         hasGrid &&
                         transforms.HasComponent(unit) &&
-                        footprints.HasComponent(unit))
+                        footprints.HasComponent(unit) &&
+                        // 그리드 밖 출발/목표(2026-07-19): 경로 시도 없이 Direct 폴백 —
+                        //   시도 후 실패(PathFailed)는 HasTarget=0 = 영구 정지가 되므로,
+                        //   커버 밖은 "경로 없이 직진"이 옳다(그리드 확장 전 유조선 정지 원인).
+                        UnitPathfinding.IsInsideGrid(grid, transforms[unit].Position) &&
+                        UnitPathfinding.IsInsideGrid(grid, request.ValueRO.Target))
                     {
                         float unitRadius = math.max(0.01f, footprints[unit].Radius);
-                        bool naval = navalLookup.HasComponent(unit);
                         var cacheKey = BuildPathCacheKey(
                             grid,
                             transforms[unit].Position,
@@ -630,6 +641,13 @@ namespace Game.Unit
                             }
                         }
                     }
+
+                    // 해상 유닛 경로 실패 가시화(2026-07-19 유조선 디버깅): PathFailed는
+                    //   HasTarget=0 = 정지라서 조용히 삼키면 "배가 안 움직임"으로만 보인다.
+                    if (pathAttempted && !pathFound && naval && transforms.HasComponent(unit))
+                        UnityEngine.Debug.LogWarning(
+                            $"[UnitPath] naval 경로 실패: {transforms[unit].Position.xz} → " +
+                            $"{request.ValueRO.Target.xz} (물 마스크·그리드 커버 확인)");
 
                     float3 resolvedTarget = pathFound && !reachedTarget && path.Length > 0
                         ? path[path.Length - 1]
@@ -1362,6 +1380,12 @@ namespace Game.Unit
         {
             return cell.x >= 0 && cell.y >= 0 && cell.x < grid.Size.x && cell.y < grid.Size.y;
         }
+
+        /// <summary>월드 좌표가 내비 그리드 범위 안인가(2026-07-19). 그리드 밖 출발/목표는
+        /// 경로 실패(HasTarget=0 = 영구 정지)가 아니라 직진(Direct) 폴백으로 처리해야 한다 —
+        /// 호출측(UnitMoveOrderSystem)이 이 검사로 경로 시도 자체를 건너뛴다.</summary>
+        public static bool IsInsideGrid(UnitNavigationGrid grid, float3 position)
+            => IsInside(grid, WorldToCell(grid, position));
 
         static float GetEffectiveObstacleRadius(ObstacleFootprint obstacle)
         {

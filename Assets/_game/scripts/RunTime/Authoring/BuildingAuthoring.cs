@@ -217,8 +217,9 @@ namespace CitySim.Authoring
         [Tooltip("창고 stamp BFS 최대 도로 칸 수. 지구 피치(24)=커버 유도의 근거 값 30 권장.")]
         public int WarehouseStampMaxDist = 30;
 
-        [Tooltip("항만 반경(셀, 유클리드). 0 = 항만 아님. 해상 공급자(IsOffshore)가 이 반경 안에 " +
-                 "있으면 풀 접속 — 해안에 지어 바다 시추를 커버(도로 stamp와 직교, 겸직 가능).")]
+        [Tooltip("항만 표식(셀). 0 = 항만 아님, >0 = 항만(유조선 1척 스폰·해상 물류 허브).\n" +
+                 "유조선 운항은 거리 무관(왕복 시간이 자연 비용 — 2026-07-19 유저 확정). 이 값이 " +
+                 "반경으로 쓰이는 곳은 유조선 프리팹 미제작 시 텔레포트 폴백뿐.")]
         public int WarehouseSeaRange = 0;
 
         [Header("전투")]
@@ -259,6 +260,16 @@ namespace CitySim.Authoring
                     Debug.LogWarning($"[BuildingAuthoring] {name}: AuraReliefRaw={AuraReliefRaw} 미지 비트 — " +
                                      "enum 이관 불가(raw로 계속 베이크).");
             }
+
+            // ── 오편집 조기 경보(2026-07-19 학교↔항만 사고: 학교 프리팹에 항만 값이 들어가
+            //   AI가 짓는 학교마다 내륙 유령 항만이 생김 — 디버깅 한 세션 소모). 겸직이 문법상
+            //   가능한 조합이라 베이크는 막지 않되, 흔치 않은 조합은 저장 시점에 소리 내게. ──
+            if (IsWarehouse && VisitRelief != VisitService.None)
+                Debug.LogWarning($"[BuildingAuthoring] {name}: 창고 + 방문 서비스({VisitRelief}) 동시 설정 — " +
+                                 "다른 프리팹을 편집하려던 실수가 아닌지 확인(학교↔항만 사고 전례).");
+            if (!IsWarehouse && WarehouseSeaRange > 0)
+                Debug.LogWarning($"[BuildingAuthoring] {name}: WarehouseSeaRange={WarehouseSeaRange}인데 " +
+                                 "IsWarehouse 꺼짐 — 항만은 IsWarehouse 필수(현재 값은 무시됨).");
         }
 
         class Baker : Baker<BuildingAuthoring>

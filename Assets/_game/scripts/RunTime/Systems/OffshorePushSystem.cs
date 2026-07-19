@@ -71,8 +71,14 @@ namespace CitySim
 
                 var output = SystemAPI.GetBuffer<StockEntry>(entity);
 
-                // 풀 접속: 자기 항만이 반경 안에 하나라도(이진 — stamp 커버리지 동형).
-                if (!InPortRange(in ports, owner, Center(footprint.ValueRO)))
+                // 풀 접속(2026-07-19 유저 확정 — 반경은 폴백 전용):
+                //   · 유조선 모드 = 자기 항만이 **하나라도 있으면** 접속(거리 무관 — 배가 거리를
+                //     왕복 시간으로 지불하므로 하드 반경은 이중 규제).
+                //   · 텔레포트 폴백 = 반경 필요(즉시 이전이라 반경 없으면 마법이 됨).
+                bool served = tankerMode
+                    ? HasAnyPort(in ports, owner)
+                    : InPortRange(in ports, owner, Center(footprint.ValueRO));
+                if (!served)
                 {
                     for (int i = 0; i < output.Length; i++)
                     {
@@ -132,6 +138,14 @@ namespace CitySim
                 int dx = ports[i].y - pos.x, dy = ports[i].z - pos.y;
                 if (dx * dx + dy * dy <= ports[i].w) return true;
             }
+            return false;
+        }
+
+        /// <summary>이 소유자의 항만이 하나라도 있는가(유조선 모드 접속 판정 — 거리 무관).</summary>
+        static bool HasAnyPort(in NativeList<int4> ports, int owner)
+        {
+            for (int i = 0; i < ports.Length; i++)
+                if (ports[i].x == owner) return true;
             return false;
         }
     }

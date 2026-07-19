@@ -74,8 +74,13 @@ namespace CitySim
         /// <summary>(int)Commodity → 생산 건물 MainKey. 복수 생산자는 MainKey 오름차순 선승.</summary>
         public NativeHashMap<int, int> Table;
 
-        /// <summary>창고 프리팹 MainKey(WarehouseTag 보유 최소 키). 0 = 파생 실패(폴백).</summary>
+        /// <summary>창고 프리팹 MainKey(WarehouseTag 보유·**SeaRange=0** 최소 키 — 항만 제외,
+        /// 2026-07-19). 0 = 파생 실패(폴백).</summary>
         public int WarehouseMainKey;
+
+        /// <summary>항만 프리팹 MainKey(WarehouseTag.SeaRange>0 최소 키, 2026-07-19 해상 확장).
+        /// 0 = 항만 프리팹 없음. AI 해상 계획(AiExtractionPlanSystem)이 소비 — 창고 레인과 분리.</summary>
+        public int PortMainKey;
 
         /// <summary>오라형 공급자 MainKey → 오라 반경(셀) — AI 배치의 지구 슬롯 선호 +
         /// **도달 가드**(앵커에서 반경 밖 배치 금지 — 못 덮는 오라 연쇄 차단)에 사용

@@ -80,7 +80,8 @@ namespace CitySim
             var production = new NativeHashMap<int, int>(128, Allocator.Temp);   // MainKey → (int)Commodity
             var auraKeys   = new NativeHashMap<int, int>(16, Allocator.Persistent);   // 오라 키→반경(③④와 동거)
             var workerNeeds = new NativeHashMap<int, int>(32, Allocator.Persistent);  // 키→근무 정원(노동 게이트)
-            int warehouseKey = 0;                                                 // WarehouseTag 보유 최소 키
+            int warehouseKey = 0;   // WarehouseTag(SeaRange=0) 보유 최소 키 — 일반 창고
+            int portKey      = 0;   // WarehouseTag(SeaRange>0) 보유 최소 키 — 항만(2026-07-19 분리)
             foreach (var kv in lookup.Table)
             {
                 int mainKey = kv.Key.x;
@@ -108,9 +109,15 @@ namespace CitySim
                     if (pj.RecipeOutput != Commodity.None)
                         production.TryAdd(mainKey, (int)pj.RecipeOutput);
                 }
-                if (em.HasComponent<WarehouseTag>(kv.Value)
-                    && (warehouseKey == 0 || mainKey < warehouseKey))
-                    warehouseKey = mainKey;
+                if (em.HasComponent<WarehouseTag>(kv.Value))
+                {
+                    // 항만(SeaRange>0)은 일반 창고 레인 후보에서 분리(2026-07-19) —
+                    //   AI 창고 건설이 항만을 육상 창고로 오인 배치하는 것 차단.
+                    if (em.GetComponentData<WarehouseTag>(kv.Value).SeaRange > 0)
+                    { if (portKey == 0 || mainKey < portKey) portKey = mainKey; }
+                    else if (warehouseKey == 0 || mainKey < warehouseKey)
+                        warehouseKey = mainKey;
+                }
             }
 
             // ── 2-b) Validate(다지기 ②): 명시 행의 MainKey가 능력 ⊇ NeedMask인 프리팹을
@@ -149,7 +156,7 @@ namespace CitySim
                 var pe = em.CreateEntity(typeof(ProducerLookup));
                 em.SetComponentData(pe, new ProducerLookup
                 {
-                    Table = producerTable, WarehouseMainKey = warehouseKey,
+                    Table = producerTable, WarehouseMainKey = warehouseKey, PortMainKey = portKey,
                     AuraKeys = auraKeys, WorkerNeeds = workerNeeds,
                 });
             }
@@ -161,6 +168,7 @@ namespace CitySim
                 if (pl.WorkerNeeds.IsCreated) pl.WorkerNeeds.Dispose();
                 pl.Table            = producerTable;
                 pl.WarehouseMainKey = warehouseKey;
+                pl.PortMainKey      = portKey;
                 pl.AuraKeys         = auraKeys;
                 pl.WorkerNeeds      = workerNeeds;
             }
